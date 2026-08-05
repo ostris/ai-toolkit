@@ -54,7 +54,7 @@ own no-prompt baseline, in the direction of the training clip."* Concretely,
 each step the trainer runs one extra (no-grad) forward with a **blank prompt**
 to get the model's own unconditional prediction, then rebuilds the target as
 the CFG extrapolation `uncond + g * (raw_target - uncond)` with
-`g = guidance_loss_target` (3.0). The model learns your data *as if it were a
+`g = guidance_loss_target` (4.0). The model learns your data *as if it were a
 guided output* — the "conditional is an amplified version of unconditional"
 relationship that distillation encoded is exactly what the loss now preserves,
 while the content still moves toward your data. The audio target is
@@ -70,7 +70,7 @@ Full contrastive shaping at high noise, plain flow matching at low noise.
 ```yaml
 train:
   do_guidance_loss: true
-  guidance_loss_target: 3.0   # the boost strength the target assumes
+  guidance_loss_target: 4.0   # the boost strength the target assumes
 ```
 
 Cost: one extra no-grad forward per step. This is the primary defense; the
@@ -194,7 +194,7 @@ the point where "learned your data" and "still sharp" overlap best.
   length instead of being cropped to one duration — but variable lengths can't
   be stacked into one batch, hence batch size 1 (use gradient accumulation for
   effective batch).
-- **`guidance_loss_target: 3.0`.** The boost strength the contrastive target
+- **`guidance_loss_target: 4.0`.** The boost strength the contrastive target
   assumes the weights carry. It's a taste parameter more than a correctness
   one: higher trains toward a punchier, more saturated look; lower toward
   flatter output.
