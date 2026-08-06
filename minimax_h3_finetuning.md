@@ -174,7 +174,35 @@ Remaining knobs:
   the video loss; if audio learns faster/slower than video, tune it (LTX-2
   experience suggests ~0.5 when audio dominates).
 
-### 4. Containment hyperparameters (no code)
+### 4. Pruned-checkpoint stability, and the unpruned escape hatch (upstream)
+
+The default training checkpoint is the **pruned** DiT: its 13B parameters of
+timestep conditioning (a 2688-dim time-embedding MLP plus full-rank
+`[96768 x 2688]` AdaLN projections per block) are distilled into a 1025-entry
+**8-dimensional** lookup table with tiny factored fp16 projections. That is
+calibrated for inference on the released sampling grid — training stresses it
+harder: timesteps are sampled continuously and every gradient backprops
+through the factored modulation.
+
+Upstream fixes now in this fork:
+- **fp16 AdaLN overflow**: the pruned checkpoints' factored AdaLN layers ran
+  in fp16 and could overflow during training; they are now upcast to fp32.
+- **Finite-loss guard**: the trainer checks the loss is finite (not just
+  non-NaN) before backpropagating, so an infinity from a bad step no longer
+  corrupts the optimizer state.
+- **Layer offloading**: the AdaLN projection layers move correctly when layer
+  offloading is enabled.
+- **Unpruned variants are now loadable**: `model_kwargs.partition` accepts
+  `fl2va` (unpruned int8, 34GB, full timestep MLP and full-rank AdaLN) and
+  `ref2va`, alongside the pruned defaults (`fl2va_pruned`, `ref2va_pruned`).
+
+If quality plateaus below the base model — especially on audio, whose
+modulation shares the same 8-dim bottleneck — the unpruned variant is the
+experiment to run: `model_kwargs: { partition: fl2va }` costs ~13GB more VRAM
+and removes the timestep-conditioning approximation entirely. Match the
+serving variant to the training variant when it matters.
+
+### 5. Containment hyperparameters (no code)
 
 If training without preservation or an adapter: LR ≤ 5e-5, rank ≤ 16,
 ≤ 1000 steps, and sample every ≤ 250 steps — the best checkpoint is usually
