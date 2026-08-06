@@ -62,12 +62,18 @@ class MiniMaxH3TransformerParams:
     # MLP with a small lookup table: ``adaln_t_table`` of shape
     # (adaln_t_table_size, time_embed_dim) sampled by linear interpolation at
     # t * (size - 1), consumed by the AdaLN projections WITHOUT the SiLU.
-    # These checkpoints also shrink time_embed_dim (8 in the released files).
+    # These checkpoints also shrink time_embed_dim (8 in the released files)
+    # and add a bias to the block AdaLN linears, which the original weights
+    # lack (the final layer's AdaLN carries a bias in both variants).
     adaln_t_table_size: Optional[int] = None
 
     @property
     def adaln_apply_silu(self) -> bool:
         return self.adaln_t_table_size is None
+
+    @property
+    def adaln_bias(self) -> bool:
+        return self.adaln_t_table_size is not None
 
 
 class MiniMaxH3Rope(nn.Module):
@@ -206,13 +212,14 @@ class MiniMaxH3AdalnProj(nn.Module):
         expand: int,
         modalities: int,
         apply_silu: bool = True,
+        bias: bool = True,
     ):
         super().__init__()
         self.expand = expand
         self.modalities = modalities
         self.hidden = hidden
         self.apply_silu = apply_silu
-        self.linear = nn.Linear(t_dim, expand * hidden * modalities, bias=True)
+        self.linear = nn.Linear(t_dim, expand * hidden * modalities, bias=bias)
 
     def forward(self, temb: torch.Tensor):
         if self.apply_silu:
@@ -282,6 +289,7 @@ class MiniMaxH3Block(nn.Module):
             expand=6,
             modalities=MODALITY_NUM,
             apply_silu=p.adaln_apply_silu,
+            bias=p.adaln_bias,
         )
 
     def forward(
@@ -328,6 +336,7 @@ class MiniMaxH3FinalLayer(nn.Module):
             expand=2,
             modalities=1,
             apply_silu=p.adaln_apply_silu,
+            bias=True,
         )
         self.video_out = nn.Linear(p.hidden_size, video_patch_dim, bias=True)
         self.audio_out = nn.Linear(p.hidden_size, p.audio_latents_dim, bias=True)

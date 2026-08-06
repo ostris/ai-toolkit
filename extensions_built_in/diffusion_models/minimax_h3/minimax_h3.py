@@ -21,9 +21,10 @@ nvfp4 — with dequantized-matmul fallbacks for GPUs without the fast kernels),
 and the fp16/fp32 single-file VAEs. Files are resolved under ``MODELS_PATH``
 (checked first, both at the repo-relative location and flat at the root) and
 downloaded from the hub into ``MODELS_PATH`` when missing. Individual files
-can be overridden via ``model_kwargs``: ``dit_path``, ``text_encoder_path``,
-``video_vae_path``, ``audio_vae_path``; ``model_kwargs.partition`` picks
-``fl2va`` (default) or ``ref2va``.
+can be overridden via ``model_kwargs``: ``dit_<partition>_path``,
+``text_encoder_path``, ``video_vae_path``, ``audio_vae_path``;
+``model_kwargs.partition`` picks ``fl2va``, ``fl2va_pruned`` (default),
+``ref2va``, or ``ref2va_pruned``.
 
 Conventions bridged to ai-toolkit:
   - the model consumes t = 1 - sigma in [0, 1] (t=1 clean) and predicts the
@@ -93,8 +94,10 @@ scheduler_config = {
 # missing.
 COMFY_REPO = "Comfy-Org/MiniMax-H3"
 COMFY_FILES = {
-    "dit_fl2va": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-    "dit_ref2va": "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "dit_fl2va": "diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors",
+    "dit_fl2va_pruned": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "dit_ref2va": "diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors",
+    "dit_ref2va_pruned": "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
     "text_encoder": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "video_vae": "vae/minimax_h3_video_vae_fp16.safetensors",
     "audio_vae": "vae/minimax_h3_audio_vae_fp32.safetensors",
@@ -268,11 +271,12 @@ class MinimaxH3Model(BaseModel):
 
     def _dit_component(self) -> str:
         partition = str(
-            self.model_config.model_kwargs.get("partition", "fl2va")
+            self.model_config.model_kwargs.get("partition", "fl2va_pruned")
         ).lower()
-        if partition not in ("fl2va", "ref2va"):
+        if partition not in ("fl2va", "fl2va_pruned", "ref2va", "ref2va_pruned"):
             raise ValueError(
-                f"model_kwargs.partition must be fl2va or ref2va, got {partition}"
+                "model_kwargs.partition must be fl2va, fl2va_pruned, ref2va, "
+                f"or ref2va_pruned, got {partition}"
             )
         return f"dit_{partition}"
 
