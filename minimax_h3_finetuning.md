@@ -153,8 +153,11 @@ Fixes in this fork:
 - **Stretch avoidance**: when the audio length is within 1% of target, the
   trainer now trims/pads instead of stretching. Clips whose durations sit
   exactly on the frame grid never engage the stretch at all — **the best fix
-  is to pre-trim clips to 17n+5/24-second durations at 24 fps with 48 kHz
-  audio** (the Oxen converter does this automatically with ffmpeg).
+  is to pre-trim clips to 17n+5/24-second durations at 24 fps with 32 kHz
+  audio, the model's native rate** — the audio VAE runs at 32 kHz and the
+  trainer resamples anything else down to it, so delivering 32 kHz directly
+  skips a resample hop (the Oxen converter does this automatically with
+  ffmpeg).
 - **Vocoder overlap**: the STFT hop is now capped at `n_fft/4` (4x overlap).
   Previously 44.1 kHz sources ran at ~2x overlap, far below what a phase
   vocoder needs, making them sound dramatically worse than 48 kHz sources.
