@@ -192,8 +192,11 @@ class MiniMaxH3AdalnProj(nn.Module):
 
     (M, time_embed_dim) -> ``expand`` tensors of (M * modalities, hidden); row
     layout ``[t0_mod0, t0_mod1, t0_mod2, t1_mod0, ...]``, addressed by
-    ``timestep_index * MODALITY_NUM + tag``. The SiLU runs at temb's own
-    (float32) precision; only its result is cast to the projection dtype.
+    ``timestep_index * MODALITY_NUM + tag``. The whole projection computes in
+    float32 (pruned checkpoints store these linears fp16, whose 65504 ceiling
+    overflows here); the weights stay at their stored dtype and are only
+    upcast for the matmul, so whole-model casts can't undo this. Outputs are
+    float32; the use sites cast them to the block dtype.
     """
 
     def __init__(
@@ -214,7 +217,11 @@ class MiniMaxH3AdalnProj(nn.Module):
     def forward(self, temb: torch.Tensor):
         if self.apply_silu:
             temb = F.silu(temb)
-        x = self.linear(temb.to(self.linear.weight.dtype))
+        x = F.linear(
+            temb.float(),
+            self.linear.weight.float(),
+            self.linear.bias.float() if self.linear.bias is not None else None,
+        )
         x = x.view(x.shape[0] * self.modalities, self.expand * self.hidden)
         return x.chunk(self.expand, dim=-1)
 
