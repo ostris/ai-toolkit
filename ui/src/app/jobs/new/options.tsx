@@ -735,7 +735,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].num_frames': [39, undefined],
       'config.process[0].datasets[x].auto_frame_count': [true, undefined],
       'config.process[0].model.assistant_lora_path': [
-        'ostris/zimage_turbo_training_adapter/zimage_turbo_training_adapter_v2.safetensors',
+        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_alpha.safetensors',
         undefined,
       ],
     },
