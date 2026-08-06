@@ -62,18 +62,14 @@ class MiniMaxH3TransformerParams:
     # MLP with a small lookup table: ``adaln_t_table`` of shape
     # (adaln_t_table_size, time_embed_dim) sampled by linear interpolation at
     # t * (size - 1), consumed by the AdaLN projections WITHOUT the SiLU.
-    # These checkpoints also shrink time_embed_dim (8 in the released files)
-    # and add a bias to the block AdaLN linears, which the original weights
-    # lack (the final layer's AdaLN carries a bias in both variants).
+    # These checkpoints also shrink time_embed_dim (8 in the released files).
+    # Every released variant carries a bias on ALL AdaLN linears (blocks and
+    # final layer alike).
     adaln_t_table_size: Optional[int] = None
 
     @property
     def adaln_apply_silu(self) -> bool:
         return self.adaln_t_table_size is None
-
-    @property
-    def adaln_bias(self) -> bool:
-        return self.adaln_t_table_size is not None
 
 
 class MiniMaxH3Rope(nn.Module):
@@ -224,7 +220,15 @@ class MiniMaxH3AdalnProj(nn.Module):
     def forward(self, temb: torch.Tensor):
         if self.apply_silu:
             temb = F.silu(temb)
-        if self.linear.weight.is_floating_point():
+        if getattr(self.linear, "is_ostris_quantized", False):
+            # pre-quantized linear (unpruned int8 checkpoints wrap adaln_proj
+            # in a quantized module): the module's own forward applies its
+            # scales/rotation and paging hooks. Dequantized compute runs in
+            # bf16, which has no fp16-style overflow ceiling; upcast the
+            # result. (Its .weight is a dequantizing property, so a dtype
+            # check cannot distinguish this case.)
+            x = self.linear(temb).float()
+        else:
             # plain float linear (pruned checkpoints store these fp16, whose
             # 65504 ceiling overflows here): compute in float32 with the raw
             # weights, following temb's device because the params may be
@@ -235,13 +239,6 @@ class MiniMaxH3AdalnProj(nn.Module):
             if bias is not None:
                 bias = bias.to(device=temb.device, dtype=torch.float32)
             x = F.linear(temb.float(), weight, bias)
-        else:
-            # pre-quantized linear (unpruned int8 checkpoints wrap adaln_proj
-            # in a quantized module): the raw .weight is int8 and only the
-            # module's own forward applies its scales/rotation and paging
-            # hooks. Dequantized compute runs in bf16, which has no fp16-style
-            # overflow ceiling; upcast the result.
-            x = self.linear(temb).float()
         x = x.view(x.shape[0] * self.modalities, self.expand * self.hidden)
         return x.chunk(self.expand, dim=-1)
 
@@ -300,7 +297,7 @@ class MiniMaxH3Block(nn.Module):
             expand=6,
             modalities=MODALITY_NUM,
             apply_silu=p.adaln_apply_silu,
-            bias=p.adaln_bias,
+            bias=True,
         )
 
     def forward(

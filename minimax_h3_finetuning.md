@@ -196,6 +196,15 @@ Upstream fixes now in this fork:
   `fl2va` (unpruned int8, 34GB, full timestep MLP and full-rank AdaLN) and
   `ref2va`, alongside the pruned defaults (`fl2va_pruned`, `ref2va_pruned`).
 
+Fork fix on top of those: the unpruned checkpoints' quantized AdaLN
+projections ship a bias (RMS ≈ 0.16, with ≈ −0.3 baseline offsets on the
+modulation components), and the loader was silently dropping it — the model
+was built on the wrong assumption that only pruned AdaLN layers carry one.
+Every block's shift/scale/gate came out shifted, which compounded across the
+50 blocks into garbage output from the very first sample. The bias now loads,
+and the quantized-checkpoint importer refuses to silently drop a nonzero bias
+anywhere else.
+
 If quality plateaus below the base model — especially on audio, whose
 modulation shares the same 8-dim bottleneck — the unpruned variant is the
 experiment to run: `model_kwargs: { partition: fl2va }` costs ~13GB more VRAM

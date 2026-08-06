@@ -166,12 +166,22 @@ def import_comfy_quantized_layers(
 
         _to_ostris(module, quantizer, orig_dtype)
         bias = state_dict.pop(f"{prefix}.bias", None)
-        if bias is not None and module.bias is not None:
-            # bias may still be a meta parameter when the model was built under
-            # a meta device context
-            module._parameters["bias"] = torch.nn.Parameter(
-                bias.detach().clone(), requires_grad=False
-            )
+        if bias is not None:
+            if module.bias is None:
+                # the bias key is consumed here, so the caller's strict
+                # load_state_dict check can never flag it — dropping a real
+                # bias silently corrupts every forward through this layer
+                if bias.float().abs().max().item() > 0:
+                    raise ValueError(
+                        f"comfy_quant import: checkpoint has a nonzero bias for "
+                        f"{prefix} but the module was built without one"
+                    )
+            else:
+                # bias may still be a meta parameter when the model was built
+                # under a meta device context
+                module._parameters["bias"] = torch.nn.Parameter(
+                    bias.detach().clone(), requires_grad=False
+                )
         converted += 1
 
     return state_dict, converted
