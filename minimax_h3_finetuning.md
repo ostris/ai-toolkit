@@ -139,10 +139,29 @@ remains the default and is bit-identical to the released recipe.
 
 ### 3. Audio fixes
 
-- **`audio_preserve_pitch: true`** (dataset config): H3 snaps clip lengths
-  down to the 17n+5 frame grid at a fixed 24 fps, which time-stretches nearly
-  every training clip. The default stretch is linear interpolation over time —
-  a pitch shift. With this flag the stretch preserves pitch.
+**The "underwater" audio problem.** H3 snaps clip lengths down to the 17n+5
+frame grid at 24 fps, and by default (`shrink_video_to_frames`) the *whole*
+clip is retimed to the snapped length — so nearly every training clip's audio
+gets time-stretched. Both stretch paths audibly degrade it: the
+pitch-preserving path is a phase vocoder without phase locking (the classic
+"muffled / reverberant / underwater" phasiness artifact), and the plain path
+is linear interpolation (pitch shift + high-frequency rolloff + aliasing).
+The audio head adapts fast, so a fine-tune learns the artifact within a few
+hundred steps while video still looks fine.
+
+Fixes in this fork:
+- **Stretch avoidance**: when the audio length is within 1% of target, the
+  trainer now trims/pads instead of stretching. Clips whose durations sit
+  exactly on the frame grid never engage the stretch at all — **the best fix
+  is to pre-trim clips to 17n+5/24-second durations at 24 fps with 48 kHz
+  audio** (the Oxen converter does this automatically with ffmpeg).
+- **Vocoder overlap**: the STFT hop is now capped at `n_fft/4` (4x overlap).
+  Previously 44.1 kHz sources ran at ~2x overlap, far below what a phase
+  vocoder needs, making them sound dramatically worse than 48 kHz sources.
+
+Remaining knobs:
+- **`audio_preserve_pitch: true`** (dataset config): when a stretch does
+  happen, preserve pitch instead of tape-speed shifting.
 - **Silent clips**: items without a soundtrack become pure-noise audio rows
   with *no* loss (fine), but in mixed batches with cached audio latents,
   missing items get zero-filled *normalized* latents — which decode to the

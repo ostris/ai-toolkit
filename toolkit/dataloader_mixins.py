@@ -748,8 +748,20 @@ class ImageProcessingDTOMixin:
                     if waveform is not None and waveform.numel() > 0:
                         target_samples = int(round(target_duration * sample_rate))
                         if target_samples > 0 and waveform.shape[-1] != target_samples:
-                            # Time-stretch/shrink to match the video clip duration implied by dataset FPS.
-                            if self.dataset_config.audio_preserve_pitch:
+                            # Both stretch paths audibly degrade audio (the phase
+                            # vocoder smears phase, linear interpolation shifts
+                            # pitch and aliases). Within 1% of target, trim/pad
+                            # instead: a <=1% tempo offset is inaudible next to
+                            # either artifact, and clips pre-trimmed to the model's
+                            # frame grid land here and stay bit-exact.
+                            src_len = waveform.shape[-1]
+                            tolerance = max(1, int(round(0.01 * target_samples)))
+                            if abs(src_len - target_samples) <= tolerance:
+                                if src_len > target_samples:
+                                    waveform = waveform[..., :target_samples]
+                                else:
+                                    waveform = F.pad(waveform, (0, target_samples - src_len))
+                            elif self.dataset_config.audio_preserve_pitch:
                                 waveform = time_stretch_preserve_pitch(waveform, sample_rate, target_samples)  # waveform is [C, L]
                             else:
                                 # Use linear interpolation over the time axis.
