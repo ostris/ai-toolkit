@@ -224,13 +224,24 @@ class MiniMaxH3AdalnProj(nn.Module):
     def forward(self, temb: torch.Tensor):
         if self.apply_silu:
             temb = F.silu(temb)
-        # follow temb's device: the raw params may be CPU-resident under layer
-        # offloading / low_vram, and F.linear bypasses the paging hooks
-        weight = self.linear.weight.to(device=temb.device, dtype=torch.float32)
-        bias = self.linear.bias
-        if bias is not None:
-            bias = bias.to(device=temb.device, dtype=torch.float32)
-        x = F.linear(temb.float(), weight, bias)
+        if self.linear.weight.is_floating_point():
+            # plain float linear (pruned checkpoints store these fp16, whose
+            # 65504 ceiling overflows here): compute in float32 with the raw
+            # weights, following temb's device because the params may be
+            # CPU-resident under layer offloading and F.linear bypasses the
+            # paging hooks
+            weight = self.linear.weight.to(device=temb.device, dtype=torch.float32)
+            bias = self.linear.bias
+            if bias is not None:
+                bias = bias.to(device=temb.device, dtype=torch.float32)
+            x = F.linear(temb.float(), weight, bias)
+        else:
+            # pre-quantized linear (unpruned int8 checkpoints wrap adaln_proj
+            # in a quantized module): the raw .weight is int8 and only the
+            # module's own forward applies its scales/rotation and paging
+            # hooks. Dequantized compute runs in bf16, which has no fp16-style
+            # overflow ceiling; upcast the result.
+            x = self.linear(temb).float()
         x = x.view(x.shape[0] * self.modalities, self.expand * self.hidden)
         return x.chunk(self.expand, dim=-1)
 
