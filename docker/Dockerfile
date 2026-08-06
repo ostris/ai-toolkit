@@ -1,4 +1,7 @@
-FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
+# runtime (not devel) is enough: torch/flash-attn/natten are all prebuilt
+# wheels that bundle their CUDA libs, and triton JITs with its own ptxas.
+# Host requirement: NVIDIA driver >= 580 (CUDA 13) to run the cu130 wheels.
+FROM nvidia/cuda:13.0.3-runtime-ubuntu24.04
 
 LABEL authors="jaret"
 
@@ -49,7 +52,8 @@ WORKDIR /app
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # install pytorch before cache bust to avoid redownloading pytorch
-RUN pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128 --break-system-packages
+# (versions must match manager/spec.py — the AI Toolkit Manager's linux spec)
+RUN pip install --no-cache-dir torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130 --break-system-packages
 
 WORKDIR /app/ai-toolkit
 
@@ -63,6 +67,16 @@ WORKDIR /app/ai-toolkit
 COPY requirements.txt requirements_base.txt /app/ai-toolkit/
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt && \
     pip install setuptools==69.5.1 --no-cache-dir --break-system-packages
+
+# Accelerators, matching the manager's linux cu130 spec (manager/spec.py):
+# flash-attn 2.8.3 (prebuilt for torch 2.13 / cu130 / cp312), NATTEN 0.21.7,
+# and torchcodec 0.15. Installed AFTER requirements with -U so they override
+# any older pins in there (same order the manager uses).
+RUN pip install --no-cache-dir --break-system-packages -U \
+    torchcodec==0.15.0 \
+    natten==0.21.7+torch2130cu130 --find-links https://whl.natten.org \
+    https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.47/flash_attn-2.8.3+cu130torch2.13-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl && \
+    python -c "import flash_attn, natten, torchcodec; print('accelerators OK:', flash_attn.__version__, natten.__version__, torchcodec.__version__)"
 
 # Install Node dependencies (only re-runs when package.json / package-lock.json change)
 COPY ui/package.json ui/package-lock.json /app/ai-toolkit/ui/

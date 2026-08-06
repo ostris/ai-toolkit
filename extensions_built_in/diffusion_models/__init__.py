@@ -13,10 +13,13 @@ from .ernie_image import ErnieImageModel
 from .nucleus_image import NucleusImageModel
 from .hidream.hidream_o1_model import HidreamO1Model
 from .z_image.z_image_l2p_model import ZImageL2PModel
+from .anima import AnimaModel
 from .ideogram4 import Ideogram4Model
 from .prx_pixel_t2i import PRXPixelT2IModel
 from .krea2 import Krea2Model
 from .boogu_image import BooguImageModel, BooguImageEditModel
+from .mageflow import MageFlowModel, MageFlowEditModel
+from .minimax_h3 import MinimaxH3Model
 
 AI_TOOLKIT_MODELS = [
     # put a list of models here
@@ -44,9 +47,13 @@ AI_TOOLKIT_MODELS = [
     NucleusImageModel,
     HidreamO1Model,
     ZImageL2PModel,
+    AnimaModel,
     Ideogram4Model,
     PRXPixelT2IModel,
     Krea2Model,
     BooguImageModel,
     BooguImageEditModel,
+    MageFlowModel,
+    MageFlowEditModel,
+    MinimaxH3Model,
 ]

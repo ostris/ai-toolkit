@@ -115,6 +115,10 @@ class QwenImageEditModel(QwenImageModel):
 
             return {"latents": latents}
 
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         img = pipeline(
             image=control_img,
             prompt_embeds=conditional_embeds.text_embeds,
@@ -134,6 +138,11 @@ class QwenImageEditModel(QwenImageModel):
             callback_on_step_end=callback_on_step_end,
             **extra,
         ).images[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
+
         return img
 
     def condition_noisy_latents(
@@ -254,7 +263,6 @@ class QwenImageEditModel(QwenImageModel):
         prompt_embeds_mask = text_embeddings.attention_mask.to(
             self.device_torch, dtype=torch.int64
         )
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
         enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
 
         noise_pred = self.transformer(
@@ -264,7 +272,6 @@ class QwenImageEditModel(QwenImageModel):
             encoder_hidden_states=enc_hs,
             encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
             return_dict=False,
             **kwargs,
         )[0]

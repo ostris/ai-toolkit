@@ -1,6 +1,7 @@
 # ref https://github.com/huggingface/diffusers/blob/17b53f08661732caca6a546295950fc4b1696ad7/scripts/convert_ltx2_to_diffusers.py
 
 from contextlib import nullcontext
+import json
 from typing import Any, Dict, Tuple
 
 import torch
@@ -899,26 +900,76 @@ def get_model_state_dict_from_combined_ckpt(
     return model_state_dict
 
 
+# scale/metadata side keys that accompany quantized weights.
+# weight_scale/weight_scale_2/input_scale + comfy_quant is ComfyUI's current quant format,
+# scale_weight/scale_input + a scaled_fp8 marker is the legacy scaled fp8 naming.
+QUANT_SIDE_KEY_SUFFIXES = (
+    ".weight_scale",
+    ".weight_scale_2",
+    ".pre_quant_scale",
+    ".input_scale",
+    ".comfy_quant",
+    ".scale_weight",
+    ".scale_input",
+)
+
+
+def _dequantize_weight(w_q: torch.Tensor, w_scale: torch.Tensor = None):
+    w = w_q.to(torch.float32)
+    if w_scale is not None:
+        w_scale = w_scale.to(torch.float32)
+        if w_scale.numel() == 1:
+            w = w * w_scale
+        elif w_scale.numel() == w.shape[0]:
+            # per output channel scale
+            w = w * w_scale.reshape(-1, *([1] * (w.ndim - 1)))
+        else:
+            raise ValueError(
+                f"Unsupported weight scale shape {tuple(w_scale.shape)} for weight of shape {tuple(w.shape)}"
+            )
+    return w.to(torch.bfloat16)
+
+
 def dequantize_state_dict(state_dict: Dict[str, Any]):
     keys = list(state_dict.keys())
     state_out = {}
     for k in keys:
-        if k.endswith(
-            (".weight_scale", ".weight_scale_2", ".pre_quant_scale", ".input_scale")
-        ):
+        if k.endswith(QUANT_SIDE_KEY_SUFFIXES) or k.split(".")[-1] == "scaled_fp8":
             continue
 
         t = state_dict[k]
 
         if k.endswith(".weight"):
             prefix = k[: -len(".weight")]
-            wscale_k = prefix + ".weight_scale"
-            if wscale_k in state_dict:
-                w_q = t
-                w_scale = state_dict[wscale_k]
-                # Comfy quant = absmax per-tensor weight quant, nothing fancy
-                w_bf16 = w_q.to(torch.bfloat16) * w_scale.to(torch.bfloat16)
-                state_out[k] = w_bf16
+            w_scale = state_dict.get(prefix + ".weight_scale")
+            if w_scale is None:
+                w_scale = state_dict.get(prefix + ".scale_weight")
+
+            quant_conf_t = state_dict.get(prefix + ".comfy_quant")
+            if quant_conf_t is not None:
+                # comfy_quant is a uint8 tensor holding json metadata for the layer
+                quant_conf = json.loads(bytes(quant_conf_t.cpu().numpy().tobytes()))
+                quant_format = quant_conf.get("format")
+                params_conf = quant_conf.get("params", {})
+                if not isinstance(params_conf, dict):
+                    params_conf = {}
+                if quant_format in ("float8_e4m3fn", "float8_e5m2", "int8_tensorwise"):
+                    if quant_conf.get("convrot", params_conf.get("convrot", False)):
+                        raise ValueError(
+                            f"Layer {prefix} uses convrot int8 quantization which cannot be dequantized here. "
+                            "Please use an fp8 scaled or full precision checkpoint."
+                        )
+                    state_out[k] = _dequantize_weight(t, w_scale)
+                    continue
+                raise ValueError(
+                    f"Layer {prefix} is quantized with unsupported format '{quant_format}'. "
+                    "Only fp8/int8 tensorwise quantized checkpoints can be dequantized for training. "
+                    "Please use an fp8 scaled or full precision checkpoint."
+                )
+
+            if w_scale is not None:
+                # absmax per-tensor weight quant, nothing fancy
+                state_out[k] = _dequantize_weight(t, w_scale)
                 continue
 
         state_out[k] = t

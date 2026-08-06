@@ -12,6 +12,8 @@ from typing import Union, List, Optional
 
 import numpy as np
 import yaml
+from PIL import Image, ImageOps
+from torchvision import transforms
 from diffusers import T2IAdapter, ControlNetModel
 from diffusers.training_utils import compute_density_for_timestep_sampling
 from safetensors.torch import save_file, load_file
@@ -23,6 +25,7 @@ from huggingface_hub import HfApi, interpreter_login
 from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
+from toolkit.buckets import get_bucket_for_image_size
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
@@ -40,6 +43,7 @@ from toolkit.network_mixins import Network
 from toolkit.optimizer import get_optimizer
 from toolkit.paths import CONFIG_ROOT
 from toolkit.progress_bar import ToolkitProgressBar
+from toolkit.prompt_utils import concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sampler import get_sampler
 from toolkit.saving import save_t2i_from_diffusers, load_t2i_model, save_ip_adapter_from_diffusers, \
@@ -47,7 +51,7 @@ from toolkit.saving import save_t2i_from_diffusers, load_t2i_model, save_ip_adap
 
 from toolkit.scheduler import get_lr_scheduler
 from toolkit.sd_device_states_presets import get_train_sd_device_state_preset
-from toolkit.stable_diffusion_model import StableDiffusion
+from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
 
 from jobs.process import BaseTrainProcess
 from toolkit.metadata import get_meta_for_safetensors, load_metadata_from_safetensors, add_base_model_info_to_meta, \
@@ -261,6 +265,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
         self.additional_logs = {}
+        # cached latents, prompt embeds, and fixed noise for validation
+        self._validation_cache = None
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -370,6 +376,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if self.ema is not None:
             self.ema.train()
+        print_acc("") # add a line break
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
@@ -626,18 +633,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     )
         else:
             if self.network is not None and self.train_config.merge_network_on_save:
-                # merge the network weights into a full model and save that
-                if not self.network.can_merge_in:
+                # merge the network weights into a full model and save that.
+                # torchao quantized weights can be force merged here (dequantize -> merge -> re-quantize)
+                # even though can_merge_in is False (kept False so sampling never merges). quanto and
+                # layer_offloading still cannot merge.
+                from toolkit.util.quantize import get_torchao_config
+                can_force_quantized_merge = (
+                    self.model_config.quantize and not self.model_config.layer_offloading
+                    and get_torchao_config(self.model_config.qtype) is not None
+                )
+                if not self.network.can_merge_in and not can_force_quantized_merge:
                     raise ValueError("Network cannot merge in weights. Cannot save full model.")
-                
+
                 print_acc("Merging network weights into full model for saving...")
-                
+
                 self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_strength)
                 # reset weights to zero
                 self.network.reset_weights()
                 self.network.is_merged_in = False
                 
-                print_acc("Done merging network weights.")
+                print_acc("Done merging network weights. Saving model...")
                 
             if self.save_config.save_format == "diffusers":
                 # saving as a folder path
@@ -779,6 +794,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 use_feedback=self.train_config.ema_config.use_feedback,
                 param_multiplier=self.train_config.ema_config.param_multiplier,
             )
+            # expose to the model: models that run an EMA-teacher forward during training
+            # (e.g. wan21_pixel self_flow) read it from here
+            self.sd.ema = self.ema
 
     def before_dataset_load(self):
         pass
@@ -795,7 +813,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_after_sd_init_before_load(self):
         pass
 
-    def get_latest_save_path(self, name=None, post=''):
+    def get_latest_save_path(self, name=None, post='', include_pretrained_lora=True):
         if name == None:
             name = self.job.name
         # get latest saved step
@@ -828,7 +846,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if len(paths) > 0:
                     latest_path = max(paths, key=os.path.getctime)
         
-        if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
+        if include_pretrained_lora and latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
             # set pretrained lora path as load path if we do not have a checkpoint to resume from
             if os.path.exists(self.network_config.pretrained_lora_path):
                 latest_path = self.network_config.pretrained_lora_path
@@ -1353,7 +1371,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
-                        batch_size, latents.shape[1], 1, 1,
+                        s,
                         device=noise.device,
                         dtype=noise.dtype
                     ) * self.train_config.random_noise_shift
@@ -1561,6 +1579,161 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.load_training_state_from_metadata(latest_save_path)
         # set trainable params
         self.sd.adapter = self.adapter
+    
+    def setup_validation(self):
+        # caches everything needed for validation (latents, prompt embeds, fixed noise)
+        # must be called while the vae and text encoder are still loaded, they may be
+        # dumped later to save memory
+        val_config = self.train_config.validation_config
+        if val_config is None:
+            return
+        if not self.accelerator.is_main_process:
+            return
+        validation_items = []
+        for item in val_config.validation_items:
+            if not item.image_path:
+                print_acc("Skipping validation item with no image")
+                continue
+            if not os.path.exists(item.image_path):
+                print_acc(f"Skipping validation item, image not found: {item.image_path}")
+                continue
+            validation_items.append(item)
+        if len(validation_items) == 0:
+            print_acc("Validation config has no valid validation_items, skipping validation")
+            return
+        print_acc(f"Caching validation latents and embeddings for {len(validation_items)} images")
+        device = self.device_torch
+        dtype = get_torch_dtype(self.train_config.dtype)
+        resolution = val_config.resolution
+
+        divisibility = self.sd.get_bucket_divisibility()
+
+        image_list = []
+        prompt_list = []
+        for item in validation_items:
+            img = Image.open(item.image_path)
+            img = ImageOps.exif_transpose(img).convert('RGB')
+            # deterministic resize that keeps the aspect ratio, matches the pixel budget
+            # of the resolution and the bucket divisibility of the model
+            bucket = get_bucket_for_image_size(
+                img.width, img.height,
+                resolution=resolution,
+                divisibility=divisibility,
+            )
+            img = img.resize((bucket['width'], bucket['height']), Image.BICUBIC)
+            tensor = transforms.ToTensor()(img) * 2.0 - 1.0
+            image_list.append(tensor)
+            prompt = item.prompt
+            if self.trigger_word is not None:
+                prompt = self.sd.inject_trigger_into_prompt(
+                    prompt,
+                    trigger=self.trigger_word,
+                    add_if_not_present=False,
+                )
+            prompt_list.append(prompt)
+
+        fork_devices = [device] if device.type == 'cuda' else []
+        with torch.no_grad(), torch.random.fork_rng(devices=fork_devices):
+            # encode the prompts one at a time so they can be reassembled per sigma later
+            te = self.sd.text_encoder
+            te_list = te if isinstance(te, list) else ([te] if te is not None else [])
+            orig_te_devices = [next(t.parameters()).device for t in te_list]
+            self.sd.text_encoder_to(device)
+            embeds_list = [
+                self.sd.encode_prompt([prompt]).to('cpu', dtype=torch.float32).detach()
+                for prompt in prompt_list
+            ]
+            for t, te_device in zip(te_list, orig_te_devices):
+                t.to(te_device)
+
+            # seed so the vae latent dist sampling is always identical
+            torch.manual_seed(42)
+            orig_vae_device = self.sd.vae.device
+            # images can have different aspect ratios so they are encoded one at a time
+            latent_list = [
+                self.sd.encode_images([image], device=device, dtype=dtype).to('cpu', dtype=torch.float32)
+                for image in image_list
+            ]
+            self.sd.vae.to(orig_vae_device)
+
+            # fixed noise per image, seeds start at 42 and increment for each image
+            noise_list = []
+            for i, latent in enumerate(latent_list):
+                generator = torch.Generator(device='cpu').manual_seed(42 + i)
+                noise_list.append(
+                    torch.randn(latent.shape, generator=generator, dtype=torch.float32)
+                )
+
+        self._validation_cache = {
+            'latents': latent_list,
+            'noise': noise_list,
+            'embeds': embeds_list,
+        }
+        flush()
+
+    def validate(self):
+        val_config = self.train_config.validation_config
+        if val_config is None or self._validation_cache is None:
+            return
+        if not self.accelerator.is_main_process:
+            return
+        device = self.device_torch
+        dtype = get_torch_dtype(self.train_config.dtype)
+        sigmas = val_config.validation_sigmas
+        cache = self._validation_cache
+
+        was_unet_training = self.sd.unet.training
+        self.sd.unet.eval()
+        # the network is only active inside its context, without this the base model is validated
+        network = self.network if self.network is not None else BlankNetwork()
+        start_multiplier = network.multiplier
+        network.multiplier = 1.0
+        with torch.no_grad(), network:
+            if self.sd.is_flow_matching:
+                timestep_values = [sigma * 1000.0 for sigma in sigmas]
+            else:
+                num_train_timesteps = self.sd.noise_scheduler.config.num_train_timesteps
+                timestep_values = [
+                    min(int(round(sigma * num_train_timesteps)), num_train_timesteps - 1)
+                    for sigma in sigmas
+                ]
+            timesteps = torch.tensor(timestep_values, device=device)
+
+            # images can have different aspect ratios, so each image is predicted as its
+            # own batch with all sigmas at once
+            losses = []
+            for latents_cpu, noise_cpu, embeds_cpu in zip(cache['latents'], cache['noise'], cache['embeds']):
+                latents = latents_cpu.to(device, dtype=dtype)
+                noise = noise_cpu.to(device, dtype=dtype)
+                batch_latents = torch.cat([latents] * len(sigmas), dim=0)
+                batch_noise = torch.cat([noise] * len(sigmas), dim=0)
+                batch_embeds = concat_prompt_embeds([embeds_cpu.clone().to(device, dtype=dtype)] * len(sigmas))
+
+                noisy_latents = self.sd.add_noise(batch_latents, batch_noise, timesteps).detach()
+
+                noise_pred = self.sd.predict_noise(
+                    latents=noisy_latents.to(device, dtype=dtype),
+                    conditional_embeddings=batch_embeds,
+                    timestep=timesteps,
+                    guidance_scale=1.0,
+                    guidance_embedding_scale=self.train_config.cfg_scale,
+                    bypass_guidance_embedding=self.train_config.bypass_guidance_embedding,
+                )
+
+                if self.sd.is_flow_matching:
+                    target = batch_noise - batch_latents
+                elif self.sd.prediction_type == 'v_prediction':
+                    target = self.sd.noise_scheduler.get_velocity(batch_latents, batch_noise, timesteps)
+                else:
+                    target = batch_noise
+
+                losses.append(torch.nn.functional.mse_loss(noise_pred.float(), target.float()))
+
+            val_loss = torch.stack(losses).mean()
+            self.additional_logs['val/loss'] = val_loss.item()
+        network.multiplier = start_multiplier
+        if was_unet_training:
+            self.sd.unet.train()
 
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
@@ -1575,7 +1748,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.is_fine_tuning or self.train_config.merge_network_on_save:
             # get the latest checkpoint
             # check to see if we have a latest save
-            latest_save_path = self.get_latest_save_path()
+            # exclude pretrained_lora_path here so a pretrained lora is not loaded as full model
+            # weights. It is loaded as the initial lora later when building the network.
+            latest_save_path = self.get_latest_save_path(include_pretrained_lora=False)
 
             if latest_save_path is not None:
                 print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
@@ -1810,8 +1985,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_unet
                 )
 
-                # we cannot merge in if quantized
-                if self.model_config.quantize or self.model_config.layer_offloading:
+                # we cannot merge in if quantized or offloading. note: torchao quantized weights can
+                # still be force merged at save time for the merge-and-reset method (see save logic),
+                # but we keep can_merge_in False here so sampling never merges in/out.
+                # models loaded from pre-quantized checkpoints (e.g. comfy convrot/nvfp4
+                # imports) never set model_config.quantize, so detect their layers too
+                model_is_prequantized = any(
+                    getattr(m, 'is_ostris_quantized', False) for m in unet.modules()
+                ) if unet is not None else False
+                if self.model_config.quantize or self.model_config.layer_offloading or model_is_prequantized:
                     # todo find a way around this
                     self.network.can_merge_in = False
 
@@ -1863,6 +2045,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)
                     self.network.multiplier = 1.0
+                elif self.train_config.merge_network_on_save and self.network_config.pretrained_lora_path is not None:
+                    # with merge_network_on_save, saved checkpoints are full models that get loaded as the
+                    # base model. Only load the pretrained lora as the initial lora when we are not resuming
+                    # from a saved checkpoint (otherwise it is already merged into the loaded model).
+                    resume_save_path = self.get_latest_save_path(include_pretrained_lora=False)
+                    if resume_save_path is None and os.path.exists(self.network_config.pretrained_lora_path):
+                        print_acc(f"Loading initial lora from pretrained lora path: {self.network_config.pretrained_lora_path}")
+                        extra_weights = self.load_weights(self.network_config.pretrained_lora_path)
+                        self.network.multiplier = 1.0
                 
                 if self.network_config.layer_offloading:
                     MemoryManager.attach(
@@ -2043,6 +2234,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
         self.lr_scheduler = lr_scheduler
 
+        # cache validation latents and embeddings now, the vae and text encoder
+        # may be dumped before the train loop starts
+        self.setup_validation()
+
         ### HOOk ###
         self.before_dataset_load()
         # load datasets if passed in the root process
@@ -2088,6 +2283,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if user_set_cache_limit:
                     torch._dynamo.config.cache_size_limit = cache_size_limit
                 torch._dynamo.config.suppress_errors = False
+                # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
+                # crashes on some dynamic-shape index expressions (sympy PowByNatural
+                # "assert p >= 0", seen with Qwen Image). The analysis doesn't apply
+                # to dynamic shapes anyway, so turn it off.
+                if hasattr(torch._inductor.config.triton, 'coalesce_tiling_analysis'):
+                    torch._inductor.config.triton.coalesce_tiling_analysis = False
 
                 compile_mode = getattr(self.model_config, 'compile_mode', 'default')
                 compile_dynamic = getattr(self.model_config, 'compile_dynamic', True)
@@ -2344,7 +2545,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
                 is_reg_step = False
                 is_save_step = self.save_config.save_every and self.step_num % self.save_config.save_every == 0
-                is_sample_step = self.sample_config.sample_every and self.step_num % self.sample_config.sample_every == 0
+                is_sample_step = (
+                    self.sample_config.sample_every
+                    and self.step_num >= self.sample_config.sample_start_step
+                    and self.step_num % self.sample_config.sample_every == 0
+                )
                 if self.train_config.disable_sampling:
                     is_sample_step = False
 
@@ -2448,6 +2653,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print("\n==== Profile Results ====")
                 print(self.torch_profiler.key_averages().table(sort_by="cpu_time_total", row_limit=1000))
             self.timer.stop('train_loop')
+
+            # run validation before any possible sampling/logging for this step
+            if not did_oom and self.train_config.validation_config is not None:
+                val_config = self.train_config.validation_config
+                is_validate_step = (
+                    self.step_num == self.start_step
+                    or (val_config.validate_every_n_steps and self.step_num % val_config.validate_every_n_steps == 0)
+                )
+                if is_validate_step:
+                    with self.timer('validate'):
+                        self.validate()
+
             if not did_first_flush:
                 flush()
                 did_first_flush = True

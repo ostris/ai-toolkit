@@ -211,6 +211,12 @@ class Wan2214bModel(Wan21):
         if not self.train_high_noise or not self.train_low_noise:
             self.target_lora_modules = ["WanTransformer3DModel"]
 
+    def get_quantization_exclude_modules(self):
+        # the timestep/text conditioning embedders and the final projection feed
+        # every downstream modulation; keep them in full precision when quantizing.
+        # names are relative to each individual transformer (they quantize separately)
+        return ["condition_embedder*", "proj_out*"]
+
     @property
     def max_step_saves_to_keep_multiplier(self):
         # the cleanup mechanism checks this to see how many saves to keep
@@ -549,6 +555,11 @@ class Wan2214bModel(Wan21):
     ):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
+
+        if self.use_vae_tiling:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         # todo, figure out how to do video
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
@@ -566,6 +577,10 @@ class Wan2214bModel(Wan21):
             output_type="pil",
             **extra
         )[0]
+
+        if self.use_vae_tiling:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images

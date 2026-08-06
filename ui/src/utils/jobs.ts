@@ -66,6 +66,22 @@ export const saveJobNow = (jobID: string) => {
   });
 };
 
+export const sampleJobNow = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/sample_now`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job set to sample on next step:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error setting job to sample on next step:', error);
+        reject(error);
+      });
+  });
+};
+
 export const markJobAsStopped = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

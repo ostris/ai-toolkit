@@ -1,8 +1,9 @@
 'use client';
 
 import { CpuInfo } from '@/types';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export default function useCPUInfo(reloadInterval: null | number = null) {
   const [cpuInfo, setCpuInfo] = useState<CpuInfo | null>(null);
@@ -23,22 +24,7 @@ export default function useCPUInfo(reloadInterval: null | number = null) {
     }
   };
 
-  useEffect(() => {
-    // Fetch immediately on component mount
-    fetchCpuInfo();
-
-    // Set up interval if specified
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        fetchCpuInfo();
-      }, reloadInterval);
-
-      // Cleanup interval on unmount
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [reloadInterval]); // Added dependencies
+  usePollLoop(fetchCpuInfo, reloadInterval);
 
   return { cpuInfo, isCPUInfoLoaded, status, refreshCpuInfo: fetchCpuInfo };
 }

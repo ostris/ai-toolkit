@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { getTrainingFolder } from '@/server/settings';
-
-const prisma = new PrismaClient();
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {
   const { jobID } = await params;
@@ -21,7 +19,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const jobFolder = path.join(trainingFolder, job.name);
   const pluginPath = path.join(jobFolder, 'plugin.html');
 
-  if (!fs.existsSync(pluginPath)) {
+  try {
+    await fs.promises.access(pluginPath);
+  } catch {
     return NextResponse.json({ exists: false, html: null });
   }
 
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   // serve the raw html so it can be loaded directly as an iframe src
   let html = '';
   try {
-    html = fs.readFileSync(pluginPath, 'utf-8');
+    html = await fs.promises.readFile(pluginPath, 'utf-8');
   } catch (error) {
     console.error('Error reading plugin file:', error);
     return NextResponse.json({ error: 'Error reading plugin file' }, { status: 500 });

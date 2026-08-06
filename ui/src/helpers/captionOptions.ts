@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking';
 
 export interface CaptionOption {
     name: string;
@@ -66,12 +66,16 @@ export const captionerTypes: CaptionOption[] = [
             { value: 'Qwen/Qwen3-VL-2B-Instruct', label: 'Qwen/Qwen3-VL-2B-Instruct' },
             { value: 'Qwen/Qwen3-VL-4B-Instruct', label: 'Qwen/Qwen3-VL-4B-Instruct' },
             { value: 'Qwen/Qwen3-VL-8B-Instruct', label: 'Qwen/Qwen3-VL-8B-Instruct' },
+            { value: 'huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated', label: 'huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated' },
             { value: 'Qwen/Qwen3-VL-30B-A3B-Instruct', label: 'Qwen/Qwen3-VL-30B-A3B-Instruct' },
+            { value: 'Qwen/Qwen3.6-27B', label: 'Qwen/Qwen3.6-27B' },
+            { value: 'huihui-ai/Huihui-Qwen3.6-27B-abliterated', label: 'huihui-ai/Huihui-Qwen3.6-27B-abliterated' },
         ],
         additionalSections: [
             'caption.caption_prompt',
             'caption.max_res',
             'caption.max_new_tokens',
+            'caption.thinking',
         ],
     },
     {
@@ -122,6 +126,15 @@ export const groupedCaptionerTypes: GroupedSelectOption[] = captionerTypes.reduc
 export const quantizationOptions: SelectOption[] = [
     { value: '', label: '- NONE -' },
     { value: 'float8', label: 'float8 (default)' },
+    { value: 'convrot8', label: '8bit convrot' },
+    { value: 'convrot4', label: '4bit convrot (nvfp4)' },
+    { value: 'convrotint7', label: '7bit convrot' },
+    { value: 'convrotint6', label: '6bit convrot' },
+    { value: 'convrotint5', label: '5bit convrot' },
+    { value: 'convrotint4', label: '4bit convrot' },
+    { value: 'convrotint3', label: '3bit convrot' },
+    { value: 'convrotint2', label: '2bit convrot' },
+    { value: 'convrotbitnet', label: '1.58bit convrot (bitnet)' },
     { value: 'uint7', label: '7 bit' },
     { value: 'uint6', label: '6 bit' },
     { value: 'uint5', label: '5 bit' },

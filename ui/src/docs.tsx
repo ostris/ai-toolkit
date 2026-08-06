@@ -340,6 +340,25 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'model.model_kwargs.kv_cache': {
+    title: 'KV Cache',
+    description: (
+      <>
+        This will enable KV Cache for control images in a model that supports it. LoRAs trained with this on
+        need to also be inferenced with it, and vice versa. This does not speed up or slow down training, but on inference,
+        the control images only need to be processed once for the entire generation, vs being processed for every step.
+        Which leads to a significant speedup on inference.
+      </>
+    ),
+  },
+  'train.guidance_loss_target': {
+    title: 'Guidance Loss Target',
+    description: (
+      <>
+        For contrastive guidance loss, this is the target CGF to amplify predictions to. 
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

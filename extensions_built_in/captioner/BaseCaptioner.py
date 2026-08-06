@@ -40,6 +40,7 @@ class CaptionConfig:
         self.recaption = kwargs.get("recaption", False)
         self.max_res = kwargs.get("max_res", 512)
         self.max_new_tokens = kwargs.get("max_new_tokens", 128)
+        self.thinking = kwargs.get("thinking", False)
         self.caption_prompt = kwargs.get(
             "caption_prompt", "Describe this image in detail."
         )
@@ -207,13 +208,52 @@ class BaseCaptioner(BaseExtensionProcess):
             torch._dynamo.config.suppress_errors = True
             for model in [self.model, self.model2]:
                 if model is not None and isinstance(model, torch.nn.Module):
-                    # dynamic=True avoids recompiling for every new image/token shape
-                    model.compile(dynamic=True)
+                    # compile per transformer block instead of the whole model:
+                    # small graphs compile far faster and identical blocks hit
+                    # the inductor cache, vs many minutes tracing one huge graph
+                    compiled_blocks = self._compile_blocks(model)
+                    if compiled_blocks == 0:
+                        # no repeated block lists found; compile the whole model
+                        # dynamic=True avoids recompiling for every new image/token shape
+                        model.compile(dynamic=True)
             print(
                 "[AITK] Model compilation enabled. The first few items will be slow while the model compiles."
             )
         except Exception as e:
             print(f"[AITK] Failed to compile model, continuing without compile: {e}")
+
+    def _compile_blocks(self, model: torch.nn.Module) -> int:
+        """Compile the repeated transformer blocks individually, leaving one-off
+        modules (embeddings, mergers, lm_head) eager. Returns the number of
+        blocks compiled."""
+        # candidate lists: ModuleLists of >= 2 blocks that all share one class
+        # and have submodules of their own (i.e. real transformer blocks, not
+        # lists of leaf layers)
+        candidates = []
+        for name, module in model.named_modules():
+            if not isinstance(module, torch.nn.ModuleList) or len(module) < 2:
+                continue
+            classes = {type(b) for b in module}
+            if len(classes) != 1:
+                continue
+            if next(module[0].children(), None) is None:
+                continue
+            candidates.append(name)
+        # skip lists nested inside another candidate list
+        candidates = [
+            name
+            for name in candidates
+            if not any(
+                name != other and name.startswith(other + ".") for other in candidates
+            )
+        ]
+        count = 0
+        for name in candidates:
+            block_list = model.get_submodule(name)
+            for i, block in enumerate(block_list):
+                block_list[i] = torch.compile(block, dynamic=True)
+                count += 1
+        return count
 
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
@@ -234,26 +274,21 @@ class BaseCaptioner(BaseExtensionProcess):
         while True:
             try:
                 if self.should_stop():
-                    # Mark and update status (non-blocking; uses existing infra)
-                    self.is_stopping = True
-                    self._run_async_operation(
-                        self._update_status("stopped", "Job stopped (remote)")
-                    )
-                    # Best-effort flush pending async ops
-                    try:
-                        asyncio.run(self.wait_for_all_async())
-                    except RuntimeError:
-                        pass
-                    # Try to stop DB thread pool quickly
-                    try:
-                        self.thread_pool.shutdown(wait=False, cancel_futures=True)
-                    except TypeError:
-                        self.thread_pool.shutdown(wait=False)
+                    if self.is_stopping:
+                        # maybe_stop() already started the graceful shutdown;
+                        # a second interrupt would only break its cleanup.
+                        return
                     print("")
                     print("****************************************************")
                     print("    Stop signal received; terminating process.      ")
                     print("****************************************************")
-                    os.kill(os.getpid(), signal.SIGINT)
+                    # Deliver a real KeyboardInterrupt to the main thread so
+                    # on_error runs the normal shutdown (final DB write, last
+                    # log). os.kill(pid, SIGINT) must not be used here: on
+                    # Windows it is TerminateProcess and kills us instantly.
+                    # Leave the thread pool alone -- on_error still needs it.
+                    signal.raise_signal(signal.SIGINT)
+                    return
                 time.sleep(interval_sec)
             except Exception:
                 time.sleep(interval_sec)
@@ -415,7 +450,11 @@ class BaseCaptioner(BaseExtensionProcess):
         super(BaseCaptioner, self).on_error(e)
         if self.is_ui_captioner:
             try:
-                if not self.is_stopping:
+                if isinstance(e, KeyboardInterrupt):
+                    # SIGINT (UI stop button or ctrl+c) is a stop, not an error
+                    self.is_stopping = True
+                    self.update_status("stopped", "Job stopped")
+                elif not self.is_stopping:
                     self.update_status("error", str(e))
                 asyncio.run(self.wait_for_all_async())
             except Exception as db_err:

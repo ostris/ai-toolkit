@@ -45,7 +45,7 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     // Security check: resolve the path so any `..` segments are collapsed,
     // then ensure it's still under an allowed root. (Plain `.includes('..')`
     // false-positives on filenames that contain `..` as text, e.g. an ellipsis.)
-    const resolved = path.resolve(filepath);
+    let resolved = path.resolve(filepath);
     const isAllowed = allowedDirs.some(
       allowedDir => resolved === allowedDir || resolved.startsWith(allowedDir + path.sep),
     );
@@ -53,6 +53,17 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     if (!isAllowed) {
       console.warn(`Access denied: ${resolved} not in ${allowedDirs.join(', ')}`);
       return new NextResponse('Access denied', { status: 403 });
+    }
+
+    // ?thumb=1 serves the pre-generated 300x300 jpg from the sibling .thumbs
+    // folder (<name>.<ext>.jpg) when it exists; otherwise falls through to
+    // the full file exactly as before.
+    if (request.nextUrl.searchParams.has('thumb')) {
+      const thumbPath = path.join(path.dirname(resolved), '.thumbs', path.basename(resolved) + '.jpg');
+      const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+      if (thumbStat && thumbStat.isFile()) {
+        resolved = thumbPath;
+      }
     }
 
     // Bail out early if the client already gave up

@@ -30,17 +30,21 @@ export async function POST(request: NextRequest) {
   const allowedDir = await getDatasetsRoot();
   const captions: Record<string, string> = {};
 
-  for (const imgPath of imgPaths) {
-    if (typeof imgPath !== 'string') continue;
-    if (!isUnderRoot(imgPath, allowedDir)) continue;
+  // Read every caption file concurrently instead of blocking on each one in turn.
+  await Promise.all(
+    imgPaths.map(async imgPath => {
+      if (typeof imgPath !== 'string') return;
+      if (!isUnderRoot(imgPath, allowedDir)) return;
 
-    const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
-    try {
-      captions[imgPath] = fs.existsSync(captionPath) ? fs.readFileSync(captionPath, 'utf-8') : '';
-    } catch {
-      captions[imgPath] = '';
-    }
-  }
+      const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
+      try {
+        // Missing file (ENOENT) or any read error falls back to an empty caption.
+        captions[imgPath] = await fs.promises.readFile(captionPath, 'utf-8');
+      } catch {
+        captions[imgPath] = '';
+      }
+    }),
+  );
 
   return NextResponse.json({ captions });
 }

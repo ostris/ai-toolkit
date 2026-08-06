@@ -40,6 +40,7 @@ model Job {
   job_type        String   @default("train") // 'train', 'caption'
   job_ref         String? // can be used for anything for special jobs, like dataset path for caption jobs
   save_now        Boolean  @default(false) // if true, the job will be saved on the next step
+  sample_now      Boolean  @default(false) // if true, the job will be sampled on the next step
 
   @@index([status])
   @@index([gpu_ids])

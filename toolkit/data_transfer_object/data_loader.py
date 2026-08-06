@@ -60,10 +60,21 @@ class FileItemDTO(
         self.sample_rate = kwargs.get("sample_rate", 48000)
         self.num_frames = self.dataset_config.num_frames
         self.temporal_compression = kwargs.get("temporal_compression", 8)
+        # module-level function (picklable) for models whose valid frame
+        # counts are not temporal_compression * n + 1; None = default math
+        _sd = kwargs.get("sd", None)
+        self.frame_count_snapper = (
+            _sd.get_frame_count_snapper()
+            if _sd is not None and hasattr(_sd, "get_frame_count_snapper")
+            else None
+        )
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(
             "encode_control_in_text_embeddings", False
+        )
+        self.encode_first_frame_in_text_embeddings = kwargs.get(
+            "encode_first_frame_in_text_embeddings", False
         )
         self.te_padding_side = kwargs.get("te_padding_side", "right")
         self.latent_space_version = kwargs.get("latent_space_version", "sd1")
@@ -210,10 +221,33 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
-            
+            # the noise drawn for the audio stream on the primary (grad enabled)
+            # prediction. Secondary passes (cfg / guidance loss / prior preds)
+            # reuse it so their noisy audio matches the stored audio_target.
+            self.audio_noise: Union[torch.Tensor, None] = None
+            # audio predictions from the non primary passes. Kept separate so
+            # they cannot stomp the primary pred we backprop through.
+            self.audio_pred_uncond: Union[torch.Tensor, None] = None
+            self.audio_pred_prior: Union[torch.Tensor, None] = None
+            self.audio_pred_preservation: Union[torch.Tensor, None] = None
+            # which of the above the current secondary pass writes to. None (the
+            # default) means no secondary pass is in flight: any grad-enabled
+            # prediction is a primary one and writes audio_pred (and the
+            # noisy/sigma bookkeeping) directly. The trainer sets this around
+            # its prior / guidance-unconditional / preservation passes.
+            self.audio_pred_slot: Union[str, None] = None
+            # noisy audio rows and audio sigma of the primary pass, used to
+            # rebuild the clean audio estimate for perceptual losses
+            self.audio_noisy: Union[torch.Tensor, None] = None
+            self.audio_sigma: Union[torch.Tensor, None] = None
+
             self.num_frames: int = self.file_items[0].num_frames
 
-            if not is_latents_cached or self.file_items[0].dataset_config.load_image_when_caching_latents:
+            if (
+                not is_latents_cached
+                or self.file_items[0].dataset_config.load_image_when_caching_latents
+                or self.file_items[0].dataset_config.cache_tensors_to_disk
+            ):
                 # only return a tensor if latents are not cached, or if we are explicitly
                 # loading the raw image alongside the cached latents
                 self.tensor: torch.Tensor = torch.cat(
@@ -229,24 +263,32 @@ class DataLoaderBatchDTO:
                 if any(
                     [x._cached_first_frame_latent is not None for x in self.file_items]
                 ):
+                    # find one to use as a base; item 0 may not have one
+                    base_first_frame_latent = None
+                    for x in self.file_items:
+                        if x._cached_first_frame_latent is not None:
+                            base_first_frame_latent = x._cached_first_frame_latent
+                            break
                     self.first_frame_latents = torch.cat(
                         [
                             x._cached_first_frame_latent.unsqueeze(0)
                             if x._cached_first_frame_latent is not None
-                            else torch.zeros_like(
-                                self.file_items[0]._cached_first_frame_latent
-                            ).unsqueeze(0)
+                            else torch.zeros_like(base_first_frame_latent).unsqueeze(0)
                             for x in self.file_items
                         ]
                     )
                 if any([x._cached_audio_latent is not None for x in self.file_items]):
+                    # find one to use as a base; item 0 may not have one
+                    base_audio_latent = None
+                    for x in self.file_items:
+                        if x._cached_audio_latent is not None:
+                            base_audio_latent = x._cached_audio_latent
+                            break
                     self.audio_latents = torch.cat(
                         [
                             x._cached_audio_latent.unsqueeze(0)
                             if x._cached_audio_latent is not None
-                            else torch.zeros_like(
-                                self.file_items[0]._cached_audio_latent
-                            ).unsqueeze(0)
+                            else torch.zeros_like(base_audio_latent).unsqueeze(0)
                             for x in self.file_items
                         ]
                     )
@@ -457,6 +499,15 @@ class DataLoaderBatchDTO:
     ):
         return [x.caption_short for x in self.file_items]
 
+    def set_secondary_audio_pred(self, pred):
+        """Route an audio prediction from a non primary pass (prior,
+        unconditional/guidance, preservation) to its own slot so it cannot
+        stomp the primary prediction the loss backprops through. Passes that
+        did not declare a slot (e.g. a trainer's extra no_grad prediction)
+        are simply not stored."""
+        if self.audio_pred_slot is not None:
+            setattr(self, self.audio_pred_slot, pred)
+
     def cleanup(self):
         del self.latents
         del self.tensor
@@ -465,6 +516,12 @@ class DataLoaderBatchDTO:
         del self.audio_data
         del self.audio_target
         del self.audio_pred
+        del self.audio_noise
+        del self.audio_pred_uncond
+        del self.audio_pred_prior
+        del self.audio_pred_preservation
+        del self.audio_noisy
+        del self.audio_sigma
         del self.first_frame_latents
         del self.audio_latents
         for file_item in self.file_items:

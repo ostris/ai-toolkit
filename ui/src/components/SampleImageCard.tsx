@@ -32,10 +32,11 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const [isVisible, setIsVisible] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  // videos with no pre-generated thumb (older samples) fall back to the <video> element
+  const [videoFallback, setVideoFallback] = useState(false);
 
   const isItAudio = isAudio(imageUrl);
   const isItVideo = isVideo(imageUrl);
-  const isImageType = !isItAudio && !isItVideo;
 
   // Observe both enter and exit
   useEffect(() => {
@@ -66,7 +67,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   // the element unmounts). A short debounce skips requests entirely during fast
   // scrolls where the card is only briefly visible.
   useEffect(() => {
-    if (!isImageType) return;
+    if (isItAudio) return;
     if (!isVisible) return;
 
     const controller = new AbortController();
@@ -74,13 +75,25 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
     let objectUrl: string | null = null;
 
     const timer = window.setTimeout(() => {
-      fetch(`/api/img/${encodeURIComponent(imageUrl)}`, { signal: controller.signal })
+      // ?thumb=1: the server sends the small pre-generated thumbnail when one
+      // exists, otherwise the full file. Videos without a thumb come back as
+      // video/* — abort the transfer and render the <video> element instead.
+      fetch(`/api/img/${encodeURIComponent(imageUrl)}?thumb=1`, { signal: controller.signal })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const contentType = r.headers.get('content-type') || '';
+          if (isItVideo && !contentType.startsWith('image/')) {
+            controller.abort();
+            if (!cancelled) {
+              setVideoFallback(true);
+              setLoaded(true);
+            }
+            return null;
+          }
           return r.blob();
         })
         .then(blob => {
-          if (cancelled) return;
+          if (cancelled || !blob) return;
           objectUrl = URL.createObjectURL(blob);
           setBlobUrl(objectUrl);
           setLoaded(true);
@@ -97,15 +110,16 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setBlobUrl(null);
       setLoaded(false);
+      setVideoFallback(false);
     };
-  }, [isVisible, isImageType, imageUrl]);
+  }, [isVisible, isItAudio, isItVideo, imageUrl]);
 
   return (
     <div className={`flex flex-col ${className}`}>
       <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: '100%' }} onClick={onClick}>
         <div
           className={`absolute inset-0 rounded-t-lg shadow-md bg-gray-900 ${
-            isVisible && isImageType && !loaded ? 'animate-pulse' : ''
+            isVisible && !isItAudio && !loaded ? 'animate-pulse' : ''
           }`}
         >
           {isVisible ? (
@@ -120,7 +134,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                   }}
                 />
               </div>
-            ) : isItVideo ? (
+            ) : isItVideo && videoFallback ? (
               <video
                 ref={videoRef}
                 src={`/api/img/${encodeURIComponent(imageUrl)}`}

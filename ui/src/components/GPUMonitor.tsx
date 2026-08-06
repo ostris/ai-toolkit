@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { GPUApiResponse } from '@/types';
 import Loading from '@/components/Loading';
 import GPUWidget from '@/components/GPUWidget';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 const GpuMonitor: React.FC = () => {
   const [gpuData, setGpuData] = useState<GPUApiResponse | null>(null);
@@ -11,39 +12,32 @@ const GpuMonitor: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const isFetchingGpuRef = useRef(false);
 
-  useEffect(() => {
-    const fetchGpuInfo = async () => {
-      if (isFetchingGpuRef.current) {
-        return;
-      }
-      setLoading(true);
-      isFetchingGpuRef.current = true;
-      apiClient
-        .get('/api/gpu')
-        .then(res => res.data)
-        .then(data => {
-          setGpuData(data);
-          setLastUpdated(new Date());
-          setError(null);
-        })
-        .catch(err => {
-          setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
-        })
-        .finally(() => {
-          isFetchingGpuRef.current = false;
-          setLoading(false);
-        });
-    };
+  const fetchGpuInfo = () => {
+    if (isFetchingGpuRef.current) {
+      return;
+    }
+    setLoading(true);
+    isFetchingGpuRef.current = true;
+    return apiClient
+      .get('/api/gpu')
+      .then(res => res.data)
+      .then(data => {
+        setGpuData(data);
+        setLastUpdated(new Date());
+        setError(null);
+      })
+      .catch(err => {
+        setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .finally(() => {
+        isFetchingGpuRef.current = false;
+        setLoading(false);
+      });
+  };
 
-    // Fetch immediately on component mount
-    fetchGpuInfo();
-
-    // Set up interval to fetch every 1 seconds
-    const intervalId = setInterval(fetchGpuInfo, 1000);
-
-    // Clean up interval on component unmount
-    return () => clearInterval(intervalId);
-  }, []);
+  // Fetch every second, but only schedule the next fetch after the current
+  // one finishes so slow responses can't stack requests
+  usePollLoop(fetchGpuInfo, 1000);
 
   const getGridClasses = (gpuCount: number): string => {
     switch (gpuCount) {

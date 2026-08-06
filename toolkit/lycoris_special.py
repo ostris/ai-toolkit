@@ -13,7 +13,8 @@ from toolkit.network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, Extr
 # diffusers specific stuff
 LINEAR_MODULES = [
     'Linear',
-    'LoRACompatibleLinear'
+    'OstrisLinear',
+    'LoRACompatibleLinear',
 ]
 CONV_MODULES = [
     'Conv2d',
@@ -78,7 +79,12 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule, ExtractableModuleMixin
             self.lora_up = nn.Linear(lora_dim, out_dim, bias=use_bias)
         else:
             raise NotImplementedError
-        self.shape = org_module.weight.shape
+        # avoid the weight property on quantized OstrisLinear: it dequantizes the
+        # whole weight just to answer .shape
+        if getattr(org_module, "is_ostris_quantized", False):
+            self.shape = torch.Size((org_module.out_features, org_module.in_features))
+        else:
+            self.shape = org_module.weight.shape
 
         if dropout:
             self.dropout = nn.Dropout(dropout)
@@ -88,9 +94,9 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule, ExtractableModuleMixin
         self.module_dropout = module_dropout
 
         if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_dim
+        self._set_runtime_scale(float(alpha) / self.lora_dim)
         self.register_buffer('alpha', torch.tensor(alpha))  # 定数として扱える
 
         # same as microsoft's

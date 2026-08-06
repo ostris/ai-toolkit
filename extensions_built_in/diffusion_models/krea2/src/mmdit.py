@@ -56,7 +56,21 @@ def attention(
     scale: float | None = None,
     gqa: bool = False,
 ) -> Tensor:
-    with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+    # cuDNN attention is NVIDIA-only, so hardcoding SDPBackend.CUDNN_ATTENTION
+    # raises "No available kernel" on non-NVIDIA backends (AMD ROCm, Intel XPU,
+    # Apple MPS). Pass a priority list instead: cuDNN is still preferred on
+    # NVIDIA, and the dispatcher falls back to flash/efficient/math elsewhere.
+    # (On ROCm gfx11xx the flash path needs
+    # TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1; masked attention uses math.)
+    with sdpa_kernel(
+        [
+            SDPBackend.CUDNN_ATTENTION,
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.MATH,
+        ],
+        set_priority=True,
+    ):
         x = F.scaled_dot_product_attention(
             q, k, v, attn_mask=mask, scale=scale, enable_gqa=gqa
         )
@@ -210,7 +224,13 @@ class Attention(torch.nn.Module):
         self.wo = torch.nn.Linear(dim, dim, bias=bias)
 
     def forward(
-        self, qkv: Tensor, freqs: Tensor | None = None, mask: Tensor | None = None
+        self,
+        qkv: Tensor,
+        freqs: Tensor | None = None,
+        mask: Tensor | None = None,
+        ref_span: tuple[int, int] | None = None,
+        kv_capture: list | None = None,
+        kv_cache: tuple[Tensor, Tensor] | None = None,
     ) -> Tensor:
         q, k, v, gate = self.wq(qkv), self.wk(qkv), self.wv(qkv), self.gate(qkv)
 
@@ -223,6 +243,20 @@ class Attention(torch.nn.Module):
         q, k, v = self.qknorm(q, k, v)
         if freqs is not None:
             q, k = ropeapply(q, k, freqs)
+        if kv_capture is not None and ref_span is not None:
+            # Stash this block's post-RoPE ref K/V so later denoising steps can
+            # run without the ref tokens in the sequence (clone: drop the view
+            # into the full-sequence K/V so only the ref span stays alive).
+            kv_capture.append(
+                (
+                    k[:, :, ref_span[0] : ref_span[1]].clone(),
+                    v[:, :, ref_span[0] : ref_span[1]].clone(),
+                )
+            )
+        if kv_cache is not None:
+            # Cached ref K/V are already RoPE'd at their original positions.
+            k = torch.cat((k, kv_cache[0]), dim=2)
+            v = torch.cat((v, kv_cache[1]), dim=2)
         out = self.wo(attention(q, k, v, mask=mask, gqa=self.gqa) * F.sigmoid(gate))
 
         return out
@@ -326,11 +360,48 @@ class SingleStreamBlock(nn.Module):
         self.mlp = SwiGLU(features, multiplier, bias)
 
     def forward(
-        self, x: Tensor, vec: Tensor, freqs: Tensor, mask: Tensor | None = None
+        self,
+        x: Tensor,
+        vec: Tensor,
+        freqs: Tensor,
+        mask: Tensor | None = None,
+        ref_span: tuple[int, int] | None = None,
+        kv_capture: list | None = None,
+        kv_cache: tuple[Tensor, Tensor] | None = None,
     ) -> Tensor:
+        attn_kwargs = dict(ref_span=ref_span, kv_capture=kv_capture, kv_cache=kv_cache)
+        # ``vec`` is the (B, 1, 6*features) modulation input, or a tuple
+        # ``(vec, refvec, split)`` for reference-image conditioning: tokens
+        # ``[:split]`` (text + noisy image) are modulated with ``vec`` while
+        # tokens ``[split:]`` (clean reference tokens) use ``refvec`` built from
+        # t=0 (ComfyUI Kontext "index_timestep_zero"). Applied per span rather
+        # than materializing a per-token (B, L, 6*features) tensor.
+        if isinstance(vec, tuple):
+            vec, refvec, split = vec
+            m = self.mod(vec)
+            r = self.mod(refvec)
+
+            def mod(h, scale, shift):
+                return torch.cat(
+                    (
+                        (1 + m[scale]) * h[:, :split] + m[shift],
+                        (1 + r[scale]) * h[:, split:] + r[shift],
+                    ),
+                    dim=1,
+                )
+
+            def gate(h, g):
+                return torch.cat((m[g] * h[:, :split], r[g] * h[:, split:]), dim=1)
+
+            x = x + gate(
+                self.attn(mod(self.prenorm(x), 0, 1), freqs, mask, **attn_kwargs), 2
+            )
+            x = x + gate(self.mlp(mod(self.postnorm(x), 3, 4)), 5)
+            return x
+
         prescale, preshift, pregate, postscale, postshift, postgate = self.mod(vec)
         x = x + pregate * self.attn(
-            (1 + prescale) * self.prenorm(x) + preshift, freqs, mask
+            (1 + prescale) * self.prenorm(x) + preshift, freqs, mask, **attn_kwargs
         )
         x = x + postgate * self.mlp((1 + postscale) * self.postnorm(x) + postshift)
 
@@ -417,6 +488,10 @@ class SingleStreamDiT(nn.Module):
         t: Tensor,
         pos: Tensor,
         mask: Tensor | None = None,
+        reflen: int = 0,
+        isolate_refs: bool = False,
+        ref_kv_capture: list | None = None,
+        ref_kv_cache: tuple[list, Tensor] | None = None,
     ) -> Tensor:
         img = self.first(img)
         t = self.tmlp(temb(t, self.config.tdim, device=img.device, dtype=img.dtype))
@@ -438,24 +513,84 @@ class SingleStreamDiT(nn.Module):
             mask = F.pad(mask, (0, _padlen), value=False)
             pos = F.pad(pos, (0, 0, 0, _padlen))
 
+        blockvec = tvec
+        if reflen > 0:
+            # The last ``reflen`` image tokens are clean reference tokens: they
+            # get t=0 modulation (ComfyUI Kontext "index_timestep_zero") while
+            # text + noisy image tokens keep the real t. Padding tokens fall in
+            # the t=0 span, but they are masked from attention and sliced off
+            # the output, so their values never matter.
+            t0 = self.tmlp(
+                temb(
+                    torch.zeros_like(t[:, 0, 0]),
+                    self.config.tdim,
+                    device=img.device,
+                    dtype=img.dtype,
+                )
+            )
+            blockvec = (tvec, self.tproj(t0), txtlen + imglen - reflen)
+
+        padmask = mask  # (B, L) key-padding mask, incl. the 256-alignment pad
         mask = _mask(mask)
+
+        if reflen > 0 and isolate_refs:
+            # Asymmetric attention (OminiControl2-style "feature reuse"): ref
+            # queries attend only to ref keys, while text + noisy queries still
+            # see everything. Combined with the t=0 modulation above, ref hidden
+            # states become independent of t and of the noisy tokens, so their
+            # per-layer K/V can be computed once and cached across denoising
+            # steps at inference. Changes attention flow vs the base model, so
+            # it needs to be trained in.
+            split = txtlen + imglen - reflen
+            is_ref = torch.zeros(
+                combined.shape[1], dtype=torch.bool, device=combined.device
+            )
+            is_ref[split : split + reflen] = True
+            mask = mask & (~is_ref[:, None] | is_ref[None, :])
+
+        # Ref K/V caching (inference-only; requires isolate_refs so the cached
+        # features are step-invariant). Capture mode: this pass has the refs in
+        # the sequence and records each block's post-RoPE ref K/V. Reuse mode:
+        # the refs are dropped from the sequence (reflen == 0) and the cached
+        # K/V are appended as extra attention keys instead.
+        ref_span = None
+        if ref_kv_capture is not None and reflen > 0:
+            assert isolate_refs, "ref K/V capture requires isolate_refs"
+            split = txtlen + imglen - reflen
+            ref_span = (split, split + reflen)
+
+        blockcaches = [None] * len(self.blocks)
+        if ref_kv_cache is not None:
+            blockcaches, refmask = ref_kv_cache
+            # live queries may attend a cached ref key wherever that ref token
+            # is real (refmask right-pads samples with fewer ref tokens)
+            extra = padmask.unsqueeze(1).unsqueeze(3) & refmask.unsqueeze(1).unsqueeze(2)
+            mask = torch.cat((mask, extra), dim=3)
 
         freqs = self.posemb(pos)
 
-        for block in self.blocks:
+        for block, blockkv in zip(self.blocks, blockcaches):
             if self.gradient_checkpointing and torch.is_grad_enabled():
                 combined = checkpoint(
                     block,
                     combined,
-                    tvec,
+                    blockvec,
                     freqs,
                     mask,
                     use_reentrant=False,
                 )
             else:
-                combined = block(combined, tvec, freqs, mask)
+                combined = block(
+                    combined,
+                    blockvec,
+                    freqs,
+                    mask,
+                    ref_span=ref_span,
+                    kv_capture=ref_kv_capture,
+                    kv_cache=blockkv,
+                )
 
         final = self.last(combined, t)
-        output = final[:, txtlen : txtlen + imglen, :]
+        output = final[:, txtlen : txtlen + imglen - reflen, :]
 
         return output

@@ -45,8 +45,8 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
 
   const logLines: string[] = useMemo(() => {
-    let splits: string[] = log.split(/\n|\r\n/);
-    splits = splits.map(line => line.split(/\r/).pop()) as string[];
+    // Log is already terminal-rendered by useJobLog — one entry per line.
+    let splits: string[] = log.split('\n');
     const maxLines = 1000;
     if (splits.length > maxLines) {
       splits = splits.slice(splits.length - maxLines);

@@ -25,3 +25,18 @@ export const resolvePythonPath = (): string => {
 
   return isWindows ? 'python.exe' : 'python3';
 };
+
+// Interpreter for jobs we detach so they outlive the UI. On Windows detaching
+// means DETACHED_PROCESS, and Windows gives any *console* app started that way
+// a fresh console with a visible window. pythonw.exe is the GUI-subsystem
+// build, so it never gets one; stdout/stderr still go to the handles we pass.
+export const resolveDetachedPythonPath = (): string => {
+  const pythonPath = resolvePythonPath();
+  if (!isWindows) return pythonPath;
+
+  // Always take the pythonw next to the interpreter we already resolved, so
+  // both come from the same environment. Falling back to python.exe still
+  // works, it just shows a console window.
+  const pythonwPath = path.join(path.dirname(pythonPath), 'pythonw.exe');
+  return fs.existsSync(pythonwPath) ? pythonwPath : pythonPath;
+};

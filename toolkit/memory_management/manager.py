@@ -1,11 +1,17 @@
 import torch
-from .manager_modules import LinearLayerMemoryManager, ConvLayerMemoryManager, _DEVICE_STATE
+from .manager_modules import (
+    LinearLayerMemoryManager,
+    ConvLayerMemoryManager,
+    OstrisLinearLayerMemoryManager,
+    _DEVICE_STATE,
+)
 import random
 
 LINEAR_MODULES = [
     "Linear",
     "LoRACompatibleLinear",
     "QLinear",
+    'OstrisLinear',
 ]
 CONV_MODULES = [
     "Conv2d",
@@ -104,10 +110,16 @@ class MemoryManager:
                     if skip:
                         module._memory_manager.unmanaged_modules.append(child_module)
                     else:
-                        # linear
-                        LinearLayerMemoryManager.attach(
-                            child_module, module._memory_manager
-                        )
+                        # linear; OstrisLinear bounces its quantized buffers instead
+                        # of a dequantized weight (module.weight is a property)
+                        if getattr(child_module, "is_ostris_quantized", False):
+                            OstrisLinearLayerMemoryManager.attach(
+                                child_module, module._memory_manager
+                            )
+                        else:
+                            LinearLayerMemoryManager.attach(
+                                child_module, module._memory_manager
+                            )
                         # attach to ARA as well
                         if hasattr(child_module, "ara_lora_ref"):
                             ara = child_module.ara_lora_ref()
@@ -194,7 +206,9 @@ class MemoryManager:
                     child.forward = original_forward
 
             for param_name in ("weight", "bias"):
-                param = getattr(child, param_name, None)
+                # read _parameters directly: OstrisLinear.weight is a property that
+                # materializes a full dequantized weight on access
+                param = child._parameters.get(param_name, None)
                 if param is None or not isinstance(param, torch.nn.Parameter):
                     continue
                 try:
@@ -209,6 +223,20 @@ class MemoryManager:
                         )
                 except Exception:
                     pass
+
+            if getattr(child, "is_ostris_quantized", False):
+                # move quantized buffers home and unpin them (clone drops pinning)
+                for buf_name, buf in list(child._buffers.items()):
+                    if buf is None:
+                        continue
+                    try:
+                        if buf.device.type != "cpu":
+                            buf = buf.to("cpu")
+                        if buf.is_pinned():
+                            buf = buf.clone()
+                        child._buffers[buf_name] = buf
+                    except Exception:
+                        pass
 
             del child._layer_memory_manager
             if hasattr(child, "_memory_management_device"):
