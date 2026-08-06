@@ -217,11 +217,13 @@ class MiniMaxH3AdalnProj(nn.Module):
     def forward(self, temb: torch.Tensor):
         if self.apply_silu:
             temb = F.silu(temb)
-        x = F.linear(
-            temb.float(),
-            self.linear.weight.float(),
-            self.linear.bias.float() if self.linear.bias is not None else None,
-        )
+        # follow temb's device: the raw params may be CPU-resident under layer
+        # offloading / low_vram, and F.linear bypasses the paging hooks
+        weight = self.linear.weight.to(device=temb.device, dtype=torch.float32)
+        bias = self.linear.bias
+        if bias is not None:
+            bias = bias.to(device=temb.device, dtype=torch.float32)
+        x = F.linear(temb.float(), weight, bias)
         x = x.view(x.shape[0] * self.modalities, self.expand * self.hidden)
         return x.chunk(self.expand, dim=-1)
 
