@@ -571,7 +571,8 @@ class MinimaxH3Model(BaseModel):
 
         transformer = self._load_transformer()
 
-        # load assistant lora if specified (merged into the quantized weights)
+        # live network, never merged: active during training, toggled off by
+        # the sampler for previews
         if self.model_config.assistant_lora_path is not None:
             self.load_training_adapter(transformer)
 
