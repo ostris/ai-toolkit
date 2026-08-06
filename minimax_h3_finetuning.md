@@ -42,10 +42,13 @@ both were solved with a training adapter (see below).
 
 ## Fixes in this fork
 
-### 0. Contrastive guidance loss — the objective-level fix (upstream, default on)
+### 0. Contrastive guidance loss — the objective-level fix (upstream)
 
-Upstream now ships `do_guidance_loss` ("contrastive guidance loss") and
-defaults it on for H3.
+Upstream ships `do_guidance_loss` ("contrastive guidance loss") for H3. It
+was the default training method until the official training adapter (below)
+replaced it — the adapter produces better results and is faster (no extra
+blank-prompt forward per step). Contrastive guidance remains the fallback
+when no adapter is set.
 
 **Why it works.** The mush problem is that the plain objective says "your
 output should equal the training clip" — an un-boosted target. The contrastive
@@ -277,9 +280,11 @@ distillation in a controlled way*. Mechanics at train time (the pattern
 
 MiniMaxAI released no undistilled teacher (both partitions on
 `MiniMaxAI/MiniMax-H3` are CFG-distilled), so the adapter must be *made* by
-deliberate un-distillation. Ostris is training an official one — upstream has
-already landed adapter prep for H3 ("Prep for training adapters on MiniMax
-H3") — and the recipe below produces your own.
+deliberate un-distillation. Ostris released an official alpha
+(`ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_alpha.safetensors`),
+now the default training method upstream and in this fork: it produces better
+results than contrastive guidance loss and is faster (no extra blank-prompt
+forward per step). The recipe below produces your own.
 
 ### Dataset
 
@@ -338,27 +343,15 @@ Progress signals — this is the counterintuitive part:
 - Sanity check after training: base model alone at g1 must be untouched
   (bit-identical — the adapter is separate weights).
 
-### Integration work still needed in this fork
+### How the adapter runs in this fork
 
-Using any H3 adapter (ours or Ostris's) requires loader code that does not
-exist yet — `toolkit/assistant_lora.py` is FLUX-only and `BaseModel` never
-populates `self.assistant_lora`:
-
-1. A `load_training_adapter()` on `MinimaxH3Model` mirroring
-   `z_image.py:84-165`: build the LoRA network over the transformer, load the
-   adapter state dict (mapping ComfyUI `diffusion_model.` keys to
-   `transformer.`), `merge_in(1.0)`, then hold it inactive with
-   `multiplier = -1.0` and set `invert_assistant_lora = True`.
-2. **The quantization ordering problem**: the shipped DiT arrives
-   already-quantized (int8 ConvRot), and `merge_in` needs mergeable weights.
-   Either dequantize→merge→requantize, or load the bf16 DiT variant
-   (`minimax_h3_fl2va_bf16.safetensors`, 66 GB) via
-   `model_kwargs.dit_fl2va_path`, merge, then let `quantize` re-quantize
-   in-process. The bf16 route is simpler and only costs load time.
-3. Note the `transformer_only` LoRA targeting matches `token_refiner.blocks.*`
-   as well as the 50 DiT blocks (substring match on "blocks") — the adapter
-   and user LoRAs will share that scope, which is consistent as long as both
-   are trained in this fork.
+`model.assistant_lora_path` accepts a local file, a filename under
+`MODELS_PATH/loras`, or a `user/repo/file.safetensors` HuggingFace path
+(downloaded on first use). The adapter loads as a frozen LoRA network over
+the transformer — never merged into the quantized base weights — and stays
+active during training, so your LoRA trains against the un-distilled
+behavior. The sampler deactivates it for previews, so samples reflect the
+distilled model your LoRA will actually serve against.
 
 ## What is still out of scope
 
