@@ -165,11 +165,16 @@ class MemoryManager:
                     continue
 
     @classmethod
-    def detach(cls, module: torch.nn.Module):
+    def detach(cls, module: torch.nn.Module, unpin_cpu_tensors: bool = False):
         """
         Reverse of attach(). Moves unmanaged modules back to CPU, restores the
-        original .to() and forward methods on all child layers, unpins CPU weight
-        tensors, and clears the global CUDA device state.
+        original .to() and forward methods on all child layers, and clears the
+        global CUDA device state.
+
+        CPU weights are left pinned by default. Unpinning requires cloning each
+        pinned tensor, which temporarily doubles its host-memory allocation. Set
+        ``unpin_cpu_tensors=True`` only when the detached module will remain
+        resident and must release its pinned-memory allocations.
 
         Call this before unloading/replacing a module that had attach() applied.
         """
@@ -212,7 +217,7 @@ class MemoryManager:
                 if param is None or not isinstance(param, torch.nn.Parameter):
                     continue
                 try:
-                    if param.data.is_pinned():
+                    if unpin_cpu_tensors and param.data.is_pinned():
                         object.__setattr__(
                             child,
                             param_name,
@@ -225,14 +230,15 @@ class MemoryManager:
                     pass
 
             if getattr(child, "is_ostris_quantized", False):
-                # move quantized buffers home and unpin them (clone drops pinning)
+                # Move quantized buffers home. Keep CPU buffers pinned by default;
+                # cloning to unpin them temporarily doubles their host allocation.
                 for buf_name, buf in list(child._buffers.items()):
                     if buf is None:
                         continue
                     try:
                         if buf.device.type != "cpu":
                             buf = buf.to("cpu")
-                        if buf.is_pinned():
+                        if unpin_cpu_tensors and buf.is_pinned():
                             buf = buf.clone()
                         child._buffers[buf_name] = buf
                     except Exception:
