@@ -21,6 +21,9 @@ def get_lr_scheduler(
             optimizer, **kwargs
         )
     elif name == "step":
+        # StepLR decays purely on step_size/gamma and has no notion of run
+        # length, so drop the total_iters the trainer injects.
+        kwargs.pop('total_iters', None)
 
         return torch.optim.lr_scheduler.StepLR(
             optimizer, **kwargs
