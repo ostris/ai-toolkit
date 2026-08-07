@@ -275,7 +275,7 @@ if __name__ == "__main__":
             max_coverage=0.8,
             num_blobs_range=(1, 3)
         )
-        dialation = random_dialate_mask(masks)
+        dilation = random_dialate_mask(masks)
         print(f"Generated {batch_size} masks with shape: {masks.shape}")
         end = time.time()
         # print time in milliseconds
@@ -283,6 +283,6 @@ if __name__ == "__main__":
 
     print(f"Saving masks to 'output' directory...")
     save_masks_as_images(masks)
-    save_masks_as_images(dialation, suffix="_dilated" )
+    save_masks_as_images(dilation, suffix="_dilated" )
 
     print("Done!")

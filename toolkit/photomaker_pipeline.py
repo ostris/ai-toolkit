@@ -163,7 +163,7 @@ class PhotoMakerStableDiffusionXLPipeline(StableDiffusionXLPipeline):
                 clean_index = 0
                 clean_input_ids = []
                 class_token_index = []
-                # Find out the corrresponding class word token based on the newly added trigger word token
+                # Find out the corresponding class word token based on the newly added trigger word token
                 for i, token_id in enumerate(input_ids):
                     if token_id == image_token_id:
                         class_token_index.append(clean_index - 1)

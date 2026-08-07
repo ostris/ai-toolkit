@@ -181,7 +181,7 @@ def get_model_path_from_url(url: str):
         # download model
         print(f"Did not find model locally, downloading from model from: {download_url}")
 
-        # use tqdm to show status of downlod
+        # use tqdm to show status of download
         response = requests.get(download_url, stream=True)
         response.raise_for_status()
         total_size_in_bytes = int(response.headers.get('content-length', 0))

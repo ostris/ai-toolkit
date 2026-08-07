@@ -274,7 +274,7 @@ class ResNetBlock(nn.Module):
         # if in_nc != out_nc:
         #     self.project = conv_block(in_nc, out_nc, 1, stride, dilation, 1, bias, pad_type, \
         #         None, None)
-        #     print('Need a projecter in ResNetBlock.')
+        #     print('Need a projector in ResNetBlock.')
         # else:
         #     self.project = lambda x:x
         self.res = sequential(conv0, conv1)

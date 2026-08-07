@@ -502,7 +502,7 @@ class CustomAdapter(torch.nn.Module):
             except Exception as e:
                 print(e)
         if 'redux_up' in state_dict:
-            # state dict is seperated. so recombine it
+            # state dict is separated. so recombine it
             new_dict = {}
             for k, v in state_dict.items():
                 for k2, v2 in v.items():
@@ -510,7 +510,7 @@ class CustomAdapter(torch.nn.Module):
             self.redux_adapter.load_state_dict(new_dict, strict=True)
         
         if self.adapter_type == 'control_lora':
-            # state dict is seperated. so recombine it
+            # state dict is separated. so recombine it
             new_dict = {}
             for k, v in state_dict.items():
                 for k2, v2 in v.items():
@@ -518,7 +518,7 @@ class CustomAdapter(torch.nn.Module):
             self.control_lora.load_weights(new_dict, strict=strict)
         
         if self.adapter_type == 'mean_flow':
-            # state dict is seperated. so recombine it
+            # state dict is separated. so recombine it
             new_dict = {}
             for k, v in state_dict.items():
                 for k2, v2 in v.items():
@@ -526,7 +526,7 @@ class CustomAdapter(torch.nn.Module):
             self.mean_flow_adapter.load_weights(new_dict, strict=strict)
         
         if self.adapter_type == 'i2v':
-            # state dict is seperated. so recombine it
+            # state dict is separated. so recombine it
             new_dict = {}
             for k, v in state_dict.items():
                 for k2, v2 in v.items():
@@ -534,7 +534,7 @@ class CustomAdapter(torch.nn.Module):
             self.i2v_adapter.load_weights(new_dict, strict=strict)
         
         if self.adapter_type == 'subpixel':
-            # state dict is seperated. so recombine it
+            # state dict is separated. so recombine it
             new_dict = {}
             for k, v in state_dict.items():
                 for k2, v2 in v.items():
@@ -638,7 +638,7 @@ class CustomAdapter(torch.nn.Module):
                     inpaint_tensor = batch.inpaint_tensor
                     if inpaint_tensor is None and not do_dropout:
                         # generate a random one since we dont have one
-                        # this will make random blobs, invert the blobs for now as we normanlly inpaint the alpha
+                        # this will make random blobs, invert the blobs for now as we normally inpaint the alpha
                         inpaint_tensor = 1 - generate_random_mask(
                             batch_size=latents.shape[0],
                             height=latents.shape[2],
@@ -656,7 +656,7 @@ class CustomAdapter(torch.nn.Module):
                         else:
                             inpainting_tensor_mask = inpaint_tensor
                         
-                        # # use our batch latents so we cna avoid ancoding again
+                        # # use our batch latents so we can avoid encoding again
                         inpainting_latent = batch.latents
                         
                         # resize the mask to match the new encoded size
@@ -671,7 +671,7 @@ class CustomAdapter(torch.nn.Module):
                             inpainting_tensor_mask = 1 - inpainting_tensor_mask
                         
                         # mask out the inpainting area, it is currently 0 for inpaint area, and 1 for keep area
-                        # we are zeroing our the latents in the inpaint area not on the pixel space.
+                        # we are zeroing out the latents in the inpaint area not on the pixel space.
                         inpainting_latent = inpainting_latent * inpainting_tensor_mask
                         
                         # mask needs to be 1 for inpaint area and 0 for area to leave alone. So flip it.
@@ -679,7 +679,7 @@ class CustomAdapter(torch.nn.Module):
                         # leave the mask as 0-1 and concat on channel of latents
                         inpainting_latent = torch.cat((inpainting_latent, inpainting_tensor_mask), dim=1)
                     else:
-                        # we have iinpainting but didnt get a control. or we are doing a dropout
+                        # we have inpainting but didnt get a control. or we are doing a dropout
                         # the input needs to be all zeros for the latents and all 1s for the mask
                         inpainting_latent = torch.zeros_like(latents)
                         # add ones for the mask since we are technically inpainting everything

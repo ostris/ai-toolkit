@@ -93,7 +93,7 @@ class ModRescaleLoraProcess(BaseProcess):
         save_meta = add_model_hash_to_meta(new_state_dict, save_meta)
         save_file(new_state_dict, self.output_path, save_meta)
 
-        # cleanup incase there are other jobs
+        # cleanup in case there are other jobs
         del new_state_dict
         del source_state_dict
         del source_meta

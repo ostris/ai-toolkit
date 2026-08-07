@@ -524,7 +524,7 @@ class PixtralVisionImagePreprocessorCompatibleReturn:
         self.pixel_values = pixel_values
 
 
-# Compatable version with ai toolkit flow
+# Compatible version with ai toolkit flow
 class PixtralVisionImagePreprocessorCompatible(PixtralVisionImagePreprocessor):
     def __init__(self, image_patch_size=16, max_image_size=1024) -> None:
         super().__init__(

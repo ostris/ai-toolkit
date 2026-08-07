@@ -314,7 +314,7 @@ const docs: { [key: string]: ConfigDoc } = {
         Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are
         using multiple datasets and want to balance the number of samples from each dataset. For instance, if you have a
         small dataset of 10 images and a large dataset of 100 images, you can set the small dataset to have 10 repeats
-        to effectively make it 100 images, making the two datasets occour equally during training.
+        to effectively make it 100 images, making the two datasets occur equally during training.
       </>
     ),
   },
@@ -322,7 +322,7 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Audio Loss Multiplier',
     description: (
       <>
-        When training audio and video, sometimes the video loss is so great that it outweights the audio loss, causing
+        When training audio and video, sometimes the video loss is so great that it outweighs the audio loss, causing
         the audio to become distorted. If you are noticing this happen, you can increase the audio loss multiplier to
         give more weight to the audio loss. You could try something like 2.0, 10.0 etc. Warning, setting this too high
         could overfit and damage the model.

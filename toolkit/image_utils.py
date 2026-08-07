@@ -176,7 +176,7 @@ def get_image_metadata_from_bytesio(input, size, file_path=None):
             height = abs(int(h))
         else:
             raise UnknownImageFormat(
-                "Unkown DIB header size:" +
+                "Unknown DIB header size:" +
                 str(headersize))
     elif (size >= 8) and data[:4] in (b"II\052\000", b"MM\000\052"):
         # Standard TIFF, big- or little-endian
@@ -222,7 +222,7 @@ def get_image_metadata_from_bytesio(input, size, file_path=None):
                     type = struct.unpack(boChar + "H", type)[0]
                     if type not in tiffTypes:
                         raise UnknownImageFormat(
-                            "Unkown TIFF field type:" +
+                            "Unknown TIFF field type:" +
                             str(type))
                     typeSize = tiffTypes[type][0]
                     typeChar = tiffTypes[type][1]
@@ -509,7 +509,7 @@ def save_tensors(imgs: torch.Tensor, path='output.png', fps=None):
     else:
         # concat images to one
         img_numpy = np.concatenate(img_numpy, axis=1)
-        # conver to pil
+        # convert to pil
         img_pil = PILImage.fromarray(img_numpy)
         img_pil.save(path)
 

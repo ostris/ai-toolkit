@@ -776,7 +776,7 @@ class LTX2Model(BaseModel):
         output_tensor = None
         audio_num_frames = None
 
-        # do them seperatly for now
+        # do them separately for now
         for audio_data in audio_data_list:
             waveform = audio_data["waveform"].to(
                 device=self.device_torch, dtype=torch.float32

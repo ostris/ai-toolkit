@@ -273,7 +273,7 @@ pip install --upgrade accelerate transformers diffusers huggingface_hub #Optiona
 
 ### Screenshot from Modal
 
-<img width="1728" alt="Modal Traning Screenshot" src="https://github.com/user-attachments/assets/7497eb38-0090-49d6-8ad9-9c8ea7b5388b">
+<img width="1728" alt="Modal Training Screenshot" src="https://github.com/user-attachments/assets/7497eb38-0090-49d6-8ad9-9c8ea7b5388b">
 
 ---
 

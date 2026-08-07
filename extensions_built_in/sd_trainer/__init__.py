@@ -56,7 +56,7 @@ class DiffusionTrainerExtension(Extension):
         return DiffusionTrainer
 
 
-# for backwards compatability
+# for backwards compatibility
 class TextualInversionTrainer(SDTrainerExtension):
     uid = "textual_inversion_trainer"
 
