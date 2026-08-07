@@ -939,7 +939,7 @@ class SDTrainer(BaseSDTrainProcess):
                 prior_loss = torch.nn.functional.mse_loss(pred.float(), prior_pred.float(), reduction="none")
 
             prior_loss = prior_loss * prior_mask_multiplier * self.train_config.inverted_mask_prior_multiplier
-            if torch.isnan(prior_loss).any() or not torch.isfinite(prior_loss):
+            if not torch.isfinite(prior_loss).all():
                 print_acc("Prior loss is nan")
                 prior_loss = None
             else:
