@@ -431,9 +431,10 @@ def remap_sigma(
 def build_sigma_schedule(
     num_inference_steps: int, shift: float = VIDEO_SIGMA_SHIFT
 ) -> torch.Tensor:
-    """The released sampling grid: linspace(1, 0, steps) through the
-    exponential shift, consecutive duplicates collapsed — the terminal 0 is
-    part of the count, so `steps` yields `steps - 1` model evaluations."""
-    base = torch.linspace(1.0, 0.0, num_inference_steps, dtype=torch.float32)
+    """The released sampling grid: linspace(1, 0, steps + 1) through the
+    exponential shift, consecutive duplicates collapsed — `steps` yields
+    `steps` model evaluations (the released repo counts the terminal 0 in
+    `steps`; we don't, so sample_steps means model evals)."""
+    base = torch.linspace(1.0, 0.0, num_inference_steps + 1, dtype=torch.float32)
     sigmas = shift_sigma(base, shift)
     return torch.unique_consecutive(sigmas)

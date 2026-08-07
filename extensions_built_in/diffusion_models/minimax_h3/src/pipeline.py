@@ -15,9 +15,9 @@ Each prompt packs into its own sequence (text length shifts the rotary media
 clock), so the two passes run on separate layouts over shared latent state.
 
 Scheduler (the released math, not diffusers'):
-  - sigma grid: ``linspace(1, 0, steps)`` through the exponential shift
-    (video 12, audio 3), consecutive duplicates collapsed; the terminal 0 is
-    part of the count so ``steps`` yields ``steps - 1`` model evaluations
+  - sigma grid: ``linspace(1, 0, steps + 1)`` through the exponential shift
+    (video 12, audio 3), consecutive duplicates collapsed; ``steps`` yields
+    ``steps`` model evaluations (steps = 1 is one full 1 -> 0 step)
   - the model consumes ``t = 1 - sigma`` (t = 1 means clean) and predicts the
     data-ward velocity ``clean - noise``: ``denoised = x + sigma * v``
   - Euler update ``x_next = r * x + (1 - r) * denoised`` with
