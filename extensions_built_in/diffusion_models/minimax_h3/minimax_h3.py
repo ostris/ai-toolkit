@@ -411,12 +411,15 @@ class MinimaxH3Model(BaseModel):
                 f" - attached {num_quantized} pre-quantized ConvRot layers"
             )
         result = transformer.load_state_dict(state_dict, assign=True, strict=False)
-        quantized_weight_keys = {
-            f"{name}.weight"
-            for name, m in transformer.named_modules()
-            if isinstance(m, OstrisLinear)
-        }
-        bad_missing = [k for k in result.missing_keys if k not in quantized_weight_keys]
+        # the importer consumed these keys: quantized weights always, and the
+        # bias when it attached one (a real, non-meta parameter)
+        imported_keys = set()
+        for name, m in transformer.named_modules():
+            if isinstance(m, OstrisLinear):
+                imported_keys.add(f"{name}.weight")
+                if m.bias is not None and not m.bias.is_meta:
+                    imported_keys.add(f"{name}.bias")
+        bad_missing = [k for k in result.missing_keys if k not in imported_keys]
         if bad_missing or result.unexpected_keys:
             raise ValueError(
                 f"MiniMax-H3 transformer load mismatch: missing {bad_missing[:8]}, "
@@ -568,7 +571,8 @@ class MinimaxH3Model(BaseModel):
 
         transformer = self._load_transformer()
 
-        # load assistant lora if specified (merged into the quantized weights)
+        # live network, never merged: active during training, toggled off by
+        # the sampler for previews
         if self.model_config.assistant_lora_path is not None:
             self.load_training_adapter(transformer)
 

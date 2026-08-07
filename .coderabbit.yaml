@@ -1,0 +1,42 @@
+reviews:
+  # more strict review profile
+  profile: "assertive"
+
+  # put high level summary in its own comment
+  # instead of editing your pr description
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  high_level_summary_placeholder: ""
+
+  # also never auto edit titles
+  auto_title_placeholder: ""
+
+  # the pr-review channel takes care of this
+  suggested_reviewers: false
+
+  # we don't enforce docstrings on every function, disable the check
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  # and disable the docstring generation checkbox
+  finishing_touches:
+    docstrings:
+      enabled: false
+
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Do not comment about failing CI, it's already clear and visible.
+
+  # auto review new commits
+  # auto review draft PRs
+  # auto review against any base branch (our main is gs/oxen-experiment-tracker)
+  # don't pause reviews on active PRs (default pauses after 5 commits)
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    base_branches:
+      - ".*"

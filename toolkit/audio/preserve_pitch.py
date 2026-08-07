@@ -34,7 +34,10 @@ def time_stretch_preserve_pitch(waveform: torch.Tensor, sample_rate: int, target
     n_fft = 1 << max(8, int(math.floor(math.log2(max(256, n_fft_target)))))  # >=256, pow2
     win_length = n_fft
     hop_length = max(64, int(sample_rate * hop_seconds))
-    hop_length = min(hop_length, win_length // 2)
+    # A phase vocoder needs >=4x window overlap; n_fft snaps down to a power of
+    # two while the hop scales linearly with sample rate, so without this cap
+    # 44.1kHz sources end up at ~2x overlap and sound smeared/underwater.
+    hop_length = min(hop_length, win_length // 4)
 
     window = torch.hann_window(win_length, device=waveform.device, dtype=waveform.dtype)
 
