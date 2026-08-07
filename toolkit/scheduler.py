@@ -43,7 +43,7 @@ def get_lr_scheduler(
         if 'num_warmup_steps' not in kwargs:
             print(f"WARNING: num_warmup_steps not in kwargs. Using default value of 1000")
             kwargs['num_warmup_steps'] = 1000
-        del kwargs['total_iters']
+        kwargs.pop('total_iters', None)
         return get_constant_schedule_with_warmup(optimizer, **kwargs)
     else:
         # try to use a diffusers scheduler
