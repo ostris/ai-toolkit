@@ -62,6 +62,7 @@ export interface GPUApiResponse {
 
 export interface NetworkConfig {
   type: string;
+  pretrained_lora_path?: string;
   linear: number;
   linear_alpha: number;
   conv: number;
