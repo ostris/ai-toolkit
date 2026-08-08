@@ -842,6 +842,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     paths = [p for p in paths if '_t2i' not in p]
                 if '_cn' not in name:
                     paths = [p for p in paths if '_cn' not in p]
+                # Exclude sidecar metadata written by model managers (e.g. ComfyUI LoRA Manager)
+                paths = [p for p in paths if not p.endswith('.metadata.json')]
 
                 if len(paths) > 0:
                     latest_path = max(paths, key=os.path.getctime)
