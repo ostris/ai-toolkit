@@ -195,7 +195,9 @@ class TEAugAdapter(torch.nn.Module):
         text_encoder: CLIPTextModel = sd.text_encoder
         dim = text_encoder.config.hidden_size
 
-        clip_encoder: CLIPEncoder = text_encoder.text_model.encoder
+        # transformers >=5.6 flattened CLIPTextModel (no .text_model wrapper);
+        # CLIPTextModelWithProjection still nests it. getattr handles both.
+        clip_encoder: CLIPEncoder = getattr(text_encoder, "text_model", text_encoder).encoder
         # dim = clip_encoder.layers[-1].self_attn
 
         if hasattr(adapter.vision_encoder.config, 'hidden_sizes'):
