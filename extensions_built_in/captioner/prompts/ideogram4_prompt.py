@@ -1,4 +1,4 @@
-ideogram4_prompt = """
+ideogram4_prompt = r"""
 [META]
 frozen: false
 description: Slim single-shot magic prompt — splatter planning + v15 output discipline, deduped for faster inference. Thinking off.
