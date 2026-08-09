@@ -130,7 +130,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
             prompts_to_cache = list(dict.fromkeys(prompts_to_cache))
 
             # trim to max steps if max steps is lower than prompt count
-            # todo, this can break if we have more targets than steps, should be fixed, by reducing permuations, but could stil happen with low steps
+            # todo, this can break if we have more targets than steps, should be fixed, by reducing permutations, but could still happen with low steps
             # prompts_to_cache = prompts_to_cache[:self.train_config.steps]
 
             # encode them

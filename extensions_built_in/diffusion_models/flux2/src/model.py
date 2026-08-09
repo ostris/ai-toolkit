@@ -49,7 +49,7 @@ class Klein4BParams:
 
 
 class FakeConfig:
-    # for diffusers compatability
+    # for diffusers compatibility
     def __init__(self):
         self.patch_size = 1
 

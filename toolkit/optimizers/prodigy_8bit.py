@@ -223,7 +223,7 @@ class Prodigy8bit(Optimizer):
 
         d_hat = d
 
-        # if we have not done any progres, return
+        # if we have not done any progress, return
         # if we have any gradients available, will have d_denom > 0 (unless \|g\|=0)
         if d_denom == 0:
             return loss

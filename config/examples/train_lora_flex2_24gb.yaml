@@ -36,7 +36,7 @@ config:
         # on windows, escape back slashes with another backslash so
         # "C:\\path\\to\\images\\folder"
         - folder_path: "/path/to/images/folder"
-          # Flex2 is trained with controls and inpainting. If you want the model to truely understand how the 
+          # Flex2 is trained with controls and inpainting. If you want the model to truly understand how the
           # controls function with your dataset, it is a good idea to keep doing controls during training. 
           # this will automatically generate the controls for you before training. The current script is not 
           # fully optimized so this could be rather slow for large datasets, but it caches them to disk so it
@@ -87,7 +87,7 @@ config:
 #        skip_first_sample: true
         # uncomment to completely disable sampling
 #        disable_sampling: true
-        # uncomment to use new vell curved weighting. Experimental but may produce better results
+        # uncomment to use new well curved weighting. Experimental but may produce better results
 #        linear_timesteps: true
 
         # ema will smooth out learning, but could slow it down. Defaults off
@@ -104,15 +104,15 @@ config:
         quantize: true  # run 8bit mixed precision
         quantize_te: true
 
-        # you can pass special training infor for controls to the model here
+        # you can pass special training information for controls to the model here
         # percentages are decimal based so 0.0 is 0% and 1.0 is 100% of the time.
         model_kwargs:
           # inverts the inpainting mask, good to learn outpainting as well, recommended 0.0 for characters
           invert_inpaint_mask_chance: 0.5
-          # this will do a normal t2i training step without inpaint when dropped out. REcommended if you want
+          # this will do a normal t2i training step without inpaint when dropped out. Recommended if you want
           # your lora to be able to inference with and without inpainting.
           inpaint_dropout: 0.5
-          # randomly drops out the control image. Dropout recvommended if your want it to work without controls as well.
+          # randomly drops out the control image. Dropout recommended if you want it to work without controls as well.
           control_dropout: 0.5
           # does a random inpaint blob. Usually a good idea to keep. Without it, the model will learn to always 100%
           # fill the inpaint area with your subject. This is not always a good thing.
@@ -121,9 +121,9 @@ config:
           # if you are not training with it. Controls are a little more robust and can be left out,
           # but when in doubt, always leave this on
           do_random_inpainting: false
-          # does random blurring of the inpaint mask. Helps prevent weird edge artifacts for real workd inpainting. Leave on.
+          # does random blurring of the inpaint mask. Helps prevent weird edge artifacts for real world inpainting. Leave on.
           random_blur_mask: true
-          # applies a small amount of random dialition and restriction to the inpaint mask. Helps with edge artifacts.
+          # applies a small amount of random dilation and restriction to the inpaint mask. Helps with edge artifacts.
           # Leave on.
           random_dialate_mask: true
       sample:

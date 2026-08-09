@@ -74,7 +74,7 @@ class ZipperBlock(nn.Module):
 
         # permute to (batch_size, out_tokens, out_size)
 
-        # in shpae: (batch_size, in_tokens, in_size)
+        # in shape: (batch_size, in_tokens, in_size)
         self.zip_size = MLPC(
             in_dim=self.in_size,
             out_dim=self.out_size,

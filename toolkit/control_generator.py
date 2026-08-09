@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from torchvision import transforms
 
-# supress all warnings
+# suppress all warnings
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)

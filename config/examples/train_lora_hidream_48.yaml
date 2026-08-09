@@ -60,7 +60,7 @@ config:
 #        skip_first_sample: true
         # uncomment to completely disable sampling
 #        disable_sampling: true
-        # uncomment to use new vell curved weighting. Experimental but may produce better results
+        # uncomment to use new well curved weighting. Experimental but may produce better results
 #        linear_timesteps: true
 
         # ema will smooth out learning, but could slow it down. Defaults off

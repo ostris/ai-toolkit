@@ -38,7 +38,7 @@ scheduler_config = {
 }
 
 class FakeConfig:
-    # for diffusers compatability
+    # for diffusers compatibility
     def __init__(self):
         self.attention_head_dim = 128
         self.guidance_embeds = True

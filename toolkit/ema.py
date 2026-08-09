@@ -21,7 +21,7 @@ class ExponentialMovingAverage:
             `model.parameters()`).
             Note that EMA is computed on *all* provided parameters,
             regardless of whether or not they have `requires_grad = True`;
-            this allows a single EMA object to be consistantly used even
+            this allows a single EMA object to be consistently used even
             if which parameters are trainable changes step to step.
 
             If you want to some parameters in the EMA, do not pass them
@@ -312,7 +312,7 @@ class ExponentialMovingAverage:
                 "collected_params and shadow_params had different lengths"
 
         if len(self.shadow_params) == len(self._params_refs):
-            # Consistant with torch.optim.Optimizer, cast things to consistant
+            # Consistent with torch.optim.Optimizer, cast things to consistent
             # device and dtype with the parameters
             params = [p() for p in self._params_refs]
             # If parameters have been garbage collected, just load the state

@@ -339,14 +339,14 @@ def reverse_step(model, model_output, timestep, sample, eta=0, variance_noise=No
     # variance = self.scheduler._get_variance(timestep, prev_timestep)
     variance = get_variance(model, timestep)  # , prev_timestep)
     std_dev_t = eta * variance ** (0.5)
-    # Take care of asymetric reverse process (asyrp)
+    # Take care of asymmetric reverse process (asyrp)
     model_output_direction = model_output
     # 6. compute "direction pointing to x_t" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
     # pred_sample_direction = (1 - alpha_prod_t_prev - std_dev_t**2) ** (0.5) * model_output_direction
     pred_sample_direction = (1 - alpha_prod_t_prev - eta * variance) ** (0.5) * model_output_direction
     # 7. compute x_t without "random noise" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
     prev_sample = alpha_prod_t_prev ** (0.5) * pred_original_sample + pred_sample_direction
-    # 8. Add noice if eta > 0
+    # 8. Add noise if eta > 0
     if eta > 0:
         if variance_noise is None:
             variance_noise = torch.randn(model_output.shape, device=model.device, dtype=torch.float16)

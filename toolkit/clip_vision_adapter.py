@@ -348,7 +348,7 @@ class ClipVisionAdapter(torch.nn.Module):
 
     def inject_trigger_into_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
-        embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
+        embedding_tokens = self.embedding_tokens[0]  # should be the same
         default_replacements = ["[name]", "[trigger]"]
 
         replace_with = embedding_tokens if expand_token else self.trigger
@@ -381,7 +381,7 @@ class ClipVisionAdapter(torch.nn.Module):
     # reverses injection with class name. useful for normalizations
     def inject_trigger_class_name_into_prompt(self, prompt):
         output_prompt = prompt
-        embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
+        embedding_tokens = self.embedding_tokens[0]  # should be the same
 
         default_replacements = ["[name]", "[trigger]", embedding_tokens, self.trigger]
 
