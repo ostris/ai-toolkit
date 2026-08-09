@@ -1,3 +1,6 @@
+import ctypes
+import gc
+
 import torch
 from .manager_modules import (
     LinearLayerMemoryManager,
@@ -252,3 +255,83 @@ class MemoryManager:
             del _DEVICE_STATE[key]
 
         torch.cuda.empty_cache()
+
+    @classmethod
+    def free(cls, module: torch.nn.Module):
+        """
+        Detach memory management (if attached) and destroy the module's weights
+        by moving them to the meta device.
+
+        Unlike detach(), nothing is staged back to CPU first: to('meta') frees
+        each storage from wherever it currently lives, so no transient host
+        allocation is made for data that is about to be discarded, and pinned
+        tensors are freed without the clone that unpinning requires. Freed
+        pinned storages land in torch's caching host allocator, not the OS;
+        call release_cached_memory() afterward to get the RSS back.
+        """
+        if hasattr(module, "_memory_manager"):
+            if hasattr(module, "_mm_to"):
+                module.to = module._mm_to
+                del module._mm_to
+
+            del module._memory_manager
+
+            for child in module.modules():
+                lmm = getattr(child, "_layer_memory_manager", None)
+                if lmm is None:
+                    continue
+
+                original_forward = getattr(lmm, "_original_forward", None)
+                if original_forward is not None:
+                    if hasattr(child, "ara_lora_ref"):
+                        ara = child.ara_lora_ref()
+                        if ara is not None:
+                            ara.org_forward = original_forward
+                    else:
+                        child.forward = original_forward
+
+                del child._layer_memory_manager
+                if hasattr(child, "_memory_management_device"):
+                    del child._memory_management_device
+                if hasattr(child, "_is_memory_managed"):
+                    del child._is_memory_managed
+
+            keys_to_delete = [
+                dev for dev in _DEVICE_STATE
+                if isinstance(dev, torch.device) and dev.type == "cuda"
+            ]
+            for key in keys_to_delete:
+                del _DEVICE_STATE[key]
+
+        # bypass any overridden/nopped-out .to() so the storages are actually freed
+        torch.nn.Module.to(module, "meta")
+        torch.cuda.empty_cache()
+
+    @classmethod
+    def release_cached_memory(cls):
+        """
+        Return freed memory to the OS. Freed pinned-host storages sit in
+        torch's caching host allocator and freed pageable memory sits in
+        glibc's arenas; neither shows up as reclaimed RSS without an
+        explicit flush. Call after free()ing a large module.
+        """
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # torch's pinned-host cache; private API, name varies by torch version
+        for fn_name in ("_accelerator_emptyHostCache", "_host_emptyCache"):
+            fn = getattr(torch._C, fn_name, None)
+            if fn is not None:
+                try:
+                    fn()
+                    break
+                except Exception:
+                    pass
+
+        # glibc keeps freed arenas mapped; CDLL(None) resolves malloc_trim in
+        # the running process where glibc is present and fails cleanly on
+        # macOS/musl
+        try:
+            ctypes.CDLL(None).malloc_trim(0)
+        except Exception:
+            pass
