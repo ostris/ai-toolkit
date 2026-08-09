@@ -35,10 +35,26 @@ class FakeTextEncoder(torch.nn.Module):
         return self
 
 
-def _detach_and_cpu(te: torch.nn.Module):
+def _detach_and_free(te: torch.nn.Module):
     MemoryManager.detach(te)
-    # bypass any nopped-out .to() override and force an actual CPU move
-    torch.nn.Module.to(te, 'cpu')
+    # bypass any nopped-out .to() override and free the weight storages by
+    # moving them to the meta device. After the FakeTextEncoder swap every
+    # public handle points at the fake, so keeping the real module resident
+    # on CPU only costs host RAM (a quantized 32B text encoder is ~15.7 GB);
+    # any stray reference that tried to run it after unload was already
+    # unsupported.
+    torch.nn.Module.to(te, 'meta')
+
+
+def _trim_host_heap():
+    # glibc keeps freed arenas mapped; without this the RSS of a large
+    # unloaded text encoder never returns to the OS (measured ~3.4 GB
+    # retained after a full gc on linux).
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 
 def unload_text_encoder(model: "BaseModel"):
@@ -53,7 +69,7 @@ def unload_text_encoder(model: "BaseModel"):
 
             # the pipeline stores text encoders like text_encoder, text_encoder_2, text_encoder_3, etc.
             if hasattr(pipe, "text_encoder"):
-                _detach_and_cpu(pipe.text_encoder)
+                _detach_and_free(pipe.text_encoder)
                 te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
                 text_encoder_list.append(te)
                 pipe.text_encoder = te
@@ -61,7 +77,7 @@ def unload_text_encoder(model: "BaseModel"):
             i = 2
             while hasattr(pipe, f"text_encoder_{i}"):
                 real_te = getattr(pipe, f"text_encoder_{i}")
-                _detach_and_cpu(real_te)
+                _detach_and_free(real_te)
                 te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
                 text_encoder_list.append(te)
                 setattr(pipe, f"text_encoder_{i}", te)
@@ -69,7 +85,7 @@ def unload_text_encoder(model: "BaseModel"):
             model.text_encoder = text_encoder_list
         else:
             # only has a single text encoder
-            _detach_and_cpu(model.text_encoder)
+            _detach_and_free(model.text_encoder)
             model.text_encoder = FakeTextEncoder(
                 device=model.device_torch,
                 dtype=model.torch_dtype
@@ -78,3 +94,4 @@ def unload_text_encoder(model: "BaseModel"):
     torch.cuda.empty_cache()
     gc.collect()
     flush()
+    _trim_host_heap()
