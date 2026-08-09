@@ -762,7 +762,19 @@ class OstrisLinearLayerMemoryManager(BaseLayerMemoryManager):
                     state["w_buffers"][idx] = gpu_bufs
                     state["b_buffers"][idx] = gpu_bias
                     state["fwd_slot_ready"][idx].record()
-                torch.cuda.current_stream().wait_event(state["fwd_slot_ready"][idx])
+                compute_stream = torch.cuda.current_stream()
+                compute_stream.wait_event(state["fwd_slot_ready"][idx])
+
+                # These buffers are allocated on the transfer stream but consumed
+                # on the compute stream. ConvRot's training operators also save the
+                # quantized buffers for their custom autograd backward, which can
+                # outlive the forward-only fwd_slot_free event below. Register the
+                # consuming stream so the caching allocator cannot recycle their
+                # storage while either forward or backward kernels still use it.
+                for tensor in gpu_bufs.values():
+                    tensor.record_stream(compute_stream)
+                if gpu_bias is not None:
+                    gpu_bias.record_stream(compute_stream)
 
                 # swap the quantized state onto the device, run the quantizer's own
                 # forward, then swap the pinned CPU state back
