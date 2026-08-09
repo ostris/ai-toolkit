@@ -470,6 +470,33 @@ class AudioProcessingDTOMixin:
         
 
 class ImageProcessingDTOMixin:
+    def get_auto_frame_count(self: 'FileItemDTO', total_frames: int, video_fps: float) -> int:
+        # frame count this video will train at with auto_frame_count. Also called at
+        # FileItemDTO init so bucket keys carry the real frame count, so it must give
+        # the same answer at bucketing time and at load time.
+        # allow for any length video here but make sure it is temporally compressable.
+        vid_length_seconds = total_frames / video_fps
+
+        desired_num_frames = int(vid_length_seconds * self.dataset_config.fps)
+
+        if getattr(self, 'frame_count_snapper', None) is not None:
+            # model-specific valid-frame-count grid (e.g. minimax_h3's 17n+5)
+            desired_num_frames = self.frame_count_snapper(desired_num_frames)
+        else:
+            # make sure it is divisible by temporal_compression
+            if self.dataset_config.trim_auto_frame_count_tail:
+                # snap to the largest valid count that fits inside the video (after the
+                # key frame +1 below) so trim mode never overshoots the source, which
+                # would freeze the last frame and pad the audio tail with silence
+                desired_num_frames = max(0, desired_num_frames - 1) // self.temporal_compression * self.temporal_compression
+            else:
+                desired_num_frames = desired_num_frames // self.temporal_compression * self.temporal_compression
+
+            # TODO, all models currently add a key frame, but future models may not, update here if this changes.
+            desired_num_frames += 1  # add one for the key frame that is always added
+
+        return desired_num_frames
+
     def load_and_process_video(
         self: 'FileItemDTO',
         transform: Union[None, transforms.Compose],
@@ -511,26 +538,18 @@ class ImageProcessingDTOMixin:
             frames_to_extract = []
             
             if self.dataset_config.auto_frame_count:
-                # allow for any length video here but make sure it is temporally compressable.
-                vid_length_seconds = total_frames / video_fps
+                self.num_frames = self.get_auto_frame_count(total_frames, video_fps)
 
-                desired_num_frames = int(vid_length_seconds * self.dataset_config.fps)
 
-                if getattr(self, 'frame_count_snapper', None) is not None:
-                    # model-specific valid-frame-count grid (e.g. minimax_h3's 17n+5)
-                    desired_num_frames = self.frame_count_snapper(desired_num_frames)
-                else:
-                    # make sure it is divisible by temporal_compression
-                    desired_num_frames = desired_num_frames // self.temporal_compression * self.temporal_compression
-
-                    # TODO, all models currently add a key frame, but future models may not, update here if this changes.
-                    desired_num_frames += 1  # add one for the key frame that is always added
-
-                self.num_frames = desired_num_frames
-                
-            
             # Always stretch/shrink to the requested number of frames if needed
-            if self.dataset_config.shrink_video_to_frames or total_frames < self.num_frames:
+            if self.dataset_config.auto_frame_count and self.dataset_config.trim_auto_frame_count_tail:
+                # preserve real time: pull frames at the dataset fps from the start of the
+                # video and trim the tail that didn't fit the snapped frame count, instead of
+                # shrinking the whole video to fit (which speeds up motion / chipmunks audio).
+                # Critical for audio models (e.g. minimax_h3) where audio must stay in sync.
+                fps_ratio = video_fps / self.dataset_config.fps if video_fps and video_fps > 0 else 1.0
+                frames_to_extract = [min(round(i * fps_ratio), max_frame_index) for i in range(self.num_frames)]
+            elif self.dataset_config.shrink_video_to_frames or total_frames < self.num_frames:
                 # Distribute frames evenly across the entire video
                 interval = max_frame_index / (self.num_frames - 1) if self.num_frames > 1 else 0
                 frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.num_frames)]
@@ -733,10 +752,20 @@ class ImageProcessingDTOMixin:
                             gain = target_peak / (peak + eps)
                             waveform = waveform * gain
 
+                        trim_tail_audio = (
+                            self.dataset_config.auto_frame_count
+                            and self.dataset_config.trim_auto_frame_count_tail
+                        )
+
                         # Slice to the selected clip region (when we have a meaningful time range)
                         if source_duration > 0.0:
                             start_sample = int(round(clip_start_time * sample_rate))
-                            end_sample = int(round(clip_end_time * sample_rate))
+                            if trim_tail_audio and target_duration > 0.0:
+                                # time must stay 1:1 with the video — cut exactly the
+                                # training duration so no stretch is needed below
+                                end_sample = start_sample + round(target_duration * sample_rate)
+                            else:
+                                end_sample = round(clip_end_time * sample_rate)
                             start_sample = max(0, min(start_sample, waveform.shape[-1]))
                             end_sample = max(0, min(end_sample, waveform.shape[-1]))
                             if end_sample > start_sample:
@@ -749,10 +778,19 @@ class ImageProcessingDTOMixin:
                             waveform = None
 
                     if waveform is not None and waveform.numel() > 0:
-                        target_samples = int(round(target_duration * sample_rate))
+                        target_samples = round(target_duration * sample_rate)
                         if target_samples > 0 and waveform.shape[-1] != target_samples:
                             # Time-stretch/shrink to match the video clip duration implied by dataset FPS.
-                            if self.dataset_config.audio_preserve_pitch:
+                            if trim_tail_audio:
+                                # never stretch/contract in trim mode. The waveform can only be
+                                # short here (audio/video ended a hair before the target) —
+                                # pad the tail with silence, or cut any rounding overshoot
+                                pad = target_samples - waveform.shape[-1]
+                                if pad > 0:
+                                    waveform = F.pad(waveform, (0, pad))
+                                else:
+                                    waveform = waveform[..., :target_samples]
+                            elif self.dataset_config.audio_preserve_pitch:
                                 waveform = time_stretch_preserve_pitch(waveform, sample_rate, target_samples)  # waveform is [C, L]
                             else:
                                 # Use linear interpolation over the time axis.
@@ -1732,6 +1770,10 @@ class LatentCachingFileItemDTOMixin:
         if self.is_video and self.dataset_config.auto_frame_count:
             # don't store num frames here as it is calculated dynamically
             item["auto_frame_count"] = True
+            if self.dataset_config.trim_auto_frame_count_tail:
+                # changes frame selection; only added when on so caches made before
+                # this option existed stay valid when it is off
+                item["trim_auto_frame_count_tail"] = True
             is_video = True
         elif self.is_video and self.dataset_config.num_frames > 1:
             item["num_frames"] = self.dataset_config.num_frames

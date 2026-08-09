@@ -1063,6 +1063,11 @@ class DatasetConfig:
         # this wont work with bucketing for now until I can handle this before bucketing.
         self.auto_frame_count: bool = kwargs.get('auto_frame_count', False)
         
+        #  old behavior shrank the video to fit the temporal spacing of the model. Which fits the whole video, but
+        # can lead to fast motion/chipmunking. This will prevent the video from shrinking to fit, and instead, trim
+        # the tail of the video. Usually only a few frames. 
+        self.trim_auto_frame_count_tail: bool = kwargs.get('trim_auto_frame_count_tail', True)
+        
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
         

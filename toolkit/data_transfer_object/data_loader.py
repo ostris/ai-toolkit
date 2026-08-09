@@ -97,6 +97,7 @@ class FileItemDTO(
             raise Exception("Error: Could not get file signature for {self.path}")
 
         use_db_entry = False
+        db_entry = None
         if file_key in size_database:
             db_entry = size_database[file_key]
             if (
@@ -105,6 +106,8 @@ class FileItemDTO(
                 and db_entry[2] == file_signature
             ):
                 use_db_entry = True
+        video_total_frames = None
+        video_fps = None
         if self.is_audio_model:
             # get the length of the audio file in ms
             with av.open(self.path) as c:
@@ -114,24 +117,31 @@ class FileItemDTO(
                     s = c.streams.audio[0]
                     w = int(float(s.duration * s.time_base) * 1_000)
             h = 1
-        elif use_db_entry:
-            w, h, _ = size_database[file_key]
         elif self.is_video:
-            # Open the video file
-            video = cv2.VideoCapture(self.path)
+            # video entries also carry (total_frames, fps); older 3-item entries
+            # get re-read and upgraded here
+            if use_db_entry and len(db_entry) >= 5:
+                w, h, _, video_total_frames, video_fps = db_entry[:5]
+            else:
+                # Open the video file
+                video = cv2.VideoCapture(self.path)
 
-            # Check if video opened successfully
-            if not video.isOpened():
-                raise Exception(f"Error: Could not open video file {self.path}")
+                # Check if video opened successfully
+                if not video.isOpened():
+                    raise Exception(f"Error: Could not open video file {self.path}")
 
-            # Get width and height
-            width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            w, h = width, height
+                # Get width and height
+                width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                w, h = width, height
+                video_total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+                video_fps = video.get(cv2.CAP_PROP_FPS)
 
-            # Release the video capture object immediately
-            video.release()
-            size_database[file_key] = (width, height, file_signature)
+                # Release the video capture object immediately
+                video.release()
+                size_database[file_key] = (width, height, file_signature, video_total_frames, video_fps)
+        elif use_db_entry:
+            w, h, _ = db_entry[:3]
         else:
             if self.dataset_config.fast_image_size:
                 # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method by default.
@@ -150,6 +160,10 @@ class FileItemDTO(
             size_database[file_key] = (w, h, file_signature)
         self.width: int = w
         self.height: int = h
+        if self.is_video and self.dataset_config.auto_frame_count:
+            # compute the real frame count now (same math as load time) so buckets
+            # are keyed on the frame count this video will actually train at
+            self.num_frames = self.get_auto_frame_count(video_total_frames, video_fps)
         self.dataloader_transforms = kwargs.get("dataloader_transforms", None)
         super().__init__(*args, **kwargs)
 
