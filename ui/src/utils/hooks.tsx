@@ -17,21 +17,14 @@ export function setNestedValue<T, V>(obj: T, value: V, path?: string): T {
   }
 
   // Split the path into segments
-  const pathArray = path.split('.').flatMap(segment => {
-    // Handle array notation like 'process[0]'
-    const arrayMatch = segment.match(/^([^\[]+)(\[\d+\])+/);
-    if (arrayMatch) {
-      const propName = arrayMatch[1];
-      const indices = segment
-        .substring(propName.length)
-        .match(/\[(\d+)\]/g)
-        ?.map(idx => parseInt(idx.substring(1, idx.length - 1)));
+  const pathArray: Array<string | number> = [];
+  const re = /([^[.\]]+)|\[(\d+)\]/g;
+  let m: RegExpExecArray | null;
 
-      // Return property name followed by array indices
-      return [propName, ...(indices || [])];
-    }
-    return segment;
-  });
+  while ((m = re.exec(path)) !== null) {
+    if (m[1] !== undefined) pathArray.push(m[1]);
+    else pathArray.push(Number(m[2]));
+  }
 
   // Navigate to the target location
   let current: any = result;
@@ -43,8 +36,18 @@ export function setNestedValue<T, V>(obj: T, value: V, path?: string): T {
       if (!Array.isArray(current)) {
         throw new Error(`Cannot access index ${key} of non-array`);
       }
-      // Create a copy of the array to maintain immutability
-      current = [...current];
+
+      // Ensure the indexed element exists and is copied/created immutably
+      const nextKey = pathArray[i + 1];
+      const existing = current[key];
+
+      if (existing === undefined) {
+        current[key] = typeof nextKey === 'number' ? [] : {};
+      } else if (Array.isArray(existing)) {
+        current[key] = [...existing];
+      } else if (typeof existing === 'object' && existing !== null) {
+        current[key] = { ...existing };
+      } // else: primitives stay as-is
     } else {
       // For object properties, create a new object if it doesn't exist
       if (current[key] === undefined) {
@@ -63,7 +66,11 @@ export function setNestedValue<T, V>(obj: T, value: V, path?: string): T {
 
   // Set the value at the final path segment
   const finalKey = pathArray[pathArray.length - 1];
-  current[finalKey] = value;
+  if (value === undefined) {
+    delete current[finalKey];
+  } else {
+    current[finalKey] = value;
+  }
 
   return result;
 }

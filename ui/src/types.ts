@@ -39,8 +39,19 @@ export interface GpuInfo {
   fan: GpuFan;
 }
 
+export interface CpuInfo {
+  name: string;
+  cores: number;
+  temperature: number;
+  totalMemory: number;
+  freeMemory: number;
+  availableMemory: number;
+  currentLoad: number;
+}
+
 export interface GPUApiResponse {
   hasNvidiaSmi: boolean;
+  isMac: boolean;
   gpus: GpuInfo[];
   error?: string;
 }
@@ -60,6 +71,7 @@ export interface NetworkConfig {
   network_kwargs: {
     ignore_if_contains: string[];
   };
+  transformer_only?: boolean;
 }
 
 export interface SaveConfig {
@@ -83,17 +95,38 @@ export interface DatasetConfig {
   cache_latents_to_disk?: boolean;
   resolution: number[];
   controls: string[];
-  control_path: string | null;
+  control_path?: string | null;
   num_frames: number;
   shrink_video_to_frames: boolean;
-  do_i2v: boolean;
+  do_i2v?: boolean;
+  do_audio?: boolean;
+  audio_normalize?: boolean;
+  audio_preserve_pitch?: boolean;
+  fps?: number;
   flip_x: boolean;
   flip_y: boolean;
+  num_repeats?: number;
+  control_path_1?: string | null;
+  control_path_2?: string | null;
+  control_path_3?: string | null;
+  auto_frame_count?: boolean;
 }
 
 export interface EMAConfig {
   use_ema: boolean;
   ema_decay: number;
+}
+
+export interface ValidationItem {
+  image_path: string;
+  prompt: string;
+}
+
+export interface ValidationConfig {
+  validation_items: ValidationItem[];
+  resolution: number;
+  validate_every_n_steps: number;
+  validation_sigmas?: number[];
 }
 
 export interface TrainConfig {
@@ -122,7 +155,17 @@ export interface TrainConfig {
   diff_output_preservation: boolean;
   diff_output_preservation_multiplier: number;
   diff_output_preservation_class: string;
+  blank_prompt_preservation?: boolean;
+  blank_prompt_preservation_multiplier?: number;
   switch_boundary_every: number;
+  loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
+  do_differential_guidance?: boolean;
+  differential_guidance_scale?: number;
+  audio_loss_multiplier?: number;
+  max_loss?: number | null;
+  validation_config?: ValidationConfig;
+  do_guidance_loss?: boolean;
+  guidance_loss_target?: number;
 }
 
 export interface QuantizeKwargsConfig {
@@ -139,11 +182,22 @@ export interface ModelConfig {
   arch: string;
   low_vram: boolean;
   model_kwargs: { [key: string]: any };
+  layer_offloading?: boolean;
+  layer_offloading_transformer_percent?: number;
+  layer_offloading_text_encoder_percent?: number;
+  assistant_lora_path?: string;
+  unconditional_lora_path?: string;
+  compile?: boolean;
+  block_compile?: boolean;
+  compile_mode?: 'default' | 'max-autotune' | 'fastest';
+  compile_fullgraph?: boolean;
+  compile_dynamic?: boolean;
+  cache_size_limit?: number;
 }
 
 export interface SampleItem {
   prompt: string;
-  width?: number
+  width?: number;
   height?: number;
   neg?: string;
   seed?: number;
@@ -153,11 +207,16 @@ export interface SampleItem {
   num_frames?: number;
   ctrl_img?: string | null;
   ctrl_idx?: number;
+  network_multiplier?: number;
+  ctrl_img_1?: string | null;
+  ctrl_img_2?: string | null;
+  ctrl_img_3?: string | null;
 }
 
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
+  sample_start_step: number;
   width: number;
   height: number;
   prompts?: string[];
@@ -171,17 +230,33 @@ export interface SampleConfig {
   fps: number;
 }
 
+export interface LoggingConfig {
+  log_every: number;
+  use_ui_logger: boolean;
+}
+
+export interface SliderConfig {
+  guidance_strength?: number;
+  anchor_strength?: number;
+  positive_prompt?: string;
+  negative_prompt?: string;
+  target_class?: string;
+  anchor_class?: string | null;
+}
+
 export interface ProcessConfig {
-  type: 'ui_trainer';
+  type: string;
   sqlite_db_path?: string;
   training_folder: string;
   performance_log_every: number;
   trigger_word: string | null;
   device: string;
   network?: NetworkConfig;
+  slider?: SliderConfig;
   save: SaveConfig;
   datasets: DatasetConfig[];
   train: TrainConfig;
+  logging: LoggingConfig;
   model: ModelConfig;
   sample: SampleConfig;
 }
@@ -202,8 +277,42 @@ export interface JobConfig {
   meta: MetaConfig;
 }
 
+export interface CaptionProcessConfig {
+  type: string;
+  sqlite_db_path?: string;
+  device: string;
+  caption: {
+    model_name_or_path: string;
+    model_name_or_path2?: string;
+    dtype: string;
+    quantize: boolean;
+    qtype: string;
+    low_vram: boolean;
+    extensions: string[];
+    path_to_caption: string;
+    recaption: boolean;
+    compile?: boolean;
+    caption_prompt?: string;
+    max_res?: number;
+    max_new_tokens?: number;
+    fixed_caption?: string;
+    caption_extension?: string;
+    thinking?: boolean;
+  }
+}
+
+export interface CaptionConfigObject {
+  name: string;
+  process: CaptionProcessConfig[];
+}
+
+export interface CaptionJobConfig {
+  job: string;
+  config: CaptionConfigObject;
+}
+
 export interface ConfigDoc {
-  title: string;
+  title: string | React.ReactNode;
   description: React.ReactNode;
 }
 
@@ -215,3 +324,5 @@ export interface GroupedSelectOption {
   readonly label: string;
   readonly options: SelectOption[];
 }
+
+export type JobStatus = 'queued' | 'running' | 'stopping' | 'stopped' | 'completed' | 'error';

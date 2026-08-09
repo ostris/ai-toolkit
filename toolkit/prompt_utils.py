@@ -8,6 +8,8 @@ import random
 
 from toolkit.train_tools import get_torch_dtype
 import itertools
+from safetensors import safe_open
+from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 
 if TYPE_CHECKING:
     from toolkit.config_modules import SliderTargetConfig
@@ -72,7 +74,10 @@ class PromptEmbeds:
         if self.pooled_embeds is not None:
             prompt_embeds = PromptEmbeds([cloned_text_embeds, self.pooled_embeds.clone()])
         else:
-            prompt_embeds = PromptEmbeds(cloned_text_embeds)
+            if isinstance(cloned_text_embeds, list) or isinstance(cloned_text_embeds, tuple):
+                prompt_embeds = PromptEmbeds([cloned_text_embeds, None])
+            else:
+                prompt_embeds = PromptEmbeds(cloned_text_embeds)
 
         if self.attention_mask is not None:
             if isinstance(self.attention_mask, list) or isinstance(self.attention_mask, tuple):
@@ -84,7 +89,10 @@ class PromptEmbeds:
     def expand_to_batch(self, batch_size):
         pe = self.clone()
         if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
-            current_batch_size = pe.text_embeds[0].shape[0]
+            if len(pe.text_embeds[0].shape) == 2:
+                current_batch_size = len(pe.text_embeds)
+            else:
+                current_batch_size = pe.text_embeds[0].shape[0]
         else:
             current_batch_size = pe.text_embeds.shape[0]
         if current_batch_size == batch_size:
@@ -92,7 +100,11 @@ class PromptEmbeds:
         if current_batch_size != 1:
             raise Exception("Can only expand batch size for batch size 1")
         if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
-            pe.text_embeds = [t.expand(batch_size, -1) for t in pe.text_embeds]
+            if len(pe.text_embeds[0].shape) == 2:
+                # batch is a list of tensors
+                pe.text_embeds = pe.text_embeds * batch_size
+            else:
+                pe.text_embeds = [t.expand(batch_size, -1) for t in pe.text_embeds]
         else:
             pe.text_embeds = pe.text_embeds.expand(batch_size, -1)
         if pe.pooled_embeds is not None:
@@ -135,12 +147,24 @@ class PromptEmbeds:
         :param path: The path to load the prompt embeds from.
         :return: An instance of PromptEmbeds.
         """
+        # first check if it is advanced prompt embed file
+        f = safe_open(path, framework='pt')
+        metadata = f.metadata()
+        if metadata is not None and metadata.get("class_name", "") == "AdvancedPromptEmbeds":
+            return AdvancedPromptEmbeds.load(path=path)
+        if metadata is not None and metadata.get("class_name", "") == "AnimaPromptEmbeds":
+            from extensions_built_in.diffusion_models.anima import AnimaPromptEmbeds
+
+            return AnimaPromptEmbeds.load(path=path)
+        
         state_dict = load_file(path, device='cpu')
         text_embeds = []
         pooled_embeds = None
         attention_mask = []
+        is_list = False
         for key in sorted(state_dict.keys()):
             if key.startswith("text_embed_"):
+                is_list = True
                 text_embeds.append(state_dict[key])
             elif key == "text_embed":
                 text_embeds.append(state_dict[key])
@@ -152,7 +176,7 @@ class PromptEmbeds:
                 attention_mask.append(state_dict[key])
         pe = cls(None)
         pe.text_embeds = text_embeds
-        if len(text_embeds) == 1:
+        if len(text_embeds) == 1 and not is_list:
             pe.text_embeds = text_embeds[0]
         if pooled_embeds is not None:
             pe.pooled_embeds = pooled_embeds
@@ -232,25 +256,15 @@ class EncodedPromptPair:
         return self
 
 
-def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
+def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"], padding_side: str = "right") -> PromptEmbeds:
+    # check if first item has a classmethod of concat_prompt_embeds
+    if hasattr(prompt_embeds[0].__class__, "concat_prompt_embeds"):
+        return prompt_embeds[0].__class__.concat_prompt_embeds(prompt_embeds, padding_side=padding_side)
     # --- pad text_embeds ---
     if isinstance(prompt_embeds[0].text_embeds, (list, tuple)):
-        embed_list = []
-        for i in range(len(prompt_embeds[0].text_embeds)):
-            max_len = max(p.text_embeds[i].shape[1] for p in prompt_embeds)
-            padded = []
-            for p in prompt_embeds:
-                t = p.text_embeds[i]
-                if t.shape[1] < max_len:
-                    pad = torch.zeros(
-                        (t.shape[0], max_len - t.shape[1], *t.shape[2:]),
-                        dtype=t.dtype,
-                        device=t.device,
-                    )
-                    t = torch.cat([t, pad], dim=1)
-                padded.append(t)
-            embed_list.append(torch.cat(padded, dim=0))
-        text_embeds = embed_list
+        text_embeds = []
+        for p in prompt_embeds:
+            text_embeds += p.text_embeds
     else:
         max_len = max(p.text_embeds.shape[1] for p in prompt_embeds)
         padded = []
@@ -262,7 +276,10 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
                     dtype=t.dtype,
                     device=t.device,
                 )
-                t = torch.cat([t, pad], dim=1)
+                if padding_side == "right":
+                    t = torch.cat([t, pad], dim=1)
+                else:
+                    t = torch.cat([pad, t], dim=1)
             padded.append(t)
         text_embeds = torch.cat(padded, dim=0)
 
@@ -284,7 +301,10 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
                     dtype=m.dtype,
                     device=m.device,
                 )
-                m = torch.cat([m, pad], dim=1)
+                if padding_side == "right":
+                    m = torch.cat([m, pad], dim=1)
+                else:
+                    m = torch.cat([pad, m], dim=1)
             padded.append(m)
         attention_mask = torch.cat(padded, dim=0)
 
@@ -330,6 +350,8 @@ def concat_prompt_pairs(prompt_pairs: list[EncodedPromptPair]):
 
 
 def split_prompt_embeds(concatenated: PromptEmbeds, num_parts=None) -> List[PromptEmbeds]:
+    if hasattr(concatenated.__class__, "split_prompt_embeds"):
+        return concatenated.__class__.split_prompt_embeds(concatenated, num_parts=num_parts)
     if num_parts is None:
         # use batch size
         num_parts = concatenated.text_embeds.shape[0]

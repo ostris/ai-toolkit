@@ -1,24 +1,48 @@
 import os
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 import sys
-from typing import Union, OrderedDict
 from dotenv import load_dotenv
 # Load the .env file if it exists
 load_dotenv()
+os.environ["HF_XET_HIGH_PERFORMANCE"] = os.getenv("HF_XET_HIGH_PERFORMANCE", "1")
+os.environ["HF_HUB_DISABLE_XET"] = os.getenv("HF_HUB_DISABLE_XET", "0")
+os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
+os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
+seed = None
+if "SEED" in os.environ:
+    try:
+        seed = int(os.environ["SEED"])
+    except ValueError:
+        print(f"Invalid SEED value: {os.environ['SEED']}. SEED must be an integer.")
 
 sys.path.insert(0, os.getcwd())
+
+# The UI launches jobs with no console; keep anything we shell out to (torch
+# compiles, HF git downloads) from flashing a console window. Must come before
+# any import that might spawn a subprocess.
+from toolkit.win_console import suppress_child_consoles
+suppress_child_consoles()
+
 # must come before ANY torch or fastai imports
 # import toolkit.cuda_malloc
 
 # turn off diffusers telemetry until I can figure out how to make it opt-in
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
+# set torch to trace mode
+import torch
+    
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
-    # set torch to trace mode
-    import torch
     torch.autograd.set_detect_anomaly(True)
+
+if seed is not None:
+    import random
+    import numpy as np
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
 import argparse
 from toolkit.job import get_job
 from toolkit.accelerator import get_accelerator
@@ -112,8 +136,11 @@ def main():
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
             if not args.recover:
-                print_end_message(jobs_completed, jobs_failed)
-                raise e
+                print_acc("")
+                print_acc("========================================")
+                print_acc("Job stopped")
+                print_acc("========================================")
+                sys.exit(0)
 
 
 if __name__ == '__main__':

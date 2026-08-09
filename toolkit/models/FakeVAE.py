@@ -25,11 +25,12 @@ class Config:
 
 
 class FakeVAE(nn.Module):
-    def __init__(self):
+    def __init__(self, scaling_factor=1.0):
         super().__init__()
         self._dtype = torch.float32
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.config = Config()
+        self.config.scaling_factor = scaling_factor
 
     @property
     def dtype(self):

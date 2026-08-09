@@ -122,6 +122,11 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.python
+.node
+.ffmpeg
+.mingit
+.uv
 env/
 venv/
 ENV/
@@ -180,8 +185,12 @@ cython_debug/
 .DS_Store
 ._.DS_Store
 aitk_db.db
+aitk_db.db-wal
+aitk_db.db-shm
 /notes.md
 /data
 triton-3.2.0-cp310-cp310-win_amd64.whl
 input/*
 FLUX.1-dev/*
+.claude
+original_repo

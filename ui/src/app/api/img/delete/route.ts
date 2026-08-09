@@ -1,30 +1,39 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
-import { getDatasetsRoot } from '@/server/settings';
+import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+
+const fileExists = (p: string) => fs.promises.access(p).then(() => true).catch(() => false);
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { imgPath } = body;
     let datasetsPath = await getDatasetsRoot();
+    const trainingPath = await getTrainingFolder();
+
     // make sure the dataset path is in the image path
-    if (!imgPath.startsWith(datasetsPath)) {
+    if (!imgPath.startsWith(datasetsPath) && !imgPath.startsWith(trainingPath)) {
       return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
     }
 
+    // make sure it is an image
+    if (!/\.(jpg|jpeg|png|bmp|gif|tiff|webp|mp4|mp3|wav|flac|ogg)$/i.test(imgPath.toLowerCase())) {
+      return NextResponse.json({ error: 'Not an image' }, { status: 400 });
+    }
+
     // if img doesnt exist, ignore
-    if (!fs.existsSync(imgPath)) {
+    if (!(await fileExists(imgPath))) {
       return NextResponse.json({ success: true });
     }
 
     // delete it and return success
-    fs.unlinkSync(imgPath);
+    await fs.promises.unlink(imgPath);
 
     // check for caption
     const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.txt';
-    if (fs.existsSync(captionPath)) {
+    if (await fileExists(captionPath)) {
       // delete caption file
-      fs.unlinkSync(captionPath);
+      await fs.promises.unlink(captionPath);
     }
 
     return NextResponse.json({ success: true });

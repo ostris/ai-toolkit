@@ -55,7 +55,6 @@ image = (
         "toml", 
         "pydantic",
         "omegaconf",
-        "k-diffusion",
         "open_clip_torch",
         "timm",
         "prodigyopt",

@@ -27,6 +27,7 @@ from .wan22_5b_model import (
     scheduler_config,
     time_text_monkeypatch,
 )
+from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file, save_file
 
 
@@ -210,6 +211,12 @@ class Wan2214bModel(Wan21):
         if not self.train_high_noise or not self.train_low_noise:
             self.target_lora_modules = ["WanTransformer3DModel"]
 
+    def get_quantization_exclude_modules(self):
+        # the timestep/text conditioning embedders and the final projection feed
+        # every downstream modulation; keep them in full precision when quantizing.
+        # names are relative to each individual transformer (they quantize separately)
+        return ["condition_embedder*", "proj_out*"]
+
     @property
     def max_step_saves_to_keep_multiplier(self):
         # the cleanup mechanism checks this to see how many saves to keep
@@ -288,9 +295,12 @@ class Wan2214bModel(Wan21):
 
         flush()
 
-        if not self.model_config.low_vram:
+        if self.model_config.low_vram:
             # quantize on the device
-            transformer_1.to(self.quantize_device, dtype=dtype)
+            transformer_1.to('cpu', dtype=dtype)
+            flush()
+        else:
+            transformer_1.to(self.device_torch, dtype=dtype)
             flush()
 
         if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
@@ -302,6 +312,8 @@ class Wan2214bModel(Wan21):
         if self.model_config.low_vram:
             self.print_and_status_update("Moving transformer 1 to CPU")
             transformer_1.to("cpu")
+        else:
+            transformer_1.to(self.device_torch)
 
         self.print_and_status_update("Loading transformer 2")
         dtype = self.torch_dtype
@@ -313,9 +325,12 @@ class Wan2214bModel(Wan21):
 
         flush()
 
-        if not self.model_config.low_vram:
+        if self.model_config.low_vram:
             # quantize on the device
-            transformer_2.to(self.quantize_device, dtype=dtype)
+            transformer_2.to('cpu', dtype=dtype)
+            flush()
+        else:
+            transformer_2.to(self.device_torch, dtype=dtype)
             flush()
 
         if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
@@ -327,7 +342,10 @@ class Wan2214bModel(Wan21):
         if self.model_config.low_vram:
             self.print_and_status_update("Moving transformer 2 to CPU")
             transformer_2.to("cpu")
-
+        else:
+            transformer_2.to(self.device_torch)
+    
+        layer_offloading_transformer = self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0
         # make the combined model
         self.print_and_status_update("Creating DualWanTransformer3DModel")
         transformer = DualWanTransformer3DModel(
@@ -345,10 +363,27 @@ class Wan2214bModel(Wan21):
             quantize_model(self, transformer)
             flush()
             
+        
+        if layer_offloading_transformer:
+            MemoryManager.attach(
+                transformer_1,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_transformer_percent,
+                ignore_modules=[transformer_1.scale_shift_table] + [block.scale_shift_table for block in transformer_1.blocks]
+            )
+            MemoryManager.attach(
+                transformer_2,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_transformer_percent,
+                ignore_modules=[transformer_2.scale_shift_table] + [block.scale_shift_table for block in transformer_2.blocks]
+            )
+
         return transformer
 
     def get_generation_pipeline(self):
-        scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
+        # todo unipc got broken in a diffusers update. Use euler for now.
+        # scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
+        scheduler = self.get_train_scheduler()
         pipeline = Wan22Pipeline(
             vae=self.vae,
             transformer=self.model.transformer_1,
@@ -375,24 +410,6 @@ class Wan2214bModel(Wan21):
 
     def get_base_model_version(self):
         return "wan_2.2_14b"
-
-    def generate_single_image(
-        self,
-        pipeline: Wan22Pipeline,
-        gen_config: GenerateImageConfig,
-        conditional_embeds: PromptEmbeds,
-        unconditional_embeds: PromptEmbeds,
-        generator: torch.Generator,
-        extra: dict,
-    ):
-        return super().generate_single_image(
-            pipeline=pipeline,
-            gen_config=gen_config,
-            conditional_embeds=conditional_embeds,
-            unconditional_embeds=unconditional_embeds,
-            generator=generator,
-            extra=extra,
-        )
 
     def get_noise_prediction(
         self,
@@ -538,6 +555,11 @@ class Wan2214bModel(Wan21):
     ):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
+
+        if self.use_vae_tiling:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         # todo, figure out how to do video
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
@@ -555,6 +577,10 @@ class Wan2214bModel(Wan21):
             output_type="pil",
             **extra
         )[0]
+
+        if self.use_vae_tiling:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images

@@ -1,6 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { sampleImageModalState } from '@/components/SampleImageModal';
-import { isVideo } from '@/utils/basic';
+import { isVideo, isAudio } from '@/utils/basic';
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -10,6 +9,11 @@ interface SampleImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onClick?: () => void;
+  /** pass your scroll container element (e.g. containerRef.current) */
+  observerRoot?: Element | null;
+  /** optional: tweak pre-load buffer */
+  rootMargin?: string; // default '200px 0px'
 }
 
 const SampleImageCard: React.FC<SampleImageCardProps> = ({
@@ -19,70 +23,135 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   sampleImages,
   children,
   className = '',
+  onClick = () => {},
+  observerRoot = null,
+  rootMargin = '200px 0px',
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState<boolean>(false);
-  const [loaded, setLoaded] = useState<boolean>(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  // videos with no pre-generated thumb (older samples) fall back to the <video> element
+  const [videoFallback, setVideoFallback] = useState(false);
 
+  const isItAudio = isAudio(imageUrl);
+  const isItVideo = isVideo(imageUrl);
+
+  // Observe both enter and exit
   useEffect(() => {
-    // Create intersection observer to check visibility
+    const el = cardRef.current;
+    if (!el) return;
+
     const observer = new IntersectionObserver(
       entries => {
-        if (entries[0].isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
+        for (const entry of entries) {
+          if (entry.target === el) {
+            setIsVisible(entry.isIntersecting);
+          }
         }
       },
-      { threshold: 0.1 },
+      {
+        root: observerRoot ?? null,
+        threshold: 0.01,
+        rootMargin,
+      },
     );
 
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
-    }
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [observerRoot, rootMargin]);
+
+  // Drive image loads through fetch + AbortController so scrolling past actually
+  // cancels in-flight requests (browsers don't reliably cancel <img> fetches when
+  // the element unmounts). A short debounce skips requests entirely during fast
+  // scrolls where the card is only briefly visible.
+  useEffect(() => {
+    if (isItAudio) return;
+    if (!isVisible) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const timer = window.setTimeout(() => {
+      // ?thumb=1: the server sends the small pre-generated thumbnail when one
+      // exists, otherwise the full file. Videos without a thumb come back as
+      // video/* — abort the transfer and render the <video> element instead.
+      fetch(`/api/img/${encodeURIComponent(imageUrl)}?thumb=1`, { signal: controller.signal })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const contentType = r.headers.get('content-type') || '';
+          if (isItVideo && !contentType.startsWith('image/')) {
+            controller.abort();
+            if (!cancelled) {
+              setVideoFallback(true);
+              setLoaded(true);
+            }
+            return null;
+          }
+          return r.blob();
+        })
+        .then(blob => {
+          if (cancelled || !blob) return;
+          objectUrl = URL.createObjectURL(blob);
+          setBlobUrl(objectUrl);
+          setLoaded(true);
+        })
+        .catch(err => {
+          if (err?.name !== 'AbortError') console.error('Sample image fetch failed:', err);
+        });
+    }, 80);
 
     return () => {
-      observer.disconnect();
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setBlobUrl(null);
+      setLoaded(false);
+      setVideoFallback(false);
     };
-  }, []);
-
-  const handleLoad = (): void => {
-    setLoaded(true);
-  };
+  }, [isVisible, isItAudio, isItVideo, imageUrl]);
 
   return (
     <div className={`flex flex-col ${className}`}>
-      {/* Square image container */}
-      <div
-        ref={cardRef}
-        className="relative w-full cursor-pointer"
-        style={{ paddingBottom: '100%' }} // Make it square
-        onClick={() => sampleImageModalState.set({ imgPath: imageUrl, numSamples, sampleImages })}
-      >
-        <div className="absolute inset-0 rounded-t-lg shadow-md">
-          {isVisible && (
-            <>
-              {isVideo(imageUrl) ? (
-                <video
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
-                  className={`w-full h-full object-cover`}
-                  autoPlay={false}
-                  loop
-                  muted
-                  playsInline
-                />
-              ) : (
+      <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: '100%' }} onClick={onClick}>
+        <div
+          className={`absolute inset-0 rounded-t-lg shadow-md bg-gray-900 ${
+            isVisible && !isItAudio && !loaded ? 'animate-pulse' : ''
+          }`}
+        >
+          {isVisible ? (
+            isItAudio ? (
+              <div className="w-full h-full flex items-center justify-center bg-gray-900">
                 <img
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
                   alt={alt}
-                  onLoad={handleLoad}
-                  className={`w-full h-full object-cover transition-opacity duration-300 ${
-                    loaded ? 'opacity-100' : 'opacity-0'
-                  }`}
+                  className="w-full h-full object-cover"
+                  onError={e => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
                 />
-              )}
-            </>
-          )}
-          {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
+              </div>
+            ) : isItVideo && videoFallback ? (
+              <video
+                ref={videoRef}
+                src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                className="w-full h-full object-cover"
+                preload="none"
+                playsInline
+                muted
+                loop
+                autoPlay
+                controls={false}
+              />
+            ) : blobUrl ? (
+              <img src={blobUrl} alt={alt} className="w-full h-full object-cover" />
+            ) : null
+          ) : null}
+
+          {children && isVisible && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
         </div>
       </div>
     </div>

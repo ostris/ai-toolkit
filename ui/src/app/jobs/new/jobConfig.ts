@@ -1,8 +1,10 @@
-import { JobConfig, DatasetConfig } from '@/types';
+'use client';
+import { isMac } from '@/helpers/basic';
+import { defaultSampleConfig } from '@/helpers/defaultSamples';
+import { JobConfig, SampleConfig, DatasetConfig, SliderConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
-  control_path: null,
   mask_path: null,
   mask_min_value: 0.1,
   default_caption: '',
@@ -15,9 +17,22 @@ export const defaultDatasetConfig: DatasetConfig = {
   controls: [],
   shrink_video_to_frames: true,
   num_frames: 1,
-  do_i2v: true,
   flip_x: false,
   flip_y: false,
+  num_repeats: 1,
+};
+
+export const defaultSliderConfig: SliderConfig = {
+  guidance_strength: 3.0,
+  anchor_strength: 1.0,
+  positive_prompt: 'person who is happy',
+  negative_prompt: 'person who is sad',
+  target_class: 'person',
+  anchor_class: '',
+};
+
+export const defaultCompileOptions = {
+  block_compile: true,
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -26,7 +41,7 @@ export const defaultJobConfig: JobConfig = {
     name: 'my_first_lora_v1',
     process: [
       {
-        type: 'ui_trainer',
+        type: 'diffusion_trainer',
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
         device: 'cuda',
@@ -82,6 +97,11 @@ export const defaultJobConfig: JobConfig = {
           diff_output_preservation_multiplier: 1.0,
           diff_output_preservation_class: 'person',
           switch_boundary_every: 1,
+          loss_type: 'mse',
+        },
+        logging: {
+          log_every: 1,
+          use_ui_logger: true,
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
@@ -92,52 +112,9 @@ export const defaultJobConfig: JobConfig = {
           arch: 'flex1',
           low_vram: false,
           model_kwargs: {},
+          compile: false,
         },
-        sample: {
-          sampler: 'flowmatch',
-          sample_every: 250,
-          width: 1024,
-          height: 1024,
-          samples: [
-            {
-              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background'
-            },
-            {
-              prompt: 'a woman holding a coffee cup, in a beanie, sitting at a cafe',
-            },
-            {
-              prompt: 'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
-            },
-            {
-              prompt: 'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
-            },
-            {
-              prompt: 'a bear building a log cabin in the snow covered mountains',
-            },
-            {
-              prompt: 'woman playing the guitar, on stage, singing a song, laser lights, punk rocker',
-            },
-            {
-              prompt: 'hipster man with a beard, building a chair, in a wood shop',
-            },
-            {
-              prompt: 'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
-            },
-            {
-              prompt: "a man holding a sign that says, 'this is a sign'",
-            },
-            {
-              prompt: 'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
-            },
-          ],
-          neg: '',
-          seed: 42,
-          walk_seed: true,
-          guidance_scale: 4,
-          sample_steps: 25,
-          num_frames: 1,
-          fps: 1,
-        },
+        sample: defaultSampleConfig,
       },
     ],
   },
@@ -164,5 +141,28 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     jobConfig.config.process[0].sample.samples = newSamples;
     delete jobConfig.config.process[0].sample.prompts;
   }
+
+  // upgrade job from ui_trainer to diffusion_trainer
+  if (jobConfig?.config?.process && jobConfig.config.process[0]?.type === 'ui_trainer') {
+    jobConfig.config.process[0].type = 'diffusion_trainer';
+  }
+
+  if ('auto_memory' in jobConfig.config.process[0].model) {
+    jobConfig.config.process[0].model.layer_offloading = (jobConfig.config.process[0].model.auto_memory ||
+      false) as boolean;
+    delete jobConfig.config.process[0].model.auto_memory;
+  }
+
+  if (!('logging' in jobConfig.config.process[0])) {
+    //@ts-ignore
+    jobConfig.config.process[0].logging = {
+      log_every: 1,
+      use_ui_logger: true,
+    };
+  }
+  if (isMac()) {
+    jobConfig.config.process[0].device = 'mps';
+  }
+
   return jobConfig;
 };

@@ -68,6 +68,7 @@ config:
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
         sample_every: 250 # sample every this many steps
+        sample_start_step: 0 # start sampling at this step
         width: 1024
         height: 1024
         prompts:

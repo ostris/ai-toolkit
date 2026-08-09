@@ -2,7 +2,7 @@ import Loading from './Loading';
 import classNames from 'classnames';
 
 export interface TableColumn {
-  title: string;
+  title: React.ReactNode;
   key: string;
   render?: (row: any) => React.ReactNode;
   className?: string;
@@ -16,10 +16,17 @@ interface TableProps {
   columns: TableColumn[];
   rows: TableRow[];
   isLoading: boolean;
+  theadClassName?: string;
   onRefresh: () => void;
 }
 
-export default function UniversalTable({ columns, rows, isLoading, onRefresh = () => {} }: TableProps) {
+export default function UniversalTable({
+  columns,
+  rows,
+  isLoading,
+  theadClassName = 'text-gray-400',
+  onRefresh = () => {},
+}: TableProps) {
   return (
     <div className="w-full bg-gray-900 rounded-md shadow-md">
       {isLoading ? (
@@ -39,7 +46,7 @@ export default function UniversalTable({ columns, rows, isLoading, onRefresh = (
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left text-gray-300">
-            <thead className="text-xs uppercase bg-gray-800 text-gray-400">
+            <thead className={classNames('text-xs uppercase bg-gray-800', theadClassName)}>
               <tr>
                 {columns.map(column => (
                   <th key={column.key} className="px-3 py-2">
