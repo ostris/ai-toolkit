@@ -288,6 +288,22 @@ function proxy(req: http.IncomingMessage, res: http.ServerResponse, upstreamPort
       setTimeout(() => proxy(req, res, upstreamPort, attempt + 1), 250);
       return;
     }
+    // Keep-alive reuse race: Next.js closes pooled sockets after 5s idle, and
+    // the UI polls on ~5s intervals, so a reused socket can die the instant we
+    // write to it (ECONNRESET/EPIPE). No response bytes exist yet, so retrying
+    // immediately is safe; each retry drains one stale socket from the pool
+    // until a live or fresh connection is used.
+    if (
+      bodyless &&
+      upstreamReq.reusedSocket &&
+      (err.code === 'ECONNRESET' || err.code === 'EPIPE') &&
+      !res.headersSent &&
+      !res.destroyed &&
+      attempt < 120
+    ) {
+      proxy(req, res, upstreamPort, attempt + 1);
+      return;
+    }
     if (res.destroyed) return;
     if (!res.headersSent) res.writeHead(502);
     res.end('UI server unavailable');
