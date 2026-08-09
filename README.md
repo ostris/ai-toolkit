@@ -277,6 +277,79 @@ pip install --upgrade accelerate transformers diffusers huggingface_hub #Optiona
 
 ---
 
+## Training in Beam Cloud
+
+Beam support uses a one-off GPU Function. The repository and datasets are synced to `/mnt/code`, while training outputs and downloaded model caches are kept in persistent Beam Volumes.
+
+### 1. Install and authenticate
+
+Install the [Beam SDK and CLI](https://docs.beam.cloud/v2/getting-started/installation), then save an API token from the Beam dashboard:
+
+```bash
+pip install beam-client
+beam configure default --token YOUR_BEAM_TOKEN
+```
+
+Create a Beam secret for a Hugging Face read token. The token must have access to any gated model used by the config:
+
+```bash
+beam secret create HF_TOKEN YOUR_HUGGING_FACE_TOKEN
+```
+
+### 2. Prepare the dataset and config
+
+Place the dataset inside this repository so Beam can sync it, then copy either Beam example config (`FLUX.1-dev` or `FLUX.1-schnell`):
+
+```bash
+cp config/examples/beam/beam_train_lora_flux_24gb.yaml config/my_beam_job.yaml
+```
+
+Edit `folder_path` in the copied config. Local repository paths are available below `/mnt/code` in the Beam container. For example, a local `datasets/my-person` folder becomes `/mnt/code/datasets/my-person`.
+
+The `.beamignore` file prevents local environments, existing outputs, model files, and caches from being uploaded. Add any other large local folders that the training job does not need.
+
+### 3. Start training
+
+Check the current GPU inventory before every reservation or training run. Beam capacity and prices change over time:
+
+```bash
+beam machine list
+```
+
+`BEAM_GPU` is required. For serverless training, select one of `A10G`, `RTX4090`, or `RTX5090`:
+
+```bash
+BEAM_GPU=RTX4090 python run_beam.py config/my_beam_job.yaml
+BEAM_GPU=RTX5090 python run_beam.py config/job_one.yaml config/job_two.yaml --recover
+```
+
+GPU selection is explicit: AI Toolkit does not rank GPUs or fall back to another type. The first run builds the CUDA 12.9 image in `docker/Dockerfile.beam`; later runs reuse Beam's cached image.
+
+For an on-demand GPU, reserve a named pool with a TTL, pass the same GPU and pool to the training command, and release the pool as soon as training finishes:
+
+```bash
+beam machine reserve --gpu H100 --ttl 3h --name ai-toolkit-h100
+BEAM_GPU=H100 BEAM_POOL=ai-toolkit-h100 python run_beam.py config/my_beam_job.yaml
+beam machine release --pool ai-toolkit-h100
+```
+
+The supported on-demand GPU values are `RTX4090`, `RTX5090`, `RTXPro6000`, `A6000`, `L40S`, `A100-80`, `H100`, `H200`, and `B200`. Choose a TTL longer than the expected image startup and training time. On-demand billing continues while the reservation exists, even after the training task exits; the TTL is a safety limit, not a substitute for releasing the pool. Current prices are shown by `beam machine list` and on the [Beam pricing page](https://www.beam.cloud/pricing).
+
+Each run prints the requested GPU, actual CUDA device, PyTorch CUDA version, and elapsed training time so different GPU choices can be compared using real workload measurements.
+
+### 4. Download outputs
+
+Outputs are written to the automatically created `ai-toolkit-output` volume. Model downloads are cached separately in `ai-toolkit-cache`.
+
+```bash
+beam ls ai-toolkit-output
+beam cp beam://ai-toolkit-output/my_first_flux_lora_v1 .
+```
+
+Use `beam task list` to find a running task and `beam task stop TASK_ID` to stop it.
+
+---
+
 ## Dataset Preparation
 
 Datasets generally need to be a folder containing images and associated text files. Currently, the only supported

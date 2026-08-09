@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10.11"
 dependencies = [
+    "beam-client>=0.2.201",
     "modal>=1.0.5",
     "oyaml>=1.0",
     "python-dotenv>=1.1.1",

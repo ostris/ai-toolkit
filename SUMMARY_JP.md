@@ -130,6 +130,15 @@ python run.py config/my_config.yaml
 - `run_modal.py`: Modal環境での実行
 - `config/examples/modal/`: Modal用設定例
 
+### Beam Cloud
+
+- `run_beam.py`: Beam CloudのGPU Functionで学習を実行
+- `docker/Dockerfile.beam`: Beam学習用の依存関係イメージ
+- `config/examples/beam/`: Beam用設定例
+- `BEAM_GPU`でServerless GPUを明示選択し、`BEAM_POOL`で予約済みOn-demand GPUを指定
+- On-demandマシンはTTL付きで予約し、学習完了後にCLIで解放
+- 学習結果とモデルキャッシュはBeam Volumeに永続化
+
 ### RunPod
 
 - 詳細なRunPod設定手順をREADMEに記載
