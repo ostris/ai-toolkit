@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getModelsPath } from '../paths';
+import { TOOLKIT_ROOT, getDatabasePath, getTrainingFolder, getHFToken, getModelsPath } from '../paths';
 import { resolveDetachedPythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -216,7 +216,7 @@ const startAndWatchJob = (job: Job) => {
 
     // update the config dataset path
     const jobConfig = JSON.parse(job.job_config);
-    jobConfig.config.process[0].sqlite_db_path = path.join(TOOLKIT_ROOT, 'aitk_db.db');
+    jobConfig.config.process[0].sqlite_db_path = getDatabasePath();
 
     // write the config file
     fs.writeFileSync(configPath, JSON.stringify(jobConfig, null, 2));

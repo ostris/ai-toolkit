@@ -127,7 +127,8 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
                 placeholder="Enter your password"
               />
               <div className='text-gray-500 text-xs mt-2'>
-                The password is set with the environment variable AI_TOOLKIT_AUTH, the default is the super secure secret word "password"
+                The password is set with the AI_TOOLKIT_AUTH environment variable. For Beam deployments, configure it as a
+                Beam Secret before deploying the UI.
               </div>
             </div>
 

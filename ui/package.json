@@ -10,7 +10,7 @@
     "db_build_start": "npm run update_db && npm run build && npm run start",
     "build_and_start": "npm run install_deps && npm run db_build_start",
     "lint": "next lint",
-    "update_db": "npx prisma generate && npx prisma db push",
+    "update_db": "node scripts/update_db.js",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,css,scss}\""
   },
   "dependencies": {

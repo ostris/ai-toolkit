@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:../../aitk_db.db"
+  url      = env("DATABASE_URL")
 }
 
 model Settings {

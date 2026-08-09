@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from dotenv import load_dotenv
 # Load the .env file if it exists
 load_dotenv()
@@ -67,6 +68,23 @@ def print_end_message(jobs_completed, jobs_failed):
     print_acc("========================================")
 
 
+def print_beam_runtime_info():
+    """Log explicit Beam and CUDA runtime details for GUI-launched jobs."""
+
+    requested_gpu = os.environ.get("BEAM_GPU", "").strip()
+    if not requested_gpu or not accelerator.is_main_process:
+        return
+
+    requested_pool = os.environ.get("BEAM_POOL", "").strip()
+    print_acc(f"Beam execution mode: {'on-demand' if requested_pool else 'serverless'}")
+    print_acc(f"Requested Beam GPU: {requested_gpu}")
+    if requested_pool:
+        print_acc(f"Requested Beam pool: {requested_pool}")
+    if torch.cuda.is_available():
+        print_acc(f"Actual CUDA device: {torch.cuda.get_device_name(0)}")
+    print_acc(f"PyTorch CUDA version: {torch.version.cuda}")
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -113,8 +131,11 @@ def main():
 
     if accelerator.is_main_process:
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
+        print_beam_runtime_info()
 
     for config_file in config_file_list:
+        job = None
+        training_started_at = time.monotonic()
         try:
             job = get_job(config_file, args.name)
             job.run()
@@ -123,24 +144,30 @@ def main():
         except Exception as e:
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
-            try:
-                job.process[0].on_error(e)
-            except Exception as e2:
-                print_acc(f"Error running on_error: {e2}")
+            if job is not None:
+                try:
+                    job.process[0].on_error(e)
+                except Exception as e2:
+                    print_acc(f"Error running on_error: {e2}")
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
         except KeyboardInterrupt as e:
-            try:
-                job.process[0].on_error(e)
-            except Exception as e2:
-                print_acc(f"Error running on_error: {e2}")
+            if job is not None:
+                try:
+                    job.process[0].on_error(e)
+                except Exception as e2:
+                    print_acc(f"Error running on_error: {e2}")
             if not args.recover:
                 print_acc("")
                 print_acc("========================================")
                 print_acc("Job stopped")
                 print_acc("========================================")
                 sys.exit(0)
+        finally:
+            if os.environ.get("BEAM_GPU", "").strip() and accelerator.is_main_process:
+                elapsed_seconds = time.monotonic() - training_started_at
+                print_acc(f"Training elapsed time ({config_file}): {elapsed_seconds:.1f}s")
 
 
 if __name__ == '__main__':

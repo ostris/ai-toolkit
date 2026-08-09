@@ -1,5 +1,6 @@
-# Training-only Beam image. CUDA 12.9 is compatible with Beam's A10G fleet and
-# supports the Blackwell GPUs available through serverless and on-demand pools.
+# Unified Beam image for the AI Toolkit batch runner and the browser UI.
+# CUDA 12.9 is compatible with Beam's A10G fleet and supports the Blackwell
+# GPUs available through serverless and on-demand pools.
 # Source code and datasets are synchronized by Beam at invocation time.
 FROM nvidia/cuda:12.9.1-devel-ubuntu24.04
 
@@ -19,6 +20,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     git \
     libgl1 \
     libglib2.0-0 \
+    nodejs \
+    npm \
     python3.12 \
     python3-dev \
     python3-pip \
@@ -51,3 +54,15 @@ RUN pip install --no-cache-dir --break-system-packages -U ninja packaging \
     && python -c "import flash_attn, natten, torchcodec; print('accelerators OK:', flash_attn.__version__, natten.__version__, torchcodec.__version__)"
 
 WORKDIR /mnt/code
+
+# Build the existing Next.js UI in the same image as the CUDA training stack.
+# Beam sync excludes ui/node_modules and ui/.next at invocation time, so these
+# cached build artifacts remain available while the source tree is refreshed.
+ENV DATABASE_URL=file:/mnt/code/aitk_db.db
+COPY ui/package.json ui/package-lock.json /mnt/code/ui/
+RUN cd /mnt/code/ui \
+    && npm ci --no-audit --no-fund
+COPY ui /mnt/code/ui
+RUN cd /mnt/code/ui \
+    && npx prisma generate \
+    && npm run build

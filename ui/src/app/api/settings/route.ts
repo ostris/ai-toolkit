@@ -10,12 +10,15 @@ export async function GET() {
       acc[setting.key] = setting.value;
       return acc;
     }, {});
-    // if TRAINING_FOLDER is not set, use default
-    if (!settingsObject.TRAINING_FOLDER || settingsObject.TRAINING_FOLDER === '') {
+    // Beam-provided paths are authoritative over values persisted by the UI.
+    if (process.env.TRAINING_FOLDER?.trim()) {
+      settingsObject.TRAINING_FOLDER = process.env.TRAINING_FOLDER.trim();
+    } else if (!settingsObject.TRAINING_FOLDER || settingsObject.TRAINING_FOLDER === '') {
       settingsObject.TRAINING_FOLDER = defaultTrainFolder;
     }
-    // if DATASETS_FOLDER is not set, use default
-    if (!settingsObject.DATASETS_FOLDER || settingsObject.DATASETS_FOLDER === '') {
+    if (process.env.DATASETS_FOLDER?.trim()) {
+      settingsObject.DATASETS_FOLDER = process.env.DATASETS_FOLDER.trim();
+    } else if (!settingsObject.DATASETS_FOLDER || settingsObject.DATASETS_FOLDER === '') {
       settingsObject.DATASETS_FOLDER = defaultDatasetsFolder;
     }
     // MODELS_PATH from the env file always takes precedence over the setting
@@ -24,6 +27,11 @@ export async function GET() {
     } else if (!settingsObject.MODELS_PATH || settingsObject.MODELS_PATH === '') {
       // if MODELS_PATH is not set, use default
       settingsObject.MODELS_PATH = defaultModelsFolder;
+    }
+    // Beam injects HF_TOKEN as a secret. Never return that secret to the
+    // browser; the server-side job launcher reads it directly from env.
+    if (process.env.HF_TOKEN?.trim()) {
+      settingsObject.HF_TOKEN = '';
     }
     return NextResponse.json(settingsObject);
   } catch (error) {
@@ -36,13 +44,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, MODELS_PATH } = body;
 
-    // Upsert both settings
-    await Promise.all([
-      prisma.settings.upsert({
-        where: { key: 'HF_TOKEN' },
-        update: { value: HF_TOKEN },
-        create: { key: 'HF_TOKEN', value: HF_TOKEN },
-      }),
+    // Environment-injected secrets are authoritative in Beam. Do not persist
+    // a browser-submitted token over the Beam Secret.
+    const writes = [
       prisma.settings.upsert({
         where: { key: 'TRAINING_FOLDER' },
         update: { value: TRAINING_FOLDER },
@@ -58,7 +62,17 @@ export async function POST(request: Request) {
         update: { value: MODELS_PATH },
         create: { key: 'MODELS_PATH', value: MODELS_PATH },
       }),
-    ]);
+    ];
+    if (!process.env.HF_TOKEN?.trim()) {
+      writes.push(
+        prisma.settings.upsert({
+          where: { key: 'HF_TOKEN' },
+          update: { value: HF_TOKEN },
+          create: { key: 'HF_TOKEN', value: HF_TOKEN },
+        }),
+      );
+    }
+    await Promise.all(writes);
 
     flushCache();
 

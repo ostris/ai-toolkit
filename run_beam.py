@@ -3,23 +3,34 @@
 Usage:
     BEAM_GPU=RTX4090 python run_beam.py config/my_beam_job.yaml
     BEAM_GPU=H100 BEAM_POOL=ai-toolkit-h100 python run_beam.py config/job.yaml
+    BEAM_GPU=RTX4090 uv run beam deploy run_beam.py:ai_toolkit_gui
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
 
-from beam import Image, Volume, function
+from beam import Image, Pod, Volume, function
+from beta9.env import is_remote
 
 
 APP_DIR = "/mnt/code"
+REPOSITORY_ROOT = Path(__file__).resolve().parent
+BEAM_DOCKERFILE = REPOSITORY_ROOT / "docker" / "Dockerfile.beam"
 OUTPUT_DIR = "/volumes/ai-toolkit-output"
 CACHE_DIR = "/volumes/ai-toolkit-cache"
+UI_STATE_DIR = "/volumes/ai-toolkit-ui-state"
+UI_DB_PATH = f"{UI_STATE_DIR}/aitk_db.db"
+UI_DATASETS_DIR = f"{UI_STATE_DIR}/datasets"
+UI_DATA_DIR = f"{UI_STATE_DIR}/data"
+UI_MODELS_DIR = f"{CACHE_DIR}/models"
 
 SERVERLESS_GPUS = ("A10G", "RTX4090", "RTX5090")
 ON_DEMAND_GPUS = (
@@ -34,6 +45,7 @@ ON_DEMAND_GPUS = (
     "B200",
 )
 SUPPORTED_GPUS = tuple(dict.fromkeys((*SERVERLESS_GPUS, *ON_DEMAND_GPUS)))
+DEFAULT_KEEP_WARM_SECONDS = 1800
 
 
 @dataclass(frozen=True)
@@ -84,14 +96,141 @@ def resolve_beam_gpu_config(
     return BeamGpuConfig(gpu=gpu, pool=pool)
 
 
+def resolve_keep_warm_seconds(
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
+    """Read the Pod inactivity timeout, allowing ``-1`` for no timeout."""
+
+    values = os.environ if environ is None else environ
+    raw_value = values.get("BEAM_KEEP_WARM_SECONDS", "").strip()
+    if not raw_value:
+        return DEFAULT_KEEP_WARM_SECONDS
+
+    try:
+        keep_warm_seconds = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            "BEAM_KEEP_WARM_SECONDS must be an integer number of seconds "
+            f"(0 or greater, or -1 for no timeout), got {raw_value!r}."
+        ) from exc
+
+    if keep_warm_seconds < -1:
+        raise ValueError(
+            "BEAM_KEEP_WARM_SECONDS must be 0 or greater, or -1 for no timeout. "
+            f"Got {keep_warm_seconds}."
+        )
+
+    return keep_warm_seconds
+
+
 beam_gpu_config = resolve_beam_gpu_config()
+beam_keep_warm_seconds = resolve_keep_warm_seconds()
 
 output_volume = Volume(name="ai-toolkit-output", mount_path=OUTPUT_DIR)
 cache_volume = Volume(name="ai-toolkit-cache", mount_path=CACHE_DIR)
+ui_state_volume = Volume(name="ai-toolkit-ui-state", mount_path=UI_STATE_DIR)
 
-# Beam synchronizes the repository to /mnt/code at invocation time. The image
-# only contains the system and Python dependencies needed to run AI Toolkit.
-image = Image.from_dockerfile("docker/Dockerfile.beam", context_dir=".")
+
+def _beam_image_context() -> tuple[Path, tempfile.TemporaryDirectory[str]]:
+    """Create a stable image-only context without configs, datasets, or caches."""
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="ai-toolkit-beam-image-")
+    context = Path(temp_dir.name)
+    shutil.copy2(BEAM_DOCKERFILE, context / "Dockerfile")
+    for filename in ("requirements.txt", "requirements_base.txt"):
+        shutil.copy2(REPOSITORY_ROOT / filename, context / filename)
+
+    def ignore_ui(_directory: str, names: list[str]) -> set[str]:
+        ignored = {".next", ".git", "node_modules", ".env", ".env.local"}
+        return {name for name in names if name in ignored or name.startswith(".env.")}
+
+    shutil.copytree(
+        REPOSITORY_ROOT / "ui",
+        context / "ui",
+        ignore=ignore_ui,
+    )
+    return context, temp_dir
+
+
+def _build_beam_image() -> Image:
+    """Build/cache the CUDA image from only dependency and UI inputs.
+
+    Training configs, datasets, outputs, and Python source are synced as runtime
+    files by Beam and therefore do not invalidate this image's build cache.
+    """
+
+    if is_remote():
+        # The remote worker receives the already-built image metadata. Avoid
+        # touching local paths when this module is imported inside the worker.
+        return Image.from_dockerfile("docker/Dockerfile.beam", context_dir=".")
+
+    context, temp_dir = _beam_image_context()
+    try:
+        image = Image.from_dockerfile(str(context / "Dockerfile"), context_dir=str(context))
+    finally:
+        # from_dockerfile has synchronously uploaded and hashed the context.
+        temp_dir.cleanup()
+
+    # NATTEN and Flash Attention are CUDA extensions compiled in the Dockerfile.
+    # Use the explicitly selected GPU for the first build; Beam reuses the
+    # resulting image while this stable context remains unchanged.
+    return image.build_with_gpu(gpu=beam_gpu_config.gpu)
+
+
+# Beam synchronizes the full repository separately at invocation time. Only
+# dependency manifests and UI source participate in the image cache key.
+image = _build_beam_image()
+
+
+def _beam_ui_entrypoint() -> list[str]:
+    """Build the UI startup command without exposing any secret values."""
+
+    startup = (
+        "set -euo pipefail; "
+        ': "${AI_TOOLKIT_AUTH:?Beam secret AI_TOOLKIT_AUTH is required}"; '
+        'mkdir -p "$TRAINING_FOLDER" "$DATASETS_FOLDER" "$DATA_ROOT" '
+        '"$MODELS_PATH" "$UI_STATE_DIR"; '
+        "cd /mnt/code/ui; "
+        "npx prisma db push --skip-generate; "
+        "exec npm run start"
+    )
+    return ["bash", "-lc", startup]
+
+
+# The GUI is a GPU Pod. It runs the existing Next.js UI and its cron worker in
+# the same container as run.py, matching the local UI behavior. The inactivity
+# timeout is configurable: use a finite value for cost control, or -1 when a
+# long training run must survive a closed browser.
+ai_toolkit_gui = Pod(
+    name="ai-toolkit-ui",
+    image=image,
+    gpu=beam_gpu_config.gpu,
+    pool=beam_gpu_config.pool,
+    cpu=4,
+    memory="32Gi",
+    ports=[8675],
+    keep_warm_seconds=beam_keep_warm_seconds,
+    authorized=False,
+    entrypoint=_beam_ui_entrypoint(),
+    volumes=[output_volume, cache_volume, ui_state_volume],
+    secrets=["HF_TOKEN", "AI_TOOLKIT_AUTH"],
+    env={
+        "BEAM_GPU": beam_gpu_config.gpu,
+        "BEAM_POOL": beam_gpu_config.pool or "",
+        "BEAM_KEEP_WARM_SECONDS": str(beam_keep_warm_seconds),
+        "DATABASE_URL": f"file:{UI_DB_PATH}",
+        "DATA_ROOT": UI_DATA_DIR,
+        "DATASETS_FOLDER": UI_DATASETS_DIR,
+        "DISABLE_TELEMETRY": "YES",
+        "HF_HOME": f"{CACHE_DIR}/huggingface",
+        "HF_HUB_ENABLE_HF_TRANSFER": "1",
+        "MODELS_PATH": UI_MODELS_DIR,
+        "NODE_ENV": "production",
+        "TRAINING_FOLDER": OUTPUT_DIR,
+        "TORCH_HOME": f"{CACHE_DIR}/torch",
+        "UI_STATE_DIR": UI_STATE_DIR,
+    },
+)
 
 
 def _print_end_message(jobs_completed: int, jobs_failed: int) -> None:

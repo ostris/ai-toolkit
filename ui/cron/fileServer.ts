@@ -68,14 +68,16 @@ async function getRoots(): Promise<Roots> {
   const rows = await prisma.settings.findMany({
     where: { key: { in: ['DATASETS_FOLDER', 'TRAINING_FOLDER', 'DATA_ROOT'] } },
   });
-  const fromRow = (key: string, fallback: string) => {
+  const fromRow = (key: string, envName: string, fallback: string) => {
+    const envPath = process.env[envName]?.trim();
+    if (envPath) return envPath;
     const row = rows.find(r => r.key === key);
     return row?.value && row.value !== '' ? row.value : fallback;
   };
   const roots: Roots = {
-    datasets: fromRow('DATASETS_FOLDER', defaultDatasetsFolder),
-    training: fromRow('TRAINING_FOLDER', defaultTrainFolder),
-    data: fromRow('DATA_ROOT', defaultDataRoot),
+    datasets: fromRow('DATASETS_FOLDER', 'DATASETS_FOLDER', defaultDatasetsFolder),
+    training: fromRow('TRAINING_FOLDER', 'TRAINING_FOLDER', defaultTrainFolder),
+    data: fromRow('DATA_ROOT', 'DATA_ROOT', defaultDataRoot),
   };
   rootsCache = { roots, ts: Date.now() };
   return roots;

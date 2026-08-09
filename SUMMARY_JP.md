@@ -132,12 +132,13 @@ python run.py config/my_config.yaml
 
 ### Beam Cloud
 
-- `run_beam.py`: Beam CloudのGPU Functionで学習を実行
-- `docker/Dockerfile.beam`: Beam学習用の依存関係イメージ
+- `run_beam.py`: Beam CloudのGPU FunctionとGPU付きAI Toolkit GUI Podを提供
+- `docker/Dockerfile.beam`: CUDA 12.9、学習依存関係、Next.js UIを含むBeamイメージ
 - `config/examples/beam/`: Beam用設定例
 - `BEAM_GPU`でServerless GPUを明示選択し、`BEAM_POOL`で予約済みOn-demand GPUを指定
+- GUI Podのアイドル停止時間は`BEAM_KEEP_WARM_SECONDS`で指定（既定1800秒、`-1`は無期限）
 - On-demandマシンはTTL付きで予約し、学習完了後にCLIで解放
-- 学習結果とモデルキャッシュはBeam Volumeに永続化
+- GUIのSQLite、データセット、学習結果、モデルキャッシュはBeam Volumeに永続化
 
 ### RunPod
 
