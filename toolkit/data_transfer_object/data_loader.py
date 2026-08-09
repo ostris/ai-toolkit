@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 
 printed_messages = []
 
+# keep in sync with video_extensions in toolkit/data_loader.py (importing it
+# here would be circular)
+video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
+
 
 def print_once(msg):
     global printed_messages
@@ -55,10 +59,13 @@ class FileItemDTO(
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get("path", "")
         self.dataset_config: "DatasetConfig" = kwargs.get("dataset_config", None)
-        self.is_video = self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count
+        # a video dataset can contain both videos and images. Images are
+        # treated as single-frame items and bucketed separately from videos
+        dataset_is_video = self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count
+        self.is_video = dataset_is_video and os.path.splitext(self.path)[1].lower() in video_extensions
         self.is_audio_model = kwargs.get("is_audio_model", False)
         self.sample_rate = kwargs.get("sample_rate", 48000)
-        self.num_frames = self.dataset_config.num_frames
+        self.num_frames = self.dataset_config.num_frames if self.is_video else 1
         self.temporal_compression = kwargs.get("temporal_compression", 8)
         # module-level function (picklable) for models whose valid frame
         # counts are not temporal_compression * n + 1; None = default math
