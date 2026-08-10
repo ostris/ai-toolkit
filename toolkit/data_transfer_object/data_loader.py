@@ -315,6 +315,8 @@ class DataLoaderBatchDTO:
                     )
 
             self.prompt_embeds: Union[PromptEmbeds, None] = None
+            # diff output preservation embeds (trigger word replaced with class)
+            self.dop_prompt_embeds: Union[PromptEmbeds, None] = None
             # if self.file_items[0].control_tensor is not None:
             # if any have a control tensor, we concatenate them
             if any([x.control_tensor is not None for x in self.file_items]):
@@ -482,8 +484,30 @@ class DataLoaderBatchDTO:
                             y.text_embeds = [y.text_embeds]
                     prompt_embeds_list.append(y)
                 padding_side = self.file_items[0].te_padding_side
-                
+
                 self.prompt_embeds = concat_prompt_embeds(prompt_embeds_list, padding_side=padding_side)
+
+            if any([x.dop_prompt_embeds is not None for x in self.file_items]):
+                # find one to use as a base
+                base_dop_prompt_embeds = None
+                for x in self.file_items:
+                    if x.dop_prompt_embeds is not None:
+                        base_dop_prompt_embeds = x.dop_prompt_embeds
+                        break
+                dop_prompt_embeds_list = []
+                for x in self.file_items:
+                    if x.dop_prompt_embeds is None:
+                        y = base_dop_prompt_embeds
+                    else:
+                        y = x.dop_prompt_embeds
+                    if x.text_embedding_space_version == "zimage":
+                        # z image needs to be a list if it is not already
+                        if not isinstance(y.text_embeds, list):
+                            y.text_embeds = [y.text_embeds]
+                    dop_prompt_embeds_list.append(y)
+                padding_side = self.file_items[0].te_padding_side
+
+                self.dop_prompt_embeds = concat_prompt_embeds(dop_prompt_embeds_list, padding_side=padding_side)
 
             if any([x.audio_tensor is not None for x in self.file_items]):
                 # find one to use as a base

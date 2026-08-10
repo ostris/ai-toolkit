@@ -81,12 +81,19 @@ class SDTrainer(BaseSDTrainProcess):
         self.cached_blank_embeds: Optional[PromptEmbeds] = None
         self.cached_trigger_embeds: Optional[PromptEmbeds] = None
         self.diff_output_preservation_embeds: Optional[PromptEmbeds] = None
+        # fallback class-only embeds for when the text encoder is unloaded and
+        # per item DOP embeds were not cached to disk
+        self.cached_dop_class_embeds: Optional[PromptEmbeds] = None
         
         self.dfe: Optional[DiffusionFeatureExtractor] = None
         self.unconditional_embeds = None
         
         if self.train_config.diff_output_preservation:
-            if self.trigger_word is None:
+            # datasets can have their own trigger words, the global one is copied to them if not set
+            has_dataset_trigger = any(
+                dataset.trigger_word is not None for dataset in self.dataset_configs
+            )
+            if self.trigger_word is None and not has_dataset_trigger:
                 raise ValueError("diff_output_preservation requires a trigger_word to be set")
             if self.network_config is None:
                 raise ValueError("diff_output_preservation requires a network to be set")
@@ -328,7 +335,8 @@ class SDTrainer(BaseSDTrainProcess):
                 if self.trigger_word is not None:
                     self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word, **encode_kwargs)
                 if self.train_config.diff_output_preservation:
-                    self.diff_output_preservation_embeds = self.sd.encode_prompt(self.train_config.diff_output_preservation_class)
+                    self.cached_dop_class_embeds = self.sd.encode_prompt(self.train_config.diff_output_preservation_class)
+                    self.diff_output_preservation_embeds = self.cached_dop_class_embeds
                 
                 self.cache_sample_prompts()
                 
@@ -1660,6 +1668,16 @@ class SDTrainer(BaseSDTrainProcess):
                                     [unconditional_embeds] * noisy_latents.shape[0]
                                 )
 
+                            if self.train_config.diff_output_preservation:
+                                if batch.dop_prompt_embeds is not None:
+                                    # cached to disk with the trigger word replaced per dataset
+                                    self.diff_output_preservation_embeds = batch.dop_prompt_embeds.clone().detach().to(
+                                        self.device_torch, dtype=dtype
+                                    )
+                                else:
+                                    # no per item cache, fall back to the class only embeds
+                                    self.diff_output_preservation_embeds = self.cached_dop_class_embeds
+
                             if isinstance(self.adapter, CustomAdapter):
                                 self.adapter.is_unconditional_run = False
 
@@ -1726,10 +1744,16 @@ class SDTrainer(BaseSDTrainProcess):
                                     self.adapter.is_unconditional_run = False
                             
                             if self.train_config.diff_output_preservation:
-                                dop_prompts = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in conditioned_prompts]
+                                # datasets can have their own trigger words, replace per item
+                                def replace_trigger_with_class(prompt, file_item):
+                                    trigger = file_item.trigger_word if file_item.trigger_word is not None else self.trigger_word
+                                    if trigger is None:
+                                        return prompt
+                                    return prompt.replace(trigger, self.train_config.diff_output_preservation_class)
+                                dop_prompts = [replace_trigger_with_class(p, fi) for p, fi in zip(conditioned_prompts, batch.file_items)]
                                 dop_prompts_2 = None
                                 if prompt_2 is not None:
-                                    dop_prompts_2 = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in prompt_2]
+                                    dop_prompts_2 = [replace_trigger_with_class(p, fi) for p, fi in zip(prompt_2, batch.file_items)]
                                 self.diff_output_preservation_embeds = self.sd.encode_prompt(
                                     dop_prompts, dop_prompts_2,
                                     dropout_prob=self.train_config.prompt_dropout_prob,

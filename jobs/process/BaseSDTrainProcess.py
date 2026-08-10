@@ -153,6 +153,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.train_config.cache_text_embeddings:
             for raw_dataset in raw_datasets:
                 raw_dataset['cache_text_embeddings'] = True
+
+        # pass diff output preservation to the datasets so the data loader can build
+        # and cache the DOP caption (dataset trigger word replaced with the class)
+        if self.train_config.diff_output_preservation and raw_datasets is not None:
+            for raw_dataset in raw_datasets:
+                raw_dataset['diff_output_preservation'] = True
+                raw_dataset['diff_output_preservation_class'] = self.train_config.diff_output_preservation_class
         
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:
