@@ -19,6 +19,7 @@ from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
+from toolkit.paths import MODELS_PATH
 from safetensors.torch import load_file
 from PIL import Image
 import huggingface_hub
@@ -254,16 +255,28 @@ class LTX2Model(BaseModel):
         if not os.path.exists(model_path) and model_path.endswith(".safetensors"):
             # download the model from the Hugging Face Hub if it is not a local path
             splits = model_path.split("/")
-            if len(splits) != 3:
+            if len(splits) < 3:
                 raise ValueError(
-                    f"Invalid model path: {model_path}. Must be in the format 'repo_id/repo/filename.safetensors' to download from the Hugging Face Hub."
+                    f"Invalid model path: {model_path}. Must be in the format 'repo_id/repo/filename.safetensors' or 'repo_id/repo/subfolder/filename.safetensors' to download from the Hugging Face Hub."
                 )
-            # download the model from the hub
-            model_path = huggingface_hub.hf_hub_download(
-                repo_id="/".join(splits[:2]),
-                filename=splits[2],
-                token=HF_TOKEN,
-            )
+            rel_path = "/".join(splits[2:])
+            # use the file from the models folder if it is already there
+            local_candidates = [
+                os.path.join(MODELS_PATH, rel_path),
+                os.path.join(MODELS_PATH, splits[-1]),
+            ]
+            for candidate in local_candidates:
+                if os.path.exists(candidate):
+                    model_path = candidate
+                    break
+            else:
+                # download the model from the hub into the models folder
+                model_path = huggingface_hub.hf_hub_download(
+                    repo_id="/".join(splits[:2]),
+                    filename=rel_path,
+                    token=HF_TOKEN,
+                    local_dir=MODELS_PATH,
+                )
 
         # if we have a safetensors file it is a mono checkpoint
         if os.path.exists(model_path) and model_path.endswith(".safetensors"):
