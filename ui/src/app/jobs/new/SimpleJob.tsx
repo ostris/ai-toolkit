@@ -1233,6 +1233,7 @@ export default function SimpleJob({
                       <NumberInput
                         label="Caption Dropout Rate"
                         className="pt-2"
+                        docKey="datasets.caption_dropout_rate"
                         value={dataset.caption_dropout_rate}
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].caption_dropout_rate`)}
                         placeholder="eg. 0.05"
