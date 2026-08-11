@@ -1925,6 +1925,18 @@ class SDTrainer(BaseSDTrainProcess):
                     else:
                         self.adapter.set_reference_images(None)
 
+                if self.train_config.do_guidance_loss and isinstance(self.train_config.guidance_loss_target, list):
+                    batch_size = noisy_latents.shape[0]
+                    # update the guidance value, random float between guidance_loss_target[0] and guidance_loss_target[1]
+                    # sample before the prior prediction so the prior, main, uncond, and
+                    # preservation passes all run at the same guidance values
+                    self._guidance_loss_target_batch = [
+                        random.uniform(
+                            self.train_config.guidance_loss_target[0],
+                            self.train_config.guidance_loss_target[1]
+                        ) for _ in range(batch_size)
+                    ]
+
                 prior_pred = None
 
                 do_inverted_masked_prior = False
@@ -2032,16 +2044,6 @@ class SDTrainer(BaseSDTrainProcess):
                                 pred_kwargs['down_block_additional_residuals'] = down_block_res_samples
                                 pred_kwargs['mid_block_additional_residual'] = mid_block_res_sample
                 
-                if self.train_config.do_guidance_loss and isinstance(self.train_config.guidance_loss_target, list):
-                    batch_size = noisy_latents.shape[0]
-                    # update the guidance value, random float between guidance_loss_target[0] and guidance_loss_target[1]
-                    self._guidance_loss_target_batch = [
-                        random.uniform(
-                            self.train_config.guidance_loss_target[0],
-                            self.train_config.guidance_loss_target[1]
-                        ) for _ in range(batch_size)
-                    ]
-
                 self.before_unet_predict()
                 
                 if unconditional_embeds is not None:
