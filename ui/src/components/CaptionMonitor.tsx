@@ -20,7 +20,8 @@ interface CaptionMonitorProps {
 // info, and the live log.
 export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionMonitorProps) {
   const { job, status, refreshJob } = useJobByRef(datasetPath, 3000);
-  const [collapsed, setCollapsed] = useState(false);
+  // Start collapsed; an active run pops it open via the effect below.
+  const [collapsed, setCollapsed] = useState(true);
 
   const isActive = !!(job && (job.status === 'running' || job.status === 'queued'));
 
@@ -68,12 +69,13 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
   }, [log, isScrolledToBottom]);
 
   // Animate the docked height instead of translating, so the collapsed panel
-  // never extends below the container and adds scroll. Inactive -> 0 (hidden),
-  // collapsed -> just the header bar, expanded -> full panel.
+  // never extends below the container and adds scroll. No job for this
+  // dataset -> 0 (hidden), collapsed -> just the header bar, expanded ->
+  // full panel. The most recent captioning job is shown even when finished.
   const HEADER_HEIGHT = 44;
   const PANEL_HEIGHT = 300;
   let height = 0;
-  if (isActive) height = collapsed ? HEADER_HEIGHT : PANEL_HEIGHT;
+  if (job) height = collapsed ? HEADER_HEIGHT : PANEL_HEIGHT;
 
   useEffect(() => {
     onHeightChange?.(height);
@@ -107,7 +109,7 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
               </span>
             </div>
           )}
-          <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
             {job && <JobActionBar job={job} onRefresh={refreshJob} autoStartQueue={true} menuAnchor="top end" />}
             <button
               onClick={() => setCollapsed(c => !c)}

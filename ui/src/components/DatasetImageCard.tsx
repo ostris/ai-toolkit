@@ -119,6 +119,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [savedCaption, setSavedCaption] = useState<string>('');
   const dirtyRef = useRef<boolean>(false);
 
+  // Cards are keyed by image path, so this never needs resetting. Once loaded,
+  // keep the textarea mounted through poll refreshes — swapping in the
+  // "Loading caption..." placeholder unmounts it and resets scroll.
+  const hasLoadedCaptionRef = useRef(false);
+  if (isCaptionLoaded) hasLoadedCaptionRef.current = true;
+
   // Sync from the fetched caption, but don't clobber unsaved local edits.
   useEffect(() => {
     if (!isCaptionLoaded) return;
@@ -265,7 +271,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'border-transparent border-2': isCaptionCurrent,
         })}
       >
-        {isCaptionLoaded ? (
+        {isCaptionLoaded || hasLoadedCaptionRef.current ? (
           <form
             onSubmit={e => {
               e.preventDefault();
