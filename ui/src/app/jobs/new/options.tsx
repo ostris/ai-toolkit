@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
+import { GroupedSelectOption, SelectOption, JobConfig, ConfigDoc } from '@/types';
 import { defaultSliderConfig } from './jobConfig';
 import { defaultAudioSampleConfig, defaultSampleConfig, defaultIdeogramSamplesConfig } from '@/helpers/defaultSamples';
 
@@ -40,6 +40,14 @@ type AdditionalSections =
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
+export interface CustomModelSelectOption {
+  label: string;
+  options: SelectOption[];
+  getValue: (config: JobConfig) => string | undefined;
+  onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => void;
+  doc?: ConfigDoc
+}
+
 export type SampleTag = {
   title: string;
   type: 'text' | 'multiline' | 'number'
@@ -64,6 +72,7 @@ export interface ModelArch {
   sampleTags?: SampleTags;
   gateUrl?: string;
   modelNotes?: React.ReactNode;
+  customModelSelectOptions?: CustomModelSelectOption[];
 }
 
 const defaultNameOrPath = '';
@@ -717,6 +726,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.cache_text_embeddings': [true, false],
+      'config.process[0].train.do_guidance_loss': [true, undefined],
+      'config.process[0].train.guidance_loss_target': [3.5, undefined],
       'config.process[0].network.linear': [16, defaultLinearRank],
       'config.process[0].network.linear_alpha': [16, defaultLinearRank],
       'config.process[0].network.network_kwargs.ignore_if_contains': [['adaln_proj'], []],
@@ -734,13 +745,61 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].fps': [24, undefined],
       'config.process[0].datasets[x].num_frames': [39, undefined],
       'config.process[0].datasets[x].auto_frame_count': [true, undefined],
-      'config.process[0].model.assistant_lora_path': [
-        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
-        undefined,
-      ],
     },
     disableSections: ['network.conv'],
     additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count', 'model.assistant_lora_path'],
+    customModelSelectOptions: [
+      {
+        label: 'Distillation Handling Method',
+        options: [
+          { value: 'cg', label: 'Contrastive Guidance (default)' },
+          { value: 'ta', label: 'Training Adapter' },
+          { value: 'both', label: 'Contrastive Guidance + Training Adapter' },
+        ],
+        getValue: (config: JobConfig) => {
+          const assistantLoraPath = config?.config?.process?.[0]?.model?.assistant_lora_path;
+          const hasAssistantLoraPath = assistantLoraPath && assistantLoraPath.trim() !== '';
+          const hasContrastiveGuidance = config?.config?.process?.[0]?.train?.do_guidance_loss;
+          if (hasAssistantLoraPath && hasContrastiveGuidance) {
+            return 'both';
+          }
+          if (hasAssistantLoraPath) {
+            return 'ta';
+          }
+          return 'cg';
+        },
+        onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => {
+          if (value === 'cg') {
+            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
+            setJobConfig(undefined, 'config.process[0].model.assistant_lora_path');
+            if (!(config?.config?.process?.[0]?.train?.guidance_loss_target)) {
+              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
+            }
+          } else if (value === 'ta') {
+            setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
+            setJobConfig(undefined, 'config.process[0].train.guidance_loss_target');
+            setJobConfig("ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors", 'config.process[0].model.assistant_lora_path');
+          } else if (value === 'both') {
+            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
+            setJobConfig("ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors", 'config.process[0].model.assistant_lora_path');
+            if (!(config?.config?.process?.[0]?.train?.guidance_loss_target)) {
+              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
+            }
+          }
+        },
+        doc: {
+          title: 'MiniMax-H3 Distillation Handling',
+          description: (
+            <div>
+              MiniMax H3 is a guidance distilled model, so training on it directly will make the guidance distillation break down.
+              There are two different ways to train on this model without breaking the guidance distillation: 
+              Contrastive Guidance and Training Adapter. Both have their pros and cons. The adapter is faster, but will still
+              break down over a long run. Contrastive Guidance is slower, but is less likely to break down. 
+            </div>
+          )
+        }
+      },
+    ],
     modelNotes: (
       <div className="space-y-2">
         <p>
@@ -842,8 +901,10 @@ export const modelArchs: ModelArch[] = [
       // comfy-style split files resolve from/download to the models folder;
       // the int8 ConvRot dev transformer is the default
       'config.process[0].model.name_or_path': ['Lightricks/LTX-2.5', defaultNameOrPath],
-      'config.process[0].model.quantize': [false, false],
-      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.qtype': ['convrot8', 'qfloat8'],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.qtype_te': ['convrot8', 'qfloat8'],
       'config.process[0].model.low_vram': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
