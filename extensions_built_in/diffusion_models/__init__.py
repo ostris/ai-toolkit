@@ -7,7 +7,7 @@ from .wan22 import Wan225bModel, Wan2214bModel, Wan2214bI2VModel
 from .qwen_image import QwenImageModel, QwenImageEditModel, QwenImageEditPlusModel
 from .flux2 import Flux2Model, Flux2Klein4BModel, Flux2Klein9BModel
 from .z_image import ZImageModel
-from .ltx2 import LTX2Model, LTX23Model
+from .ltx2 import LTX2Model, LTX23Model, LTX25Model
 from .zeta_chroma import ZetaChromaModel
 from .ernie_image import ErnieImageModel
 from .nucleus_image import NucleusImageModel
@@ -40,6 +40,7 @@ AI_TOOLKIT_MODELS = [
     ZImageModel,
     LTX2Model,
     LTX23Model,
+    LTX25Model,
     Flux2Klein4BModel,
     Flux2Klein9BModel,
     ZetaChromaModel,

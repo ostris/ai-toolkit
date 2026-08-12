@@ -832,6 +832,37 @@ export const modelArchs: ModelArch[] = [
     additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
   },
   {
+    name: 'ltx2.5',
+    label: 'LTX-2.5',
+    gateUrl: 'https://huggingface.co/Lightricks/LTX-2.5',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      // comfy-style split files resolve from/download to the models folder;
+      // the int8 ConvRot dev transformer is the default
+      'config.process[0].model.name_or_path': ['Lightricks/LTX-2.5', defaultNameOrPath],
+      'config.process[0].model.quantize': [false, false],
+      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [121, 1],
+      'config.process[0].sample.fps': [24, 1],
+      'config.process[0].sample.width': [768, 1024],
+      'config.process[0].sample.height': [768, 1024],
+      'config.process[0].train.audio_loss_multiplier': [1.0, undefined],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].datasets[x].cache_latents_to_disk': [true, false],
+      'config.process[0].datasets[x].do_i2v': [false, undefined],
+      'config.process[0].datasets[x].do_audio': [true, undefined],
+      'config.process[0].datasets[x].fps': [24, undefined],
+      'config.process[0].datasets[x].auto_frame_count': [false, undefined],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
+  },
+  {
     name: 'flux2_klein_4b',
     label: 'FLUX.2-klein-base-4B',
     group: 'image',

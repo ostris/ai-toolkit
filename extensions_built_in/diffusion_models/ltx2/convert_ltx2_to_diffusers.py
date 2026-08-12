@@ -320,9 +320,12 @@ def get_ltx2_transformer_config(
         }
         rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
         special_keys_remap = LTX_2_0_TRANSFORMER_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
+        # LTX-2.5 keeps the 2.3 transformer config; its checkpoint-level deltas
+        # (bias-free video feedforward, keyframes_abs_pos_embedding) are applied
+        # as module surgery in convert_ltx2_transformer.
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "in_channels": 128,
                 "out_channels": 128,
@@ -423,9 +426,11 @@ def get_ltx2_connectors_config(
         }
         rename_dict = LTX_2_0_CONNECTORS_KEYS_RENAME_DICT
         special_keys_remap = LTX_2_0_CONNECTORS_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
+        # LTX-2.5's Gemma-4 12B text encoder has the same hidden size and layer
+        # count as 2.3's Gemma-3 12B, so the connector dims are unchanged.
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "caption_channels": 3840,
                 "text_proj_in_factor": 49,
@@ -457,7 +462,7 @@ def get_ltx2_connectors_config(
 
 
 def convert_ltx2_transformer(
-    original_state_dict: Dict[str, Any], version: str = "2.0"
+    original_state_dict: Dict[str, Any], version: str = "2.0", load: bool = True
 ) -> Dict[str, Any]:
     config, rename_dict, special_keys_remap = get_ltx2_transformer_config(version)
     diffusers_config = config["diffusers_config"]
@@ -484,12 +489,38 @@ def convert_ltx2_transformer(
                 continue
             handler_fn_inplace(key, transformer_state_dict)
 
+    if version == "2.5":
+        # 2.5 checkpoints drop the video feedforward biases (audio_ff keeps
+        # them) and carry a learned keyframe absolute-position embedding; the
+        # pinned diffusers class predates both, so rebuild those pieces here.
+        # The keyframe embedding is not consumed by the regular forward pass.
+        for block in transformer.transformer_blocks:
+            proj = block.ff.net[0].proj
+            block.ff.net[0].proj = torch.nn.Linear(
+                proj.in_features, proj.out_features, bias=False, device="meta"
+            )
+            out = block.ff.net[2]
+            block.ff.net[2] = torch.nn.Linear(
+                out.in_features, out.out_features, bias=False, device="meta"
+            )
+        keyframes_embedding = transformer_state_dict.get(
+            "keyframes_abs_pos_embedding", None
+        )
+        if keyframes_embedding is not None:
+            transformer.keyframes_abs_pos_embedding = torch.nn.Parameter(
+                torch.empty_like(keyframes_embedding, device="meta"),
+                requires_grad=False,
+            )
+
+    if not load:
+        return transformer, transformer_state_dict
+
     transformer.load_state_dict(transformer_state_dict, strict=True, assign=True)
     return transformer
 
 
 def convert_ltx2_connectors(
-    original_state_dict: Dict[str, Any], version: str = "2.0"
+    original_state_dict: Dict[str, Any], version: str = "2.0", load: bool = True
 ) -> LTX2TextConnectors:
     config, rename_dict, special_keys_remap = get_ltx2_connectors_config(version)
     diffusers_config = config["diffusers_config"]
@@ -514,6 +545,9 @@ def convert_ltx2_connectors(
             if special_key not in key:
                 continue
             handler_fn_inplace(key, connector_state_dict)
+
+    if not load:
+        return connectors, connector_state_dict
 
     connectors.load_state_dict(connector_state_dict, strict=True, assign=True)
     return connectors
@@ -607,9 +641,12 @@ def get_ltx2_video_vae_config(
         }
         rename_dict = LTX_2_0_VIDEO_VAE_RENAME_DICT
         special_keys_remap = LTX_2_0_VAE_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
+        # 2.5's conv video VAE ("-conv-" file) is architecturally identical to
+        # 2.3's; the default 2.5 vae file is a new diffusion-decoder VAE that
+        # is not supported here.
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "in_channels": 3,
                 "out_channels": 3,
@@ -718,9 +755,9 @@ def get_ltx2_audio_vae_config(
         }
         rename_dict = LTX_2_0_AUDIO_VAE_RENAME_DICT
         special_keys_remap = LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "base_channels": 128,
                 "output_channels": 2,
@@ -798,9 +835,9 @@ def get_ltx2_vocoder_config(
         }
         rename_dict = LTX_2_0_VOCODER_RENAME_DICT
         special_keys_remap = LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "in_channels": 128,
                 "hidden_channels": 1536,
@@ -848,7 +885,7 @@ def convert_ltx2_vocoder(
 ) -> Dict[str, Any]:
     config, rename_dict, special_keys_remap = get_ltx2_vocoder_config(version)
     diffusers_config = config["diffusers_config"]
-    if version == "2.3":
+    if version in ("2.3", "2.5"):
         vocoder_cls = LTX2VocoderWithBWE
     else:
         vocoder_cls = LTX2Vocoder
@@ -1030,7 +1067,7 @@ def convert_lora_original_to_diffusers(
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
-    if version == "2.3":
+    if version in ("2.3", "2.5"):
         rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT
 
     for k, v in lora_state_dict.items():
@@ -1064,7 +1101,7 @@ def convert_lora_diffusers_to_original(
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
-    if version == "2.3":
+    if version in ("2.3", "2.5"):
         rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT
 
     inv_rename = {v: k for k, v in rename_dict.items()}
