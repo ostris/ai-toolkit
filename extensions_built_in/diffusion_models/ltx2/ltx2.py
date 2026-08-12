@@ -1536,11 +1536,16 @@ class LTX25Model(LTX2Model):
             self.model_config.layer_offloading
             and self.model_config.layer_offloading_text_encoder_percent > 0
         ):
+            # layer_scalar is a bare tensor buffer on each decoder layer; the
+            # manager never enumerates it, so it must ride along explicitly
+            ignore_modules = [text_encoder.embed_tokens]
+            for layer in text_encoder.layers:
+                ignore_modules.append(layer.layer_scalar)
             MemoryManager.attach(
                 text_encoder,
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-                ignore_modules=[text_encoder.embed_tokens],
+                ignore_modules=ignore_modules,
             )
 
         text_encoder.to(self.device_torch)

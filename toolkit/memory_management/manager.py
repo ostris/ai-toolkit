@@ -56,8 +56,8 @@ class MemoryManager:
     def memory_managed_to(self, *args, **kwargs):
         # first move all the unmanaged modules
         for module in self.unmanaged_modules:
-            if isinstance(module, torch.nn.Parameter):
-                # Parameter cannot move this way
+            if isinstance(module, torch.Tensor):
+                # Parameters and bare tensor buffers cannot move this way
                 module.data = module.data.to(*args, **kwargs)
             else:
                 module.to(*args, **kwargs)
@@ -181,7 +181,7 @@ class MemoryManager:
 
         for unmanaged in module._memory_manager.unmanaged_modules:
             try:
-                if isinstance(unmanaged, torch.nn.Parameter):
+                if isinstance(unmanaged, torch.Tensor):
                     unmanaged.data = unmanaged.data.to('cpu')
                 else:
                     unmanaged.to('cpu')
