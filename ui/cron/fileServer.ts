@@ -61,8 +61,8 @@ const numWorkers = (() => {
 type Roots = { datasets: string; training: string; data: string };
 let rootsCache: { roots: Roots; ts: number } | null = null;
 
-async function getRoots(): Promise<Roots> {
-  if (rootsCache && Date.now() - rootsCache.ts < 10_000) {
+async function getRoots(forceFresh = false): Promise<Roots> {
+  if (!forceFresh && rootsCache && Date.now() - rootsCache.ts < 10_000) {
     return rootsCache.roots;
   }
   const rows = await prisma.settings.findMany({
@@ -70,7 +70,9 @@ async function getRoots(): Promise<Roots> {
   });
   const fromRow = (key: string, fallback: string) => {
     const row = rows.find(r => r.key === key);
-    return row?.value && row.value !== '' ? row.value : fallback;
+    // path.resolve strips trailing slashes; a root stored as "/mnt/foo/" would
+    // otherwise make the `root + path.sep` prefix check fail on every file.
+    return path.resolve(row?.value && row.value !== '' ? row.value : fallback);
   };
   const roots: Roots = {
     datasets: fromRow('DATASETS_FOLDER', defaultDatasetsFolder),
@@ -119,11 +121,21 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       .join('/');
 
     let resolvedFilePath = path.resolve(decodedFilePath);
-    const roots = await getRoots();
-    const allowedDirs = isImg ? [roots.datasets, roots.training, roots.data] : [roots.datasets, roots.training];
-    const isAllowed = allowedDirs.some(
-      allowedDir => resolvedFilePath === allowedDir || resolvedFilePath.startsWith(allowedDir + path.sep),
-    );
+    const checkAllowed = (roots: Roots) => {
+      const dirs = isImg ? [roots.datasets, roots.training, roots.data] : [roots.datasets, roots.training];
+      return {
+        dirs,
+        allowed: dirs.some(
+          allowedDir => resolvedFilePath === allowedDir || resolvedFilePath.startsWith(allowedDir + path.sep),
+        ),
+      };
+    };
+    let { dirs: allowedDirs, allowed: isAllowed } = checkAllowed(await getRoots());
+    if (!isAllowed) {
+      // The cached roots may be stale — settings can be changed from the UI at
+      // any moment. Re-fetch before denying so a just-updated path never 403s.
+      ({ dirs: allowedDirs, allowed: isAllowed } = checkAllowed(await getRoots(true)));
+    }
     if (!isAllowed) {
       console.warn(`Access denied: ${resolvedFilePath} not in ${allowedDirs.join(', ')}`);
       res.writeHead(403);

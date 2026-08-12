@@ -1,6 +1,6 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
-type CaptionGroup = 'image' | 'music';
+type CaptionGroup = 'image' | 'music' | 'video';
 type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking';
 
 export interface CaptionOption {
@@ -19,10 +19,13 @@ const defaultNameOrPath = '';
 
 const extensionsAudio = ['mp3', 'wav', 'flac', 'ogg'];
 const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
+const extensionsVideo = ['mp4', 'mov', 'webm', 'mkv', 'avi'];
 
 const defaultExtensions = [...extensionsImage];
 
 const defaultImageCaptionPrompt = "Caption this image as if you were going to try to generate it with an image generator. Be thurough and describe everything in the image. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". Start out with things like \"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.";
+
+const defaultVideoCaptionPrompt = "Caption this video as if you were going to try to generate it with a video generator. Describe the visual content, how it moves and changes over time, and the camera work. Also describe the audio, including any speech, music, or sound effects, and transcribe spoken dialogue verbatim in quotes. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". No preamble. Just get to the point.";
 
 // Editable ADDITIONAL INSTRUCTIONS block injected into the Ideogram system prompt.
 // Users can tweak this for dataset-specific guidance without altering the fixed
@@ -76,6 +79,26 @@ export const captionerTypes: CaptionOption[] = [
             'caption.max_res',
             'caption.max_new_tokens',
             'caption.thinking',
+        ],
+    },
+    {
+        name: 'Qwen3OmniCaptioner',
+        label: 'Qwen3-Omni',
+        group: 'video',
+        defaults: {
+            'config.process[0].caption.model_name_or_path': ['ostris/Qwen3-Omni-30B-A3B-Instruct', defaultNameOrPath],
+            'config.process[0].caption.extensions': [extensionsVideo, defaultExtensions],
+            'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
+            'config.process[0].caption.max_res': [512, undefined],
+            'config.process[0].caption.max_new_tokens': [256, undefined],
+        },
+        name_or_path_options: [
+            { value: 'ostris/Qwen3-Omni-30B-A3B-Instruct', label: 'ostris/Qwen3-Omni-30B-A3B-Instruct' },
+        ],
+        additionalSections: [
+            'caption.caption_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
         ],
     },
     {
