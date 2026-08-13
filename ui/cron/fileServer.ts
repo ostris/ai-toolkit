@@ -31,7 +31,7 @@ import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream';
 import prisma from './prisma';
-import { defaultDatasetsFolder, defaultTrainFolder, defaultDataRoot } from './paths';
+import { defaultDatasetsFolder, defaultTrainFolder, defaultDataRoot, TOOLKIT_ROOT } from './paths';
 
 const isDev = process.argv.includes('dev');
 
@@ -81,6 +81,139 @@ async function getRoots(forceFresh = false): Promise<Roots> {
   };
   rootsCache = { roots, ts: Date.now() };
   return roots;
+}
+
+// ---------------------------------------------------------------------------
+// Thumbnail generation for ?thumb=1 requests whose thumb doesn't exist yet.
+// Output matches the Python generator (SampleConfig._generate_thumbnail in
+// toolkit/config_modules.py): 300x300 center-cropped q90 jpg written
+// atomically into the sibling .thumbs folder as <name>.<ext>.jpg.
+// ---------------------------------------------------------------------------
+const THUMB_SIZE = 300;
+const IMAGE_THUMB_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
+const VIDEO_THUMB_EXTS = new Set(['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv']);
+
+// sharp is not a direct dependency; Next.js vendors it (for next/image), so
+// resolve it out of next's node_modules tree. If that ever fails, image
+// thumbs just fall back to serving the original file.
+const sharp: any = (() => {
+  try {
+    return require(require.resolve('sharp', { paths: [path.dirname(require.resolve('next/package.json'))] }));
+  } catch {
+    return null;
+  }
+})();
+
+// The manager provisions a portable FFmpeg at <repo>/.ffmpeg (see
+// manager/ffmpeg.py) — prefer it over whatever is on PATH. Its Linux build is
+// a shared one, so spawning it directly (i.e. not via `manager launch`, which
+// sets this up itself) needs .ffmpeg/lib on LD_LIBRARY_PATH.
+const localFfmpegExe = path.join(TOOLKIT_ROOT, '.ffmpeg', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+const ffmpegExe = fs.existsSync(localFfmpegExe) ? localFfmpegExe : 'ffmpeg';
+const ffmpegEnv: NodeJS.ProcessEnv = (() => {
+  const libDir = path.join(TOOLKIT_ROOT, '.ffmpeg', 'lib');
+  if (ffmpegExe === 'ffmpeg' || process.platform !== 'linux' || !fs.existsSync(libDir)) return process.env;
+  const prior = process.env.LD_LIBRARY_PATH;
+  return { ...process.env, LD_LIBRARY_PATH: prior ? `${libDir}${path.delimiter}${prior}` : libDir };
+})();
+
+let ffmpegMissing = false;
+// A generation attempt that failed is memoized (keyed on source mtime, so a
+// re-written file retries) — the gallery re-requests thumbs constantly and
+// must not re-run ffmpeg/sharp against a broken file on every poll.
+const failedThumbs = new Set<string>();
+const inFlightThumbs = new Map<string, Promise<boolean>>();
+
+// A gallery burst can request hundreds of missing thumbs at once; cap how
+// many decodes/ffmpeg spawns run concurrently per worker.
+const MAX_THUMB_GEN = 4;
+let activeThumbGen = 0;
+const thumbGenQueue: (() => void)[] = [];
+async function withThumbGenSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (activeThumbGen >= MAX_THUMB_GEN) {
+    await new Promise<void>(r => thumbGenQueue.push(r));
+  }
+  activeThumbGen++;
+  try {
+    return await fn();
+  } finally {
+    activeThumbGen--;
+    thumbGenQueue.shift()?.();
+  }
+}
+
+async function generateThumb(sourcePath: string, thumbPath: string): Promise<boolean> {
+  const ext = path.extname(sourcePath).toLowerCase();
+  const isImage = IMAGE_THUMB_EXTS.has(ext);
+  const isVideo = VIDEO_THUMB_EXTS.has(ext);
+  if ((isImage && !sharp) || (isVideo && ffmpegMissing) || (!isImage && !isVideo)) return false;
+  await fs.promises.mkdir(path.dirname(thumbPath), { recursive: true });
+  // Write to a per-process tmp name, then atomically rename into place (same
+  // as the Python generator) so a concurrent request never reads a partial
+  // thumb. The .jpg suffix is required for ffmpeg's output format detection.
+  const tmpPath = `${thumbPath}.${process.pid}.tmp.jpg`;
+  try {
+    if (isImage) {
+      // sharp opens animated formats on the first frame by default
+      await sharp(sourcePath)
+        .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' })
+        .jpeg({ quality: 90 })
+        .toFile(tmpPath);
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          ffmpegExe,
+          [
+            '-y',
+            '-loglevel', 'error',
+            '-i', sourcePath,
+            '-frames:v', '1',
+            '-vf', `crop='min(iw,ih)':'min(iw,ih)',scale=${THUMB_SIZE}:${THUMB_SIZE}`,
+            '-q:v', '2',
+            tmpPath,
+          ],
+          { stdio: ['ignore', 'ignore', 'pipe'], env: ffmpegEnv },
+        );
+        let stderr = '';
+        child.stderr!.on('data', chunk => (stderr += chunk.toString()));
+        const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+        child.on('error', (err: NodeJS.ErrnoException) => {
+          clearTimeout(timer);
+          if (err.code === 'ENOENT') ffmpegMissing = true;
+          reject(err);
+        });
+        child.on('exit', code => {
+          clearTimeout(timer);
+          code === 0 ? resolve() : reject(new Error(`ffmpeg exited with ${code}: ${stderr.trim()}`));
+        });
+      });
+    }
+    await fs.promises.rename(tmpPath, thumbPath);
+    return true;
+  } catch (err) {
+    await fs.promises.unlink(tmpPath).catch(() => { });
+    throw err;
+  }
+}
+
+function ensureThumb(sourcePath: string, thumbPath: string, sourceMtimeMs: number): Promise<boolean> {
+  const failKey = `${thumbPath}:${sourceMtimeMs}`;
+  if (failedThumbs.has(failKey)) return Promise.resolve(false);
+  let pending = inFlightThumbs.get(thumbPath);
+  if (!pending) {
+    pending = withThumbGenSlot(() => generateThumb(sourcePath, thumbPath))
+      .catch(err => {
+        console.warn(`Failed to generate thumbnail for ${sourcePath}: ${err?.message || err}`);
+        return false;
+      })
+      .then(ok => {
+        if (!ok) failedThumbs.add(failKey);
+        return ok;
+      })
+      .finally(() => inFlightThumbs.delete(thumbPath));
+    inFlightThumbs.set(thumbPath, pending);
+  }
+  return pending;
 }
 
 const contentTypeMap: { [key: string]: string } = {
@@ -143,12 +276,19 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       return;
     }
 
-    // ?thumb=1 serves the pre-generated 300x300 jpg from the sibling .thumbs
-    // folder (<name>.<ext>.jpg) when it exists; otherwise falls through to
-    // the full file exactly as before. Mirrors the Next.js /api/img route.
+    // ?thumb=1 serves the 300x300 jpg from the sibling .thumbs folder
+    // (<name>.<ext>.jpg), generating and saving it on the fly when missing.
+    // Falls through to the full file only if generation isn't possible
+    // (unsupported format, no ffmpeg, corrupt file).
     if (isImg && new URL(req.url || '', 'http://localhost').searchParams.has('thumb')) {
       const thumbPath = path.join(path.dirname(resolvedFilePath), '.thumbs', path.basename(resolvedFilePath) + '.jpg');
-      const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+      let thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+      if (!(thumbStat && thumbStat.isFile())) {
+        const srcStat = await fs.promises.stat(resolvedFilePath).catch(() => null);
+        if (srcStat && srcStat.isFile() && (await ensureThumb(resolvedFilePath, thumbPath, srcStat.mtimeMs))) {
+          thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+        }
+      }
       if (thumbStat && thumbStat.isFile()) {
         resolvedFilePath = thumbPath;
       }

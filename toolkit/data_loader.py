@@ -434,7 +434,11 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 # look for videos and images. Video models can train on both;
                 # images are bucketed separately as single-frame items
                 extensions = video_extensions + image_extensions
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.')]
+            # prune hidden dirs (.thumbs, .tmp) so their contents never train
+            file_list = []
+            for root, dirs, files in os.walk(self.dataset_path):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                file_list.extend(os.path.join(root, file) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.'))
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
