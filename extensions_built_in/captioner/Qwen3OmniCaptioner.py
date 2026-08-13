@@ -13,7 +13,7 @@ from toolkit.util.comfy_quant_import import (
     import_comfy_quantized_layers,
     parse_comfy_quant_blob,
 )
-from toolkit.util.convrot_quant import rotate
+from toolkit.util.convrot_quant import regular_hadamard
 
 from .BaseCaptioner import BaseCaptioner
 from .Qwen3VLCaptioner import patch_qwen_vl_patch_embed
@@ -26,6 +26,11 @@ logging.disable(logging.WARNING)
 
 # frame sampling rate for video captioning
 VIDEO_FPS = 2
+
+# fixed generation ceiling under compiled decode: a constant max_length keeps
+# the static kv cache (and so the compiled decode graph) at one shape for
+# every video; the real per-caption budget is enforced by a stopping criterion
+STATIC_MAX_LENGTH = 8192
 
 # single-file comfy-format checkpoint (thinker only, convrot8 int8) produced by
 # scripts/convert_vllm_to_comfy.py. This is always what we load — never the
@@ -49,6 +54,29 @@ class OstrisQwen3OmniThinker(Qwen3OmniMoeThinkerForConditionalGeneration):
 
     _pad_mask_2d = None
 
+    # media inputs are consumed at prefill only; keeping them in decode-step
+    # inputs makes the compiled decode graph guard on their (per-video) shapes,
+    # forcing a recompile on the next video. Dropping them gives the decode
+    # graph one fixed signature: it compiles once, ever.
+    _PREFILL_ONLY_KEYS = (
+        "input_features",
+        "feature_attention_mask",
+        "audio_feature_lengths",
+        "pixel_values",
+        "pixel_values_videos",
+        "image_grid_thw",
+        "video_grid_thw",
+        "video_second_per_grid",
+    )
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        model_inputs = super().prepare_inputs_for_generation(*args, **kwargs)
+        ids = model_inputs.get("input_ids", None)
+        if ids is not None and ids.shape[1] == 1:
+            for key in self._PREFILL_ONLY_KEYS:
+                model_inputs.pop(key, None)
+        return model_inputs
+
     def forward(
         self,
         input_ids=None,
@@ -56,6 +84,15 @@ class OstrisQwen3OmniThinker(Qwen3OmniMoeThinkerForConditionalGeneration):
         position_ids=None,
         past_key_values=None,
         cache_position=None,
+        input_features=None,
+        pixel_values=None,
+        pixel_values_videos=None,
+        image_grid_thw=None,
+        video_grid_thw=None,
+        feature_attention_mask=None,
+        audio_feature_lengths=None,
+        use_audio_in_video=None,
+        video_second_per_grid=None,
         **kwargs,
     ):
         if position_ids is None and input_ids is not None:
@@ -72,20 +109,19 @@ class OstrisQwen3OmniThinker(Qwen3OmniMoeThinkerForConditionalGeneration):
                 if mask2d.shape[1] != input_ids.shape[1]:
                     # static cache pads the mask out to max_cache_len
                     mask2d = mask2d[:, : input_ids.shape[1]]
-                feature_attention_mask = kwargs.get("feature_attention_mask", None)
                 if feature_attention_mask is not None:
-                    audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
+                    rope_audio_lengths = torch.sum(feature_attention_mask, dim=1)
                 else:
-                    audio_feature_lengths = kwargs.get("audio_feature_lengths", None)
+                    rope_audio_lengths = audio_feature_lengths
                 delta0 = (1 - mask2d).sum(dim=-1).unsqueeze(1)
                 position_ids, rope_deltas = self.get_rope_index(
                     input_ids,
-                    kwargs.get("image_grid_thw", None),
-                    kwargs.get("video_grid_thw", None),
+                    image_grid_thw,
+                    video_grid_thw,
                     mask2d,
-                    kwargs.get("use_audio_in_video", None) or False,
-                    audio_feature_lengths,
-                    kwargs.get("video_second_per_grid", None),
+                    use_audio_in_video or False,
+                    rope_audio_lengths,
+                    video_second_per_grid,
                 )
                 self.rope_deltas = rope_deltas - delta0
             else:
@@ -113,6 +149,15 @@ class OstrisQwen3OmniThinker(Qwen3OmniMoeThinkerForConditionalGeneration):
             position_ids=position_ids,
             past_key_values=past_key_values,
             cache_position=cache_position,
+            input_features=input_features,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            feature_attention_mask=feature_attention_mask,
+            audio_feature_lengths=audio_feature_lengths,
+            use_audio_in_video=use_audio_in_video,
+            video_second_per_grid=video_second_per_grid,
             **kwargs,
         )
 
@@ -146,18 +191,35 @@ class ConvRot8Experts(torch.nn.Module):
             down_s.detach().float().contiguous().view(torch.uint8),
             persistent=False,
         )
+        # hadamard matrices as buffers: the toolkit's cached builder is a
+        # global-dict lookup that torch.compile cannot trace
+        self.register_buffer(
+            "gate_up_h",
+            regular_hadamard(gate_up_rot, torch.device("cpu"), torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "down_h",
+            regular_hadamard(down_rot, torch.device("cpu"), torch.float32),
+            persistent=False,
+        )
 
-    def _dequant(self, qdata, scales_u8, rot, i):
+    @staticmethod
+    def _rotate(w, h, rot):
+        shape = w.shape
+        return (w.reshape(-1, shape[-1] // rot, rot) @ h).reshape(shape)
+
+    def _dequant(self, qdata, scales_u8, h, rot, i):
         # scales are [E, out, 1]; rotation is self-inverse along the in dim
         scales = scales_u8.view(torch.float32)
         w = qdata[i].float() * scales[i]
-        return rotate(w, rot).to(self.out_dtype)
+        return self._rotate(w, h, rot).to(self.out_dtype)
 
-    def _dequant_batch(self, qdata, scales_u8, rot, hit, dtype):
+    def _dequant_batch(self, qdata, scales_u8, h, rot, hit, dtype):
         """Dequantize the hit experts in one shot: [n_hit, out, in]."""
         scales = scales_u8.view(torch.float32)
         w = qdata[hit].float() * scales[hit]
-        return rotate(w, rot).to(dtype)
+        return self._rotate(w, h, rot).to(dtype)
 
     def forward(self, hidden_states, top_k_index, top_k_weights):
         """Fully batched MoE: group tokens by expert (sort + bincount), pad the
@@ -167,8 +229,14 @@ class ConvRot8Experts(torch.nn.Module):
         hidden_dim = hidden_states.shape[1]
         top_k = top_k_index.shape[-1]
 
-        n_pairs = hidden_states.shape[0] * top_k
-        if n_pairs <= 64:
+        # gate on token count, not pair count: decode (1 token per sequence)
+        # must ALWAYS take this path at any batch size — the grouped path's
+        # nonzero()/max() are data-dependent, and inside the compiled decode
+        # graph they shatter it into per-layer fragments (endless compiles,
+        # broken cudagraphs). Extra cost is only duplicate expert dequants
+        # (~1.6x traffic at batch 16). Prefill (many tokens, runs eager)
+        # still uses the grouped path below.
+        if hidden_states.shape[0] <= 32:
             # decode-size batches: one bmm per (token, expert) pair with fixed
             # shapes and NO data-dependent ops — the grouped path below needs
             # nonzero()/max() which each force a GPU sync, and 2 syncs x 48
@@ -178,6 +246,7 @@ class ConvRot8Experts(torch.nn.Module):
             w_gate_up = self._dequant_batch(
                 self.gate_up_q,
                 self.gate_up_s,
+                self.gate_up_h,
                 self.gate_up_rot,
                 flat,
                 hidden_states.dtype,
@@ -186,7 +255,7 @@ class ConvRot8Experts(torch.nn.Module):
             del w_gate_up
             h = F.silu(gate) * up
             w_down = self._dequant_batch(
-                self.down_q, self.down_s, self.down_rot, flat, hidden_states.dtype
+                self.down_q, self.down_s, self.down_h, self.down_rot, flat, hidden_states.dtype
             )
             out = torch.bmm(h, w_down.transpose(1, 2)).squeeze(1)
             del w_down
@@ -218,13 +287,13 @@ class ConvRot8Experts(torch.nn.Module):
         padded_x[slot, rank] = hidden_states[token_of_pair]
 
         w_gate_up = self._dequant_batch(
-            self.gate_up_q, self.gate_up_s, self.gate_up_rot, hit, dtype
+            self.gate_up_q, self.gate_up_s, self.gate_up_h, self.gate_up_rot, hit, dtype
         )
         gate, up = torch.bmm(padded_x, w_gate_up.transpose(1, 2)).chunk(2, dim=-1)
         del w_gate_up
         h = F.silu(gate) * up
         w_down = self._dequant_batch(
-            self.down_q, self.down_s, self.down_rot, hit, dtype
+            self.down_q, self.down_s, self.down_h, self.down_rot, hit, dtype
         )
         out = torch.bmm(h, w_down.transpose(1, 2))
         del w_down
@@ -249,11 +318,11 @@ class ConvRot8Experts(torch.nn.Module):
             top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
             current_state = hidden_states[token_idx]
             w_gate_up = self._dequant(
-                self.gate_up_q, self.gate_up_s, self.gate_up_rot, expert_idx
+                self.gate_up_q, self.gate_up_s, self.gate_up_h, self.gate_up_rot, expert_idx
             )
             gate, up = F.linear(current_state, w_gate_up).chunk(2, dim=-1)
             current_hidden_states = F.silu(gate) * up
-            w_down = self._dequant(self.down_q, self.down_s, self.down_rot, expert_idx)
+            w_down = self._dequant(self.down_q, self.down_s, self.down_h, self.down_rot, expert_idx)
             current_hidden_states = F.linear(current_hidden_states, w_down)
             current_hidden_states = (
                 current_hidden_states * top_k_weights[token_idx, top_k_pos, None]
@@ -372,14 +441,10 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             model = OstrisQwen3OmniThinker(config.thinker_config)
         model.eval()
 
-        from transformers.utils import is_flash_attn_2_available
-
-        if is_flash_attn_2_available():
-            try:
-                model.set_attn_implementation("flash_attention_2")
-                self.print_and_status_update(" - using flash attention 2")
-            except Exception as e:
-                print(f"[AITK] flash attention 2 not usable ({e}); staying on sdpa")
+        # NOTE: flash_attention_2 was tried here and produced degenerate
+        # repetitive output on real jobs (likely its padding handling against
+        # the fixed-size static cache with left-padded batches); sdpa is
+        # correct and nearly as fast, so we stay on it.
 
         state_dict = load_file(ckpt_path)
 
@@ -504,10 +569,23 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         # under static cache, generate hands the forward a prepared 4D mask;
         # the true 2D padding mask is needed for the prefill rope index
         self.model._pad_mask_2d = inputs.get("attention_mask", None)
+        gen_kwargs = {}
+        if self.model.generation_config.cache_implementation == "static":
+            # constant max_length -> constant cache shape -> no recompiles;
+            # the actual budget comes from the stopping criterion
+            from transformers.generation import MaxLengthCriteria, StoppingCriteriaList
+
+            input_len = inputs["input_ids"].shape[1]
+            gen_kwargs["max_length"] = STATIC_MAX_LENGTH
+            gen_kwargs["stopping_criteria"] = StoppingCriteriaList(
+                [MaxLengthCriteria(max_length=input_len + self.caption_config.max_new_tokens)]
+            )
+        else:
+            gen_kwargs["max_new_tokens"] = self.caption_config.max_new_tokens
         generated_ids = self.model.generate(
             **inputs,
             use_audio_in_video=use_audio,
-            max_new_tokens=self.caption_config.max_new_tokens,
+            **gen_kwargs,
         )
         trimmed = generated_ids[:, inputs["input_ids"].shape[1] :]
         captions = self.processor.batch_decode(
@@ -547,14 +625,22 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                 return
             items = list(bucket)
             bucket.clear()
+            n_real = len(items)
+            # keep the batch shape constant for the compiled decode graph:
+            # pad a final partial bucket by repeating the last video
+            if (
+                self.model.generation_config.cache_implementation == "static"
+                and 1 < n_real < batch_size
+            ):
+                items = items + [items[-1]] * (batch_size - n_real)
             try:
-                captions = self._caption_batch(items)
-                for it, cap in zip(items, captions):
+                captions = self._caption_batch(items)[:n_real]
+                for it, cap in zip(items[:n_real], captions):
                     finish(it["file"], cap)
             except Exception as e:
                 print(f"Batch failed ({e}); retrying files individually")
                 traceback.print_exc()
-                for it in items:
+                for it in items[:n_real]:
                     finish(it["file"], self.get_caption_for_file(it["file"]))
 
         executor = concurrent.futures.ThreadPoolExecutor(
@@ -610,11 +696,16 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             print("[AITK] compile requested but triton is not installed, skipping.")
             return
         # a static (compileable) cache makes generate auto-compile its decode
-        # loop (get_compiled_call); prefill stays eager
+        # loop into one cuda graph; prefill stays eager. Per-block graphs were
+        # tried and don't compose (graph capture must own the in-place kv-cache
+        # writes, and cudagraph trees can't span 48 independent graphs), and
+        # fusion-only block compile doesn't touch the launch gaps that matter.
+        # With prepare_inputs_for_generation stripping per-video media shapes
+        # from decode steps, this compiles exactly once and caches to disk.
         self.model.generation_config.cache_implementation = "static"
         print(
             "[AITK] Compiled decode enabled (static cache + cuda graphs). "
-            "The first video of each batch size will be slow while it compiles."
+            "The first video compiles (~2 min cold, faster once cached)."
         )
 
     def get_caption_for_file(self, file_path: str) -> str:
