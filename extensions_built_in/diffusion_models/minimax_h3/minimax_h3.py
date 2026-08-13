@@ -818,6 +818,47 @@ class MinimaxH3Model(BaseModel):
     # ------------------------------------------------------------------
     # Training forward
     # ------------------------------------------------------------------
+    def _build_condition(
+        self, batch: "DataLoaderBatchDTO", latent_shape, device, dtype
+    ):
+        """Build the packed sequence's condition segment for one train step.
+
+        ``latent_shape`` is the target's ``(t_lat, h_lat, w_lat)``. Returns
+        ``(cond_rows, keyframe_anchors, image_ref_shapes)`` where ``cond_rows``
+        is ``(B, num_condition_rows, 96)`` or None. The base model implements
+        fl2va: the clip's first frame as a keyframe when the dataset asks for
+        i2v. MinimaxH3Ref2VAModel overrides this with image references from
+        the control images."""
+        do_i2v = (
+            batch is not None
+            and batch.dataset_config.do_i2v
+            and getattr(batch, "num_frames", 1) > 1
+        )
+        if not do_i2v:
+            return None, (), ()
+
+        if batch.first_frame_latents is not None:
+            first_latents = batch.first_frame_latents.to(device, torch.float32)
+        else:
+            frames = batch.tensor
+            if frames is None:
+                raise ValueError(
+                    "do_i2v needs the first frame; no cached "
+                    "first_frame_latents or raw tensors in batch"
+                )
+            first_frames = frames[:, 0] if frames.ndim == 5 else frames
+            first_latents = self.encode_keyframe_latents(
+                first_frames.unsqueeze(2).to(device)
+            )
+        if first_latents.ndim == 4:
+            first_latents = first_latents.unsqueeze(2)
+        cond_noise = torch.randn_like(first_latents)
+        first_latents = (
+            KEYFRAME_NOISE_AUG_T * first_latents
+            + (1.0 - KEYFRAME_NOISE_AUG_T) * cond_noise
+        )
+        return patchify_video_latents(first_latents).to(dtype), ("first",), ()
+
     def get_noise_prediction(
         self,
         latent_model_input: torch.Tensor,  # (B, 24, t, h, w) noisy latents
@@ -854,35 +895,10 @@ class MinimaxH3Model(BaseModel):
             t_v = 1.0 - sigma_v
             t_a = 1.0 - sigma_a
 
-            # --- i2v first-frame conditioning rows -------------------------
-            do_i2v = (
-                batch is not None
-                and batch.dataset_config.do_i2v
-                and getattr(batch, "num_frames", 1) > 1
+            # --- conditioning rows (fl2va keyframe / ref2va references) ----
+            cond_rows, keyframe_anchors, image_ref_shapes = self._build_condition(
+                batch, (t_lat, h_lat, w_lat), device, dtype
             )
-            cond_rows = None
-            if do_i2v:
-                if batch.first_frame_latents is not None:
-                    first_latents = batch.first_frame_latents.to(device, torch.float32)
-                else:
-                    frames = batch.tensor
-                    if frames is None:
-                        raise ValueError(
-                            "do_i2v needs the first frame; no cached "
-                            "first_frame_latents or raw tensors in batch"
-                        )
-                    first_frames = frames[:, 0] if frames.ndim == 5 else frames
-                    first_latents = self.encode_keyframe_latents(
-                        first_frames.unsqueeze(2).to(device)
-                    )
-                if first_latents.ndim == 4:
-                    first_latents = first_latents.unsqueeze(2)
-                cond_noise = torch.randn_like(first_latents)
-                first_latents = (
-                    KEYFRAME_NOISE_AUG_T * first_latents
-                    + (1.0 - KEYFRAME_NOISE_AUG_T) * cond_noise
-                )
-                cond_rows = patchify_video_latents(first_latents).to(dtype)
 
             # --- audio rows -------------------------------------------------
             if batch is not None and getattr(batch, "num_frames", None):
@@ -958,7 +974,6 @@ class MinimaxH3Model(BaseModel):
 
             # --- packed layout (per item: text lengths differ) --------------
             layouts = []
-            anchors = ("first",) if cond_rows is not None else ()
             for i in range(batch_size):
                 layouts.append(
                     build_packed_sequence(
@@ -967,7 +982,8 @@ class MinimaxH3Model(BaseModel):
                         latent_height=h_lat,
                         latent_width=w_lat,
                         num_audio_latents=a_lat,
-                        keyframe_anchors=anchors,
+                        keyframe_anchors=keyframe_anchors,
+                        image_ref_shapes=image_ref_shapes,
                     )
                 )
             (
@@ -1158,3 +1174,168 @@ class MinimaxH3Model(BaseModel):
             k.replace("diffusion_model.", "transformer."): v
             for k, v in state_dict.items()
         }
+
+
+class MinimaxH3Ref2VAModel(MinimaxH3Model):
+    """Reference-to-video (ref2va): the control images ride along as reference
+    blocks in the packed sequence (plus ``<Picture i>: `` vision blocks in the
+    Qwen3-VL conditioning) instead of anchoring the first frame.
+
+    Image references only for now. Every reference keeps its OWN aspect ratio
+    and is resized to the TARGET's pixel area (axes snapped to /32), then sits
+    on its own aspect-normalized rotary grid — like the released ref2va's
+    per-reference grids, but area-matched to the target instead of the 2048px
+    reference short edge. Each reference block advances the rotary media
+    clock by 1.0.
+
+    At sampling, ctrl images are ALWAYS references, never first frames.
+    """
+
+    arch = "minimax_h3_ref2va"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # references arrive as a list per sample (multi_control_paths), at
+        # their ORIGINAL size — this model does its own area-matched resize
+        self.has_multiple_control_images = True
+        self.use_raw_control_images = True
+
+    def _dit_component(self) -> str:
+        partition = str(
+            self.model_config.model_kwargs.get("partition", "ref2va_pruned")
+        ).lower()
+        if partition not in ("ref2va", "ref2va_pruned"):
+            raise ValueError(
+                f"model_kwargs.partition must be ref2va or ref2va_pruned for "
+                f"{self.arch}, got {partition}"
+            )
+        return f"dit_{partition}"
+
+    def get_base_model_version(self):
+        return "minimax_h3_ref2va"
+
+    def _build_condition(
+        self, batch: "DataLoaderBatchDTO", latent_shape, device, dtype
+    ):
+        # raw-size control tensors in [0, 1]; each is resized to the TARGET's
+        # pixel area with its own aspect kept, then encoded on its own grid
+        if batch is None:
+            return None, (), ()
+        controls_per_item = None
+        if batch.control_tensor_list is not None:
+            controls_per_item = batch.control_tensor_list
+        elif batch.control_tensor is not None:
+            controls_per_item = [
+                [batch.control_tensor[b]] for b in range(batch.control_tensor.shape[0])
+            ]
+        if not controls_per_item:
+            return None, (), ()
+        ref_count = len(controls_per_item[0])
+        if any(len(c) != ref_count for c in controls_per_item):
+            raise ValueError(
+                "ref2va: every item in a batch must have the same number of "
+                "reference images"
+            )
+
+        _, h_lat, w_lat = latent_shape
+        target_h, target_w = h_lat * 16, w_lat * 16
+
+        all_rows = []
+        ref_shapes = []
+        for ref_idx in range(ref_count):
+            resized = []
+            for c in controls_per_item:
+                img = c[ref_idx]
+                if img.ndim == 4:
+                    img = img[0]
+                ph, pw = packing.reference_pixel_size(
+                    img.shape[2], img.shape[1], target_h, target_w
+                )
+                resized.append(
+                    torch.nn.functional.interpolate(
+                        img[None].to(device, torch.float32),
+                        size=(ph, pw),
+                        mode="bilinear",
+                        antialias=True,
+                    )[0]
+                )
+            shapes = {tuple(r.shape[1:]) for r in resized}
+            if len(shapes) > 1:
+                raise ValueError(
+                    "ref2va: reference aspect ratios must match across a batch "
+                    f"(got pixel shapes {sorted(shapes)}); use batch_size 1 for "
+                    "mixed-aspect references"
+                )
+            frames = torch.stack(resized)
+            # [0, 1] control -> [-1, 1] pixels, single-frame keyframe encode
+            ref_latents = self.encode_keyframe_latents(
+                (frames * 2.0 - 1.0).unsqueeze(2)
+            )
+            ref_noise = torch.randn_like(ref_latents)
+            ref_latents = (
+                KEYFRAME_NOISE_AUG_T * ref_latents
+                + (1.0 - KEYFRAME_NOISE_AUG_T) * ref_noise
+            )
+            ref_shapes.append((ref_latents.shape[3], ref_latents.shape[4]))
+            all_rows.append(patchify_video_latents(ref_latents).to(dtype))
+        return torch.cat(all_rows, dim=1), (), tuple(ref_shapes)
+
+    def generate_single_image(
+        self,
+        pipeline: MiniMaxH3Pipeline,
+        gen_config: GenerateImageConfig,
+        conditional_embeds: AdvancedPromptEmbeds,
+        unconditional_embeds: AdvancedPromptEmbeds,
+        generator: torch.Generator,
+        extra: dict,
+    ):
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
+
+        sc = self.get_bucket_divisibility()
+        gen_config.width = max(sc, int(gen_config.width // sc * sc))
+        gen_config.height = max(sc, int(gen_config.height // sc * sc))
+
+        is_video = gen_config.num_frames > 1
+        if is_video:
+            gen_config.num_frames = packing.align_num_frames_down(gen_config.num_frames)
+            gen_config.fps = packing.FPS
+            gen_config.save_image = partial(new_save_image_function, gen_config)
+            gen_config.log_image = partial(blank_log_image_function, gen_config)
+            gen_config.output_ext = "mp4"
+
+        # every ctrl image is a REFERENCE (never a first frame): resized to
+        # the target's pixel area with its own aspect kept
+        ref_images = []
+        for path in (
+            gen_config.ctrl_img,
+            gen_config.ctrl_img_1,
+            gen_config.ctrl_img_2,
+            gen_config.ctrl_img_3,
+        ):
+            if path is not None:
+                img = Image.open(path).convert("RGB")
+                ref_images.append(
+                    packing.prepare_reference_image(
+                        img, gen_config.height, gen_config.width
+                    )
+                )
+
+        with_audio = bool(self.model_config.model_kwargs.get("sample_audio", True))
+
+        result = pipeline(
+            conditional_embeds=conditional_embeds,
+            unconditional_embeds=unconditional_embeds,
+            height=gen_config.height,
+            width=gen_config.width,
+            num_frames=gen_config.num_frames,
+            num_inference_steps=gen_config.num_inference_steps,
+            guidance_scale=gen_config.guidance_scale,
+            latents=gen_config.latents,
+            generator=generator,
+            ref_images=ref_images or None,
+            with_audio=with_audio and is_video,
+        )
+        if is_video:
+            return result  # dict consumed by new_save_image_function
+        return result[0]

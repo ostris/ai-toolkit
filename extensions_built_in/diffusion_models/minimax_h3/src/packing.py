@@ -109,6 +109,31 @@ def resolve_canvas_size(aspect_width: float, aspect_height: float) -> Tuple[int,
     return max(m, round(height / m) * m), max(m, round(width / m) * m)
 
 
+def reference_pixel_size(
+    ref_width: int, ref_height: int, target_height: int, target_width: int
+) -> Tuple[int, int]:
+    """Reference images match the TARGET's pixel area while keeping their own
+    aspect ratio; both axes snap to the canvas multiple. Returns (height, width)."""
+    scale = math.sqrt((target_height * target_width) / float(ref_width * ref_height))
+    m = CANVAS_MULTIPLE
+    height = max(m, round(ref_height * scale / m) * m)
+    width = max(m, round(ref_width * scale / m) * m)
+    return height, width
+
+
+def prepare_reference_image(
+    image: Image.Image, target_height: int, target_width: int
+) -> Image.Image:
+    """Resize a reference onto the target's pixel budget, aspect preserved
+    (up to the /32 snap)."""
+    height, width = reference_pixel_size(
+        image.size[0], image.size[1], target_height, target_width
+    )
+    if image.size == (width, height):
+        return image
+    return image.resize((width, height), Image.Resampling.LANCZOS)
+
+
 def prepare_keyframe_image(
     image: Image.Image, height: int, width: int, stretch: bool = True
 ):
@@ -254,13 +279,24 @@ def build_packed_sequence(
     num_audio_latents: int,
     patch_size=(1, 2, 2),
     keyframe_anchors: Tuple[str, ...] = (),
+    image_ref_shapes: Tuple[Tuple[int, int], ...] = (),
 ) -> PackedLayout:
-    """Build the [text | keyframe conditions | target audio | target video]
-    layout used by t2va and fl2va."""
+    """Build the [text | conditions | target audio | target video] layout.
+
+    The condition segment holds either fl2va keyframes (``keyframe_anchors``:
+    rows pinned at the first/last target frame's rotary time, on the target's
+    spatial grid) or ref2va image references (``image_ref_shapes``: one
+    ``(latent_height, latent_width)`` per reference — references keep their
+    OWN aspect on their own aspect-normalized grid; each block sits at its
+    own rotary time and advances the shared media clock by 1.0, so the target
+    streams start at ``num_text + len(image_ref_shapes)``)."""
+    if keyframe_anchors and image_ref_shapes:
+        raise ValueError("keyframe_anchors and image_ref_shapes are mutually exclusive")
     _, ph, pw = patch_size
     rows_per_frame = (latent_height // ph) * (latent_width // pw)
     num_text = int(text_token_tags.shape[0])
-    num_cond = len(keyframe_anchors) * rows_per_frame
+    ref_rows = [(h // ph) * (w // pw) for h, w in image_ref_shapes]
+    num_cond = len(keyframe_anchors) * rows_per_frame + sum(ref_rows)
     num_audio_rows = num_audio_latents * AUDIO_CHANNELS
     num_video_rows = num_latent_frames * rows_per_frame
     seq_len = num_text + num_cond + num_audio_rows + num_video_rows
@@ -270,7 +306,9 @@ def build_packed_sequence(
     video_start = audio_start + num_audio_rows
 
     # text rows sit on the time axis at their row index; the media clock
-    # continues from there, so prompt length shifts the whole media clock
+    # continues from there (past the reference blocks, which advance it 1.0
+    # each), so prompt length shifts the whole media clock
+    media_origin = float(num_text + len(image_ref_shapes))
     position_ids = torch.zeros(seq_len, 3, dtype=torch.float64)
     position_ids[:num_text, 0] = torch.arange(num_text, dtype=torch.float64)
 
@@ -301,9 +339,30 @@ def build_packed_sequence(
         position_ids[rows, 0] = anchor_time
         position_ids[rows, 1:] = frame_grid
 
+    ref_cursor = cond_start
+    for i, (ref_h, ref_w) in enumerate(image_ref_shapes):
+        # each reference on its own aspect-normalized grid (area-matched to
+        # the target, so the grids span comparable ranges)
+        ref_sqrt_area = math.sqrt(ref_h * ref_w)
+        ref_grid = torch.stack(
+            [
+                g.reshape(-1)
+                for g in torch.meshgrid(
+                    _spatial_position_grid(ref_h, ph, ref_sqrt_area),
+                    _spatial_position_grid(ref_w, pw, ref_sqrt_area),
+                    indexing="ij",
+                )
+            ],
+            dim=-1,
+        )
+        rows = slice(ref_cursor, ref_cursor + ref_rows[i])
+        position_ids[rows, 0] = float(num_text + i)
+        position_ids[rows, 1:] = ref_grid
+        ref_cursor += ref_rows[i]
+
     # audio rows: channel-major, one rotary unit per latent (40/s = 24fps*5/3),
     # no height coordinate, width pinned to the grid extremes per channel
-    audio_time = float(num_text) + torch.arange(num_audio_latents, dtype=torch.float64)
+    audio_time = media_origin + torch.arange(num_audio_latents, dtype=torch.float64)
     position_ids[audio_start:video_start, 0] = audio_time.repeat(AUDIO_CHANNELS)
     position_ids[audio_start:video_start, 2] = torch.cat(
         [
@@ -315,7 +374,7 @@ def build_packed_sequence(
     )
 
     video_pos = torch.empty(num_latent_frames, rows_per_frame, 3, dtype=torch.float64)
-    video_pos[:, :, 0] = _temporal_position_grid(num_latent_frames, float(num_text))[
+    video_pos[:, :, 0] = _temporal_position_grid(num_latent_frames, media_origin)[
         :, None
     ]
     video_pos[:, :, 1:] = frame_grid[None]

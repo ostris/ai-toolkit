@@ -75,6 +75,9 @@ class MiniMaxH3Pipeline:
         ctrl_img: Optional[
             Image.Image
         ] = None,  # first-frame keyframe, already canvas-sized
+        ref_images: Optional[
+            list
+        ] = None,  # ref2va references, already area-matched (own aspect, /32)
         with_audio: bool = True,
         **kwargs,
     ):
@@ -101,7 +104,13 @@ class MiniMaxH3Pipeline:
         token_tags = conditional_embeds.text_token_tags[0].to("cpu", torch.long)
 
         # --- packed layout -------------------------------------------------
+        if ctrl_img is not None and ref_images:
+            raise ValueError("ctrl_img (first frame) and ref_images are exclusive")
         anchors = ("first",) if ctrl_img is not None else ()
+        # references keep their own aspect: latent dims come from each image
+        ref_shapes = tuple(
+            (img.size[1] // 16, img.size[0] // 16) for img in (ref_images or [])
+        )
         layout = build_packed_sequence(
             text_token_tags=token_tags,
             num_latent_frames=t_lat,
@@ -109,16 +118,18 @@ class MiniMaxH3Pipeline:
             latent_width=w_lat,
             num_audio_latents=a_lat,
             keyframe_anchors=anchors,
+            image_ref_shapes=ref_shapes,
         )
         num_cond = layout.num_condition_video_rows
 
         # --- conditioning rows (draw order: condition noise, video, audio) --
-        cond_rows = None
-        if ctrl_img is not None:
+        def encode_condition_image(img: Image.Image) -> torch.Tensor:
             cond_noise = randn_tensor(
-                (1, 24, 1, h_lat, w_lat), generator=generator, dtype=torch.float32
+                (1, 24, 1, img.size[1] // 16, img.size[0] // 16),
+                generator=generator,
+                dtype=torch.float32,
             ).to(device)
-            frame = torch.from_numpy(np.array(ctrl_img)).float()
+            frame = torch.from_numpy(np.array(img)).float()
             frame = (frame / 255.0) * 2.0 - 1.0  # (H, W, 3) -> [-1, 1]
             frame = frame.permute(2, 0, 1)[None, :, None]  # (1, 3, 1, H, W)
             cond_latents = model.encode_keyframe_latents(frame)  # (1, 24, 1, h, w) fp32
@@ -127,7 +138,15 @@ class MiniMaxH3Pipeline:
                 KEYFRAME_NOISE_AUG_T * cond_latents.to(device)
                 + (1.0 - KEYFRAME_NOISE_AUG_T) * cond_noise
             )
-            cond_rows = patchify_video_latents(cond_latents)  # (1, rows, 96)
+            return patchify_video_latents(cond_latents)  # (1, rows, 96)
+
+        cond_rows = None
+        if ctrl_img is not None:
+            cond_rows = encode_condition_image(ctrl_img)
+        elif ref_images:
+            cond_rows = torch.cat(
+                [encode_condition_image(img) for img in ref_images], dim=1
+            )
 
         # --- initial noise -------------------------------------------------
         if latents is None:
