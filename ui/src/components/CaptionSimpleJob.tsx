@@ -31,6 +31,8 @@ type Props = {
 const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, setGpuIDs, gpuList, showGPUSelect }) => {
   const selectedCaptionOption = captionerTypes.find(option => option.name === jobConfig.config.process[0].type);
   const additionalSections = selectedCaptionOption?.additionalSections || [];
+  const captionPrompts = selectedCaptionOption?.captionPrompts || {};
+  const promptPresetNames = Object.keys(captionPrompts);
   const minNewTokens = selectedCaptionOption?.minNewTokens ?? 0;
   const newTokensOptions = maxNewTokensOptions.filter(option => parseInt(option.value) >= minNewTokens);
 
@@ -211,6 +213,27 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
       </div>
       {additionalSections.includes('caption.caption_prompt') && (
         <div className="mt-4">
+          {promptPresetNames.length > 1 && (
+            <div className="mb-4">
+              <SelectInput
+                label="Prompt Preset"
+                value={
+                  promptPresetNames.find(
+                    name => captionPrompts[name] === jobConfig.config.process[0].caption.caption_prompt,
+                  ) || ''
+                }
+                onChange={value => {
+                  if (captionPrompts[value] !== undefined) {
+                    setJobConfig(captionPrompts[value], 'config.process[0].caption.caption_prompt');
+                  }
+                }}
+                options={[
+                  { value: '', label: '- Custom -' },
+                  ...promptPresetNames.map(name => ({ value: name, label: name })),
+                ]}
+              />
+            </div>
+          )}
           <TextAreaInput
             label="Caption Prompt"
             value={jobConfig.config.process[0].caption.caption_prompt || ''}
