@@ -4,6 +4,7 @@ import {
   CreatableSelectInput,
   FormGroup,
   SelectInput,
+  SliderInput,
   TextAreaInput,
   TextInput,
 } from '@/components/formInputs';
@@ -207,6 +208,29 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
                 checked={jobConfig.config.process[0].caption.thinking || false}
                 onChange={value => setJobConfig(value, 'config.process[0].caption.thinking')}
               />
+            )}
+            {additionalSections.includes('caption.layer_offloading') && (
+              <>
+                <Checkbox
+                  label="Layer Offloading"
+                  checked={jobConfig.config.process[0].caption.layer_offloading || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].caption.layer_offloading')}
+                />
+                {jobConfig.config.process[0].caption.layer_offloading && (
+                  <div className="pt-2">
+                    <SliderInput
+                      label="Offload %"
+                      value={Math.round((jobConfig.config.process[0].caption.layer_offloading_percent ?? 1) * 100)}
+                      onChange={value =>
+                        setJobConfig(value * 0.01, 'config.process[0].caption.layer_offloading_percent')
+                      }
+                      min={0}
+                      max={100}
+                      step={1}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </FormGroup>
         </div>

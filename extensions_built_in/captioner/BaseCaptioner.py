@@ -50,6 +50,10 @@ class CaptionConfig:
         # safety; raise it to saturate a large GPU.
         self.batch_size = kwargs.get("batch_size", 1)
         self.num_workers = kwargs.get("num_workers", 3)
+        # stream weights from CPU per layer instead of keeping them resident
+        # (low-vram machines); percent is the fraction of linears offloaded
+        self.layer_offloading = kwargs.get("layer_offloading", False)
+        self.layer_offloading_percent = kwargs.get("layer_offloading_percent", 1.0)
 
 
 class BaseCaptioner(BaseExtensionProcess):

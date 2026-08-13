@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music' | 'video';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking' | 'caption.batch_size';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
 
 export interface CaptionOption {
     name: string;
@@ -130,6 +130,7 @@ export const captionerTypes: CaptionOption[] = [
             'caption.max_res',
             'caption.max_new_tokens',
             'caption.batch_size',
+            'caption.layer_offloading',
         ],
     },
     {
@@ -179,8 +180,8 @@ export const groupedCaptionerTypes: GroupedSelectOption[] = captionerTypes.reduc
 
 export const quantizationOptions: SelectOption[] = [
     { value: '', label: '- NONE -' },
-    { value: 'float8', label: 'float8 (default)' },
-    { value: 'convrot8', label: '8bit convrot' },
+    { value: 'float8', label: 'float8' },
+    { value: 'convrot8', label: '8bit convrot (default)' },
     { value: 'convrot4', label: '4bit convrot (nvfp4)' },
     { value: 'convrotint7', label: '7bit convrot' },
     { value: 'convrotint6', label: '6bit convrot' },

@@ -204,21 +204,59 @@ class ConvRot8Experts(torch.nn.Module):
             persistent=False,
         )
 
+    # device the streamed experts should land on when the banks themselves
+    # stay in system RAM (low-vram layer offloading); None = banks resident
+    offload_device = None
+
+    def enable_offload(self, device):
+        """Keep the int8 banks in (pinned) system RAM; forward streams only
+        the routed experts' rows to the GPU per layer call."""
+        self.offload_device = device
+        try:
+            self.gate_up_q = self.gate_up_q.pin_memory()
+            self.down_q = self.down_q.pin_memory()
+            self.gate_up_s = self.gate_up_s.pin_memory()
+            self.down_s = self.down_s.pin_memory()
+        except RuntimeError:
+            pass  # pinning is a speed optimization only; pageable still works
+        # the hadamard matrices are tiny — keep them resident
+        self.gate_up_h = self.gate_up_h.to(device)
+        self.down_h = self.down_h.to(device)
+
     @staticmethod
     def _rotate(w, h, rot):
         shape = w.shape
         return (w.reshape(-1, shape[-1] // rot, rot) @ h).reshape(shape)
 
+    def _gather(self, qdata, scales_u8, hit):
+        """Expert rows + scales for the hit indices, on the compute device."""
+        if self.offload_device is not None and qdata.device.type == "cpu":
+            # each expert's rows are a contiguous view of the pinned bank, so
+            # slice-copies DMA straight to the GPU with zero CPU-side gather
+            # work (a CPU index_select here memcpy'd ~2GB/token on all cores)
+            hit_list = hit.tolist() if torch.is_tensor(hit) else list(hit)
+            scales = scales_u8.view(torch.float32)
+            q = torch.stack(
+                [qdata[i].to(self.offload_device, non_blocking=True) for i in hit_list]
+            )
+            s = torch.stack(
+                [scales[i].to(self.offload_device, non_blocking=True) for i in hit_list]
+            )
+            return q, s
+        return qdata[hit], scales_u8.view(torch.float32)[hit]
+
     def _dequant(self, qdata, scales_u8, h, rot, i):
         # scales are [E, out, 1]; rotation is self-inverse along the in dim
-        scales = scales_u8.view(torch.float32)
-        w = qdata[i].float() * scales[i]
+        q, s = self._gather(
+            qdata, scales_u8, i.reshape(1) if torch.is_tensor(i) else torch.tensor([i])
+        )
+        w = q[0].float() * s[0]
         return self._rotate(w, h, rot).to(self.out_dtype)
 
     def _dequant_batch(self, qdata, scales_u8, h, rot, hit, dtype):
         """Dequantize the hit experts in one shot: [n_hit, out, in]."""
-        scales = scales_u8.view(torch.float32)
-        w = qdata[hit].float() * scales[hit]
+        q, s = self._gather(qdata, scales_u8, hit)
+        w = q.float() * s
         return self._rotate(w, h, rot).to(dtype)
 
     def forward(self, hidden_states, top_k_index, top_k_weights):
@@ -255,7 +293,12 @@ class ConvRot8Experts(torch.nn.Module):
             del w_gate_up
             h = F.silu(gate) * up
             w_down = self._dequant_batch(
-                self.down_q, self.down_s, self.down_h, self.down_rot, flat, hidden_states.dtype
+                self.down_q,
+                self.down_s,
+                self.down_h,
+                self.down_rot,
+                flat,
+                hidden_states.dtype,
             )
             out = torch.bmm(h, w_down.transpose(1, 2)).squeeze(1)
             del w_down
@@ -318,11 +361,17 @@ class ConvRot8Experts(torch.nn.Module):
             top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
             current_state = hidden_states[token_idx]
             w_gate_up = self._dequant(
-                self.gate_up_q, self.gate_up_s, self.gate_up_h, self.gate_up_rot, expert_idx
+                self.gate_up_q,
+                self.gate_up_s,
+                self.gate_up_h,
+                self.gate_up_rot,
+                expert_idx,
             )
             gate, up = F.linear(current_state, w_gate_up).chunk(2, dim=-1)
             current_hidden_states = F.silu(gate) * up
-            w_down = self._dequant(self.down_q, self.down_s, self.down_h, self.down_rot, expert_idx)
+            w_down = self._dequant(
+                self.down_q, self.down_s, self.down_h, self.down_rot, expert_idx
+            )
             current_hidden_states = F.linear(current_hidden_states, w_down)
             current_hidden_states = (
                 current_hidden_states * top_k_weights[token_idx, top_k_pos, None]
@@ -482,6 +531,14 @@ class Qwen3OmniCaptioner(BaseCaptioner):
 
         model.generation_config.pad_token_id = 151643
         model.generation_config.eos_token_id = [151645, 151643]
+        # built from config, so no sampling defaults were loaded; greedy decode
+        # falls into repetition loops on long captions (A-B-A-B forever on
+        # low-motion clips). Qwen's recommended sampling for the Qwen3 family:
+        model.generation_config.do_sample = True
+        model.generation_config.temperature = 0.7
+        model.generation_config.top_p = 0.8
+        model.generation_config.top_k = 20
+        model.generation_config.repetition_penalty = 1.05
 
         # swap the slow bf16 Conv3d patch_embed for an equivalent fast linear
         patch_qwen_vl_patch_embed(model)
@@ -493,6 +550,33 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             )
 
         self.model = model
+        if self.caption_config.layer_offloading:
+            from toolkit.memory_management import MemoryManager
+
+            self.print_and_status_update(
+                " - layer offloading enabled: expert banks stay in system RAM, "
+                "linears stream per layer"
+            )
+            # expert banks: stay in system RAM, stream routed experts per call
+            for module in model.modules():
+                if isinstance(module, ConvRot8Experts):
+                    module.enable_offload(self.device_torch)
+            # everything the manager doesn't classify must ride to the GPU as
+            # unmanaged: the output head, the MoE routers (bare-parameter
+            # modules doing F.linear directly), and buffer-only modules
+            ignore = [model.lm_head]
+            ignore += [
+                m
+                for m in model.modules()
+                if m.__class__.__name__ == "SinusoidsPositionEmbedding"
+                or m.__class__.__name__.endswith("TopKRouter")
+            ]
+            MemoryManager.attach(
+                model,
+                self.device_torch,
+                offload_percent=self.caption_config.layer_offloading_percent,
+                ignore_modules=ignore,
+            )
         self.model.to(self.device_torch)
         self.processor = AutoProcessor.from_pretrained(BASE_REPO)
         flush()
@@ -578,7 +662,11 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             input_len = inputs["input_ids"].shape[1]
             gen_kwargs["max_length"] = STATIC_MAX_LENGTH
             gen_kwargs["stopping_criteria"] = StoppingCriteriaList(
-                [MaxLengthCriteria(max_length=input_len + self.caption_config.max_new_tokens)]
+                [
+                    MaxLengthCriteria(
+                        max_length=input_len + self.caption_config.max_new_tokens
+                    )
+                ]
             )
         else:
             gen_kwargs["max_new_tokens"] = self.caption_config.max_new_tokens
@@ -689,6 +777,11 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         the per-kernel python/launch gaps that cap GPU utilization at small
         batch sizes. First video per batch shape is slow (compile warmup)."""
         if not self.caption_config.compile:
+            return
+        if self.caption_config.layer_offloading:
+            # cuda graphs need every tensor GPU-resident; offloaded weights
+            # live in system RAM, so the compiled decode path cannot capture
+            print("[AITK] layer offloading is on; skipping compiled decode.")
             return
         import importlib.util
 
