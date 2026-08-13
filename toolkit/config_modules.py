@@ -594,7 +594,7 @@ class TrainConfig:
         # toward 1.0 as sigma falls (effective = 1 + (target - 1) * sigma) so the
         # extrapolation never amplifies the unpredictable fresh-noise term at low
         # sigma. Needed for guidance-distilled models with no guidance embedding.
-        self.guidance_loss_schedule: str = kwargs.get('guidance_loss_schedule', 'sigma')
+        self.guidance_loss_schedule: str = kwargs.get('guidance_loss_schedule', 'constant')
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
