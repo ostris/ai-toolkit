@@ -27,6 +27,9 @@ logging.disable(logging.WARNING)
 # frame sampling rate for video captioning
 VIDEO_FPS = 2
 
+# still-image files caption through the image pipeline (no audio, no frames)
+IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "webp"}
+
 # fixed generation ceiling under compiled decode: a constant max_length keeps
 # the static kv cache (and so the compiled decode graph) at one shape for
 # every video; the real per-caption budget is enforced by a stopping criterion
@@ -501,7 +504,9 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             self._model_info = info_for_filename(os.path.basename(name_or_path))
             return name_or_path
 
-        model_info = CONVROT_MODELS.get(name_or_path, CONVROT_MODELS[DEFAULT_CONVROT_MODEL])
+        model_info = CONVROT_MODELS.get(
+            name_or_path, CONVROT_MODELS[DEFAULT_CONVROT_MODEL]
+        )
         filename = model_info["filename"]
 
         if os.path.isdir(name_or_path):
@@ -651,12 +656,20 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         self.processor = AutoProcessor.from_pretrained(self._model_info["base_repo"])
         flush()
 
+    @staticmethod
+    def _is_image_file(file_path: str) -> bool:
+        return os.path.splitext(file_path)[1].lower().lstrip(".") in IMAGE_EXTENSIONS
+
     def _build_messages(self, _file_path: str):
+        if self._is_image_file(_file_path):
+            media = {"type": "image", "image": _file_path}
+        else:
+            media = {"type": "video", "video": _file_path}
         return [
             {
                 "role": "user",
                 "content": [
-                    {"type": "video", "video": _file_path},
+                    media,
                     {"type": "text", "text": self.caption_config.caption_prompt},
                 ],
             }
@@ -672,39 +685,60 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         }
 
     def _prep_media(self, file_path: str):
-        """CPU side of one video, safe to run in a worker thread: decode +
-        subsample frames, extract the audio track, render the chat text. At
-        batch size 1 the full processor (tokenize, resize, mel) runs here too,
-        so the main thread only moves tensors and generates."""
-        from transformers.video_utils import load_video
-        from transformers.audio_utils import load_audio
+        """CPU side of one file, safe to run in a worker thread: decode +
+        subsample frames (or load the image), extract the audio track, render
+        the chat text. At batch size 1 the full processor (tokenize, resize,
+        mel) runs here too, so the main thread only moves tensors and
+        generates."""
+        if self._is_image_file(file_path):
+            from PIL import Image
 
-        frames = load_video(file_path, fps=VIDEO_FPS)
-        if isinstance(frames, tuple):
-            frames = frames[0]
-        audio = None
-        try:
-            a = load_audio(file_path, sampling_rate=16000)
-            if a is not None and a.size > 0:
-                audio = a
-        except Exception:
-            pass
+            image = Image.open(file_path).convert("RGB")
+            item = {"file": file_path, "kind": "image", "image": image, "audio": None}
+        else:
+            from transformers.video_utils import load_video
+            from transformers.audio_utils import load_audio
+
+            frames = load_video(file_path, fps=VIDEO_FPS)
+            if isinstance(frames, tuple):
+                frames = frames[0]
+            audio = None
+            try:
+                a = load_audio(file_path, sampling_rate=16000)
+                if a is not None and a.size > 0:
+                    audio = a
+            except Exception:
+                pass
+            item = {
+                "file": file_path,
+                "kind": "video_audio" if audio is not None else "video_silent",
+                "frames": frames,
+                "audio": audio,
+            }
         template_kwargs = {}
         if self.is_thinking_model and not self.thinking_enabled:
             template_kwargs["enable_thinking"] = False
-        text = self.processor.apply_chat_template(
+        item["text"] = self.processor.apply_chat_template(
             self._build_messages(file_path),
             tokenize=False,
             add_generation_prompt=True,
             **template_kwargs,
         )
-        item = {"file": file_path, "frames": frames, "audio": audio, "text": text}
         if self.caption_config.batch_size <= 1:
             item["inputs"] = self._process_items([item])
         return item
 
     def _process_items(self, items):
-        use_audio = items[0]["audio"] is not None
+        kind = items[0]["kind"]
+        if kind == "image":
+            return self.processor(
+                text=[it["text"] for it in items],
+                images=[it["image"] for it in items],
+                return_tensors="pt",
+                padding=True,
+                size=self._size_kwargs(),
+            )
+        use_audio = kind == "video_audio"
         return self.processor(
             text=[it["text"] for it in items],
             audio=[it["audio"] for it in items] if use_audio else None,
@@ -718,9 +752,9 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         )
 
     def _caption_batch(self, items):
-        """Batched generate over preprocessed items (all with audio, or all
-        silent). Returns captions in item order."""
-        use_audio = items[0]["audio"] is not None
+        """Batched generate over preprocessed items (all the same kind: image,
+        video with audio, or silent video). Returns captions in item order."""
+        use_audio = items[0]["kind"] == "video_audio"
         if len(items) == 1 and "inputs" in items[0]:
             inputs = items[0]["inputs"]
         else:
@@ -834,7 +868,8 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                     break
                 futures.append((path, executor.submit(self._prep_media, path)))
 
-            with_audio, silent = [], []
+            # batches must be homogeneous: the processor call differs per kind
+            buckets = {"image": [], "video_audio": [], "video_silent": []}
             while futures:
                 if self.is_ui_captioner:
                     self.maybe_stop()
@@ -850,12 +885,12 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                     print(f"Error preprocessing {path}: {e}")
                     finish(path, None)
                     continue
-                bucket = with_audio if item["audio"] is not None else silent
+                bucket = buckets[item["kind"]]
                 bucket.append(item)
                 if len(bucket) >= batch_size:
                     flush(bucket)
-            flush(with_audio)
-            flush(silent)
+            for bucket in buckets.values():
+                flush(bucket)
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
             pbar.close()
@@ -891,87 +926,10 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         )
 
     def get_caption_for_file(self, file_path: str) -> str:
+        # single-file path (and the per-file fallback when a batch fails):
+        # same prep + generate flow as the batched loop, for one item
         try:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "video",
-                            "video": file_path,
-                        },
-                        {"type": "text", "text": self.caption_config.caption_prompt},
-                    ],
-                }
-            ]
-
-            max_pixels = self.caption_config.max_res * self.caption_config.max_res
-            # render the chat text only; the media goes to the processor
-            # directly so the audio track is interleaved INTO the video block
-            # (use_audio_in_video) instead of forming a separate audio segment
-            template_kwargs = {}
-            if self.is_thinking_model and not self.thinking_enabled:
-                template_kwargs["enable_thinking"] = False
-            text = self.processor.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                **template_kwargs,
-            )
-
-            # pull the audio track out of the video file; silent videos fall
-            # back to frames only
-            from transformers.audio_utils import load_audio
-
-            use_audio = True
-            try:
-                audio = load_audio(file_path, sampling_rate=16000)
-                if audio.size == 0:
-                    use_audio = False
-            except Exception as audio_err:
-                print(
-                    f"No audio track for {file_path} ({audio_err}); captioning frames only"
-                )
-                use_audio = False
-
-            inputs = self.processor(
-                text=text,
-                audio=[audio] if use_audio else None,
-                videos=[file_path],
-                return_tensors="pt",
-                padding=True,
-                use_audio_in_video=use_audio,
-                fps=VIDEO_FPS,
-                do_sample_frames=True,
-                # shortest_edge/longest_edge are total pixel counts
-                # (min_pixels/max_pixels), not edge lengths
-                size={
-                    "shortest_edge": min(131072, max_pixels),
-                    "longest_edge": max_pixels,
-                },
-            )
-            inputs = inputs.to(self.device_torch).to(self.torch_dtype)
-
-            self.model._pad_mask_2d = inputs.get("attention_mask", None)
-            generated_ids = self.model.generate(
-                **inputs,
-                use_audio_in_video=use_audio,
-                **self._gen_kwargs(inputs["input_ids"].shape[1]),
-            )
-            generated_ids_trimmed = [
-                out_ids[len(in_ids) :]
-                for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            output_text = self.processor.batch_decode(
-                generated_ids_trimmed,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )
-
-            caption = output_text[0]
-            if "</think>" in caption:
-                caption = caption.split("</think>")[-1]
-            return caption.strip()
+            return self._caption_batch([self._prep_media(file_path)])[0]
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
             traceback.print_exc()
