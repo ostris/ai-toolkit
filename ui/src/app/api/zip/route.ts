@@ -4,24 +4,103 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import archiver from 'archiver';
-import { getTrainingFolder } from '@/server/settings';
+import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
 
 export const runtime = 'nodejs'; // ensure Node APIs are available
 export const dynamic = 'force-dynamic'; // long-running, non-cached
 
 type PostBody = {
-  zipTarget: 'samples'; //only samples for now
-  jobName: string;
+  zipTarget: 'samples' | 'dataset' | 'dataset_captions';
+  jobName?: string; // required for 'samples'
+  datasetName?: string; // required for dataset targets
 };
+
+const CAPTION_EXTS = ['.txt', '.json', '.caption'];
 
 async function resolveSafe(p: string) {
   // resolve symlinks + normalize
   return await fsp.realpath(p);
 }
 
+/**
+ * Recursively collects files to zip, skipping hidden entries (.thumbs etc).
+ * When captionsOnly is set, only caption files (.txt/.json/.caption) are kept.
+ */
+async function collectFiles(dir: string, captionsOnly: boolean): Promise<string[]> {
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  let out: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const itemPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out = out.concat(await collectFiles(itemPath, captionsOnly));
+    } else if (entry.isFile()) {
+      if (!captionsOnly || CAPTION_EXTS.includes(path.extname(entry.name).toLowerCase())) {
+        out.push(itemPath);
+      }
+    }
+  }
+  return out;
+}
+
+async function zipDataset(datasetName: string, captionsOnly: boolean) {
+  const datasetsRoot = await resolveSafe(await getDatasetsRoot());
+  // basename strips any path segments so the name can't escape the datasets root
+  const safeName = path.basename(datasetName);
+  let folderPath: string;
+  try {
+    folderPath = await resolveSafe(path.join(datasetsRoot, safeName));
+  } catch {
+    return NextResponse.json({ error: `Dataset '${datasetName}' not found` }, { status: 404 });
+  }
+
+  const files = await collectFiles(folderPath, captionsOnly);
+  if (files.length === 0) {
+    return NextResponse.json({ error: captionsOnly ? 'No captions found' : 'Dataset is empty' }, { status: 404 });
+  }
+
+  // Hidden dir at the datasets root: skipped by the dataset list/image walkers,
+  // but still under datasetsRoot so /api/files/[...filePath] is allowed to serve it.
+  const zipDir = path.join(datasetsRoot, '.zips');
+  await fsp.mkdir(zipDir, { recursive: true });
+  const outputPath = path.join(zipDir, `${safeName}_${captionsOnly ? 'captions' : 'dataset'}.zip`);
+  await fsp.rm(outputPath, { force: true });
+
+  await new Promise<void>((resolve, reject) => {
+    const output = fs.createWriteStream(outputPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', () => resolve());
+    output.on('error', reject);
+    archive.on('error', reject);
+
+    archive.pipe(output);
+
+    for (const file of files) {
+      archive.file(file, { name: path.join(safeName, path.relative(folderPath, file)) });
+    }
+
+    archive.finalize().catch(reject);
+  });
+
+  return NextResponse.json({
+    ok: true,
+    zipPath: outputPath,
+    fileName: path.basename(outputPath),
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as PostBody;
+
+    if (body?.zipTarget === 'dataset' || body?.zipTarget === 'dataset_captions') {
+      if (!body.datasetName) {
+        return NextResponse.json({ error: 'datasetName is required' }, { status: 400 });
+      }
+      return await zipDataset(body.datasetName, body.zipTarget === 'dataset_captions');
+    }
+
     if (!body || !body.jobName) {
       return NextResponse.json({ error: 'jobName is required' }, { status: 400 });
     }

@@ -13,6 +13,7 @@ import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import DatasetActionBar from '@/components/DatasetActionBar';
 import CaptionMonitor from '@/components/CaptionMonitor';
 import { CreatableSelectInput } from '@/components/formInputs';
 
@@ -157,6 +158,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             <span className="sm:hidden">+ Add</span>
             <span className="hidden sm:inline">Add Images</span>
           </Button>
+          <DatasetActionBar datasetName={datasetName} />
         </div>
       </TopBar>
       <MainContent
