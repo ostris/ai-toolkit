@@ -45,6 +45,11 @@ class CaptionConfig:
             "caption_prompt", "Describe this image in detail."
         )
         self.compile = kwargs.get("compile", False)
+        # batched captioners: files generated per model.generate call, and CPU
+        # preprocessing threads that keep the GPU fed. Default 1 for VRAM
+        # safety; raise it to saturate a large GPU.
+        self.batch_size = kwargs.get("batch_size", 1)
+        self.num_workers = kwargs.get("num_workers", 3)
 
 
 class BaseCaptioner(BaseExtensionProcess):

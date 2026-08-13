@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music' | 'video';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking' | 'caption.batch_size';
 
 export interface CaptionOption {
     name: string;
@@ -91,6 +91,8 @@ export const captionerTypes: CaptionOption[] = [
             'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
             'config.process[0].caption.max_res': [512, undefined],
             'config.process[0].caption.max_new_tokens': [256, undefined],
+            'config.process[0].caption.batch_size': [1, undefined],
+            'config.process[0].caption.compile': [true, false],
         },
         name_or_path_options: [
             { value: 'ostris/Qwen3-Omni-30B-A3B-Instruct', label: 'ostris/Qwen3-Omni-30B-A3B-Instruct' },
@@ -99,6 +101,7 @@ export const captionerTypes: CaptionOption[] = [
             'caption.caption_prompt',
             'caption.max_res',
             'caption.max_new_tokens',
+            'caption.batch_size',
         ],
     },
     {
@@ -166,6 +169,17 @@ export const quantizationOptions: SelectOption[] = [
     { value: 'uint2', label: '2 bit' },
 ];
 
+export const batchSizeOptions: SelectOption[] = [
+    { value: '1', label: '1 (default)' },
+    { value: '2', label: '2' },
+    { value: '4', label: '4' },
+    { value: '8', label: '8' },
+    { value: '12', label: '12' },
+    { value: '16', label: '16' },
+    { value: '24', label: '24' },
+    { value: '32', label: '32' },
+];
+
 export const maxResOptions: SelectOption[] = [
     { value: '256', label: '256' },
     { value: '512', label: '512 (default)' },
@@ -184,4 +198,4 @@ export const maxNewTokensOptions: SelectOption[] = [
     { value: '8192', label: '8192' },
 ];
 
-export const defaultQtype = 'float8';
+export const defaultQtype = 'convrot8';

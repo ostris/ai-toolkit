@@ -298,6 +298,7 @@ export interface CaptionProcessConfig {
     fixed_caption?: string;
     caption_extension?: string;
     thinking?: boolean;
+    batch_size?: number;
   }
 }
 

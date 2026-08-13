@@ -10,6 +10,7 @@ import {
 import { CaptionJobConfig } from '@/types';
 import { handleCaptionerTypeChange } from '@/helpers/captionJobConfig';
 import {
+  batchSizeOptions,
   captionerTypes,
   defaultQtype,
   groupedCaptionerTypes,
@@ -162,6 +163,21 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
                   }
                 }}
                 options={newTokensOptions}
+              />
+            </div>
+          )}
+          {additionalSections.includes('caption.batch_size') && (
+            <div className="mt-4">
+              <SelectInput
+                label="Batch Size"
+                value={`${jobConfig.config.process[0].caption.batch_size || ''}`}
+                onChange={value => {
+                  const intVal = parseInt(value);
+                  if (!isNaN(intVal)) {
+                    setJobConfig(intVal, 'config.process[0].caption.batch_size');
+                  }
+                }}
+                options={batchSizeOptions}
               />
             </div>
           )}

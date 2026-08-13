@@ -16,7 +16,7 @@ export const defaultCaptionJobConfig: CaptionJobConfig = {
           model_name_or_path2: "ACE-Step/acestep-captioner",
           dtype: 'bf16',
           quantize: true,
-          qtype: 'float8',
+          qtype: 'convrot8',
           low_vram: true,
           extensions: ['mp3', 'wav', 'flac', 'ogg'],
           path_to_caption: '',
