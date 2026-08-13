@@ -41,6 +41,19 @@ from toolkit.unloader import unload_text_encoder
 from PIL import Image
 from torchvision.transforms import functional as TF
 from toolkit.basic import flush
+from toolkit.trigger_selective_training import (
+    TSTMetricsWriter,
+    apply_differential_guidance_target,
+    get_scheduled_loss_weights,
+    get_scheduled_margin,
+    network_disabled,
+    normalized_gain,
+    per_item_mse,
+    resolve_prompt_variants,
+    sample_negative_styles,
+    shared_loss_target,
+    trigger_advantage_hinge,
+)
 
 
 adapter_transforms = transforms.Compose([
@@ -84,6 +97,13 @@ class SDTrainer(BaseSDTrainProcess):
         # fallback class-only embeds for when the text encoder is unloaded and
         # per item DOP embeds were not cached to disk
         self.cached_dop_class_embeds: Optional[PromptEmbeds] = None
+        self.tst_rng = random.Random(self.training_seed)
+        self.tst_metrics_writer: Optional[TSTMetricsWriter] = None
+        if self.trigger_selective_training.enabled:
+            self.tst_metrics_writer = TSTMetricsWriter(
+                self.save_root,
+                self.trigger_selective_training.logging.metrics_filename,
+            )
         
         self.dfe: Optional[DiffusionFeatureExtractor] = None
         self.unconditional_embeds = None
@@ -506,6 +526,7 @@ class SDTrainer(BaseSDTrainProcess):
             batch: 'DataLoaderBatchDTO',
             mask_multiplier: Union[torch.Tensor, float] = 1.0,
             prior_pred: Union[torch.Tensor, None] = None,
+            target_override: Union[torch.Tensor, None] = None,
             **kwargs
     ):
         loss_target = self.train_config.loss_target
@@ -530,12 +551,12 @@ class SDTrainer(BaseSDTrainProcess):
         if self.train_config.pred_scaler != 1.0:
             noise_pred = noise_pred * self.train_config.pred_scaler
 
-        target = None
+        target = target_override
 
-        if self.train_config.target_noise_multiplier != 1.0:
+        if target is None and self.train_config.target_noise_multiplier != 1.0:
             noise = noise * self.train_config.target_noise_multiplier
 
-        if self.train_config.correct_pred_norm or (self.train_config.inverted_mask_prior and prior_pred is not None and has_mask):
+        if target is None and (self.train_config.correct_pred_norm or (self.train_config.inverted_mask_prior and prior_pred is not None and has_mask)):
             if self.train_config.correct_pred_norm and not is_reg:
                 with torch.no_grad():
                     # this only works if doing a prior pred
@@ -594,14 +615,14 @@ class SDTrainer(BaseSDTrainProcess):
                     target = (noise - batch.latents).detach()
                 else:
                     target = noise
-        elif prior_pred is not None and not self.train_config.do_prior_divergence:
+        elif target is None and prior_pred is not None and not self.train_config.do_prior_divergence:
             assert not self.train_config.train_turbo
             # matching adapter prediction
             target = prior_pred
-        elif self.sd.prediction_type == 'v_prediction':
+        elif target is None and self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
-        elif self.train_config.do_signal_amplification:
+        elif target is None and self.train_config.do_signal_amplification:
             if not self.sd.is_flow_matching:
                 raise ValueError("Signal amplification is only supported for flow matching models")
             with torch.no_grad():
@@ -612,19 +633,19 @@ class SDTrainer(BaseSDTrainProcess):
                 aug = batch.latents * nas
                 target = noise - (batch.latents + aug)
                 target = target.detach()
-        elif hasattr(self.sd, 'get_loss_target'):
+        elif target is None and hasattr(self.sd, 'get_loss_target'):
             target = self.sd.get_loss_target(
                 noise=noise, 
                 batch=batch, 
                 timesteps=timesteps,
             ).detach()
             
-        elif self.sd.is_flow_matching:
+        elif target is None and self.sd.is_flow_matching:
             # forward ODE
             target = (noise - batch.latents).detach()
             # reverse ODE
             # target = (batch.latents - noise).detach()
-        else:
+        elif target is None:
             target = noise
             
         if self.dfe is not None:
@@ -1353,6 +1374,199 @@ class SDTrainer(BaseSDTrainProcess):
             **kwargs
         )
     
+
+    def _encode_tst_prompt_variants(self, batch, trigger_prompts, decoy_prompts, dtype):
+        prompt_kwargs = {}
+        if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
+            prompt_kwargs['control_images'] = batch.control_tensor.to(
+                self.sd.device_torch, dtype=self.sd.torch_dtype
+            )
+        with torch.no_grad():
+            trigger_embeds = self.sd.encode_prompt(
+                trigger_prompts,
+                long_prompts=self.do_long_prompts,
+                **prompt_kwargs,
+            ).to(self.device_torch, dtype=dtype).detach()
+            decoy_embeds = self.sd.encode_prompt(
+                decoy_prompts,
+                long_prompts=self.do_long_prompts,
+                **prompt_kwargs,
+            ).to(self.device_torch, dtype=dtype).detach()
+        return trigger_embeds, decoy_embeds
+
+    def _tst_trainable_params(self):
+        params = []
+        for group in self.params:
+            if isinstance(group, dict):
+                params.extend(group.get('params', []))
+            else:
+                params.append(group)
+        return [param for param in params if param.requires_grad]
+
+    def _tst_gradient_norm(self, loss):
+        grads = torch.autograd.grad(
+            loss,
+            self._tst_trainable_params(),
+            retain_graph=True,
+            allow_unused=True,
+        )
+        squared_norm = torch.zeros((), device=loss.device, dtype=torch.float32)
+        for grad in grads:
+            if grad is not None:
+                squared_norm = squared_norm + grad.detach().float().pow(2).sum()
+        return squared_norm.sqrt().item()
+
+    def _calculate_tst_loss(
+        self,
+        noisy_latents,
+        noise,
+        timesteps,
+        batch,
+        conditioned_prompts,
+        prompt_2,
+        pred_kwargs,
+        mask_multiplier,
+        network,
+        dtype,
+    ):
+        raw_templates = [
+            getattr(file_item, 'caption_template', None) or file_item.raw_caption
+            for file_item in batch.file_items
+        ]
+        negative_samples = sample_negative_styles(
+            self.trigger_selective_training,
+            len(raw_templates),
+            self.tst_rng,
+        )
+        trigger_prompts, decoy_prompts = resolve_prompt_variants(
+            raw_templates,
+            self.trigger_word,
+            negative_samples,
+            self.trigger_selective_training.require_trigger_placeholder,
+        )
+        trigger_embeds, decoy_embeds = self._encode_tst_prompt_variants(
+            batch, trigger_prompts, decoy_prompts, dtype
+        )
+
+        with network_disabled(network):
+            with torch.no_grad():
+                base_decoy = self.predict_noise(
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    conditional_embeds=decoy_embeds,
+                    unconditional_embeds=None,
+                    batch=batch,
+                    **pred_kwargs,
+                ).detach()
+                base_trigger = self.predict_noise(
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    conditional_embeds=trigger_embeds,
+                    unconditional_embeds=None,
+                    batch=batch,
+                    **pred_kwargs,
+                ).detach()
+
+        student_decoy = self.predict_noise(
+            noisy_latents=noisy_latents,
+            timesteps=timesteps,
+            conditional_embeds=decoy_embeds,
+            unconditional_embeds=None,
+            batch=batch,
+            **pred_kwargs,
+        )
+        student_trigger = self.predict_noise(
+            noisy_latents=noisy_latents,
+            timesteps=timesteps,
+            conditional_embeds=trigger_embeds,
+            unconditional_embeds=None,
+            batch=batch,
+            is_primary_pred=True,
+            **pred_kwargs,
+        )
+
+        target = shared_loss_target(self, noise, batch, timesteps)
+        target = apply_differential_guidance_target(self, target, student_trigger)
+        path1 = self.calculate_loss(
+            noise_pred=student_trigger,
+            noise=noise,
+            noisy_latents=noisy_latents,
+            timesteps=timesteps,
+            batch=batch,
+            mask_multiplier=mask_multiplier,
+            target_override=target,
+        )
+        path2_per_item = per_item_mse(student_decoy, base_decoy)
+        base_decoy_loss = per_item_mse(base_decoy, target)
+        student_decoy_loss = per_item_mse(student_decoy, target)
+        base_trigger_loss = per_item_mse(base_trigger, target)
+        student_trigger_loss = per_item_mse(student_trigger, target)
+        decoy_gain = normalized_gain(student_decoy_loss, base_decoy_loss, self.trigger_selective_training.path3.gain_epsilon).detach()
+        trigger_gain = normalized_gain(student_trigger_loss, base_trigger_loss, self.trigger_selective_training.path3.gain_epsilon)
+        margin = get_scheduled_margin(self.trigger_selective_training, self.step_num)
+        path3_per_item = trigger_advantage_hinge(trigger_gain, decoy_gain, margin)
+        weights = get_scheduled_loss_weights(self.trigger_selective_training, self.step_num)
+        path2 = path2_per_item.mean()
+        path3 = path3_per_item.mean()
+        weighted_path1 = weights['path1'] * path1
+        weighted_path2 = weights['path2'] * path2
+        weighted_path3 = weights['path3'] * path3
+        loss = weighted_path1 + weighted_path2 + weighted_path3
+
+        gradient_logs = {}
+        logging_config = self.trigger_selective_training.logging
+        if (
+            logging_config.debug_gradient_contributions
+            and self.step_num in logging_config.gradient_diagnostic_steps
+        ):
+            gradient_logs = {
+                'grad_norm/path1': self._tst_gradient_norm(weighted_path1),
+                'grad_norm/path2': self._tst_gradient_norm(weighted_path2),
+                'grad_norm/path3': self._tst_gradient_norm(weighted_path3),
+            }
+
+        category_counts = {}
+        category_gain_gaps = {}
+        for category, gap in zip(
+            [sample.category for sample in negative_samples],
+            (trigger_gain.detach() - decoy_gain).tolist(),
+        ):
+            category_counts[category] = category_counts.get(category, 0) + 1
+            category_gain_gaps.setdefault(category, []).append(float(gap))
+        self.additional_logs.update({
+            'loss/path1_raw': path1.detach().item(),
+            'loss/path2_raw': path2.detach().item(),
+            'loss/path3_raw': path3.detach().item(),
+            'loss/path1_weighted': (weights['path1'] * path1.detach()).item(),
+            'loss/path2_weighted': (weights['path2'] * path2.detach()).item(),
+            'loss/path3_weighted': (weights['path3'] * path3.detach()).item(),
+            'loss/total': loss.detach().item(),
+            'weight/path1': weights['path1'],
+            'weight/path2': weights['path2'],
+            'weight/path3': weights['path3'],
+            'path3/margin': margin,
+            'path3/margin_satisfied': (path3_per_item <= 0).float().mean().item(),
+            'gain/trigger': trigger_gain.detach().mean().item(),
+            'gain/decoy': decoy_gain.mean().item(),
+            'gain/gap': (trigger_gain.detach() - decoy_gain).mean().item(),
+            **{
+                f'negative/{category}_count': count
+                for category, count in category_counts.items()
+            },
+            **{
+                f'gain/{category}_gap': sum(gaps) / len(gaps)
+                for category, gaps in category_gain_gaps.items()
+            },
+            **gradient_logs,
+        })
+        if self.tst_metrics_writer is not None and self.step_num % self.trigger_selective_training.logging.log_every == 0:
+            self.tst_metrics_writer.write({
+                'step': self.step_num,
+                **{key: float(value) for key, value in self.additional_logs.items() if isinstance(value, (int, float))},
+                'negative_category': [sample.category for sample in negative_samples],
+                'negative_phrase': [sample.phrase for sample in negative_samples],
+            })
+        return loss
 
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         with torch.no_grad():
@@ -2126,36 +2340,53 @@ class SDTrainer(BaseSDTrainProcess):
                         prior_pred=prior_pred,
                     )
                 else:
-                    with self.timer('predict_unet'):
-                        noise_pred = self.predict_noise(
-                            noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
-                            timesteps=timesteps,
-                            conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
-                            unconditional_embeds=unconditional_embeds,
-                            batch=batch,
-                            is_primary_pred=True,
-                            **pred_kwargs
-                        )
-                    self.after_unet_predict()
+                    tst_loss = None
+                    if self.trigger_selective_training.enabled:
+                        with self.timer('tst_predict_and_loss'):
+                            tst_loss = self._calculate_tst_loss(
+                                noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                                noise=noise.to(self.device_torch, dtype=dtype).detach(),
+                                timesteps=timesteps,
+                                batch=batch,
+                                conditioned_prompts=conditioned_prompts,
+                                prompt_2=prompt_2,
+                                pred_kwargs=pred_kwargs,
+                                mask_multiplier=mask_multiplier,
+                                network=network,
+                                dtype=dtype,
+                            )
+                    else:
+                        with self.timer('predict_unet'):
+                            noise_pred = self.predict_noise(
+                                noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                                timesteps=timesteps,
+                                conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
+                                unconditional_embeds=unconditional_embeds,
+                                batch=batch,
+                                is_primary_pred=True,
+                                **pred_kwargs
+                            )
+                        self.after_unet_predict()
 
-                    with self.timer('calculate_loss'):
-                        noise = noise.to(self.device_torch, dtype=dtype).detach()
-                        prior_to_calculate_loss = prior_pred
-                        # if we are doing diff_output_preservation and not noing inverted masked prior
-                        # then we need to send none here so it will not target the prior
-                        doing_preservation = self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation
-                        if doing_preservation and not do_inverted_masked_prior:
-                            prior_to_calculate_loss = None
-                        
-                        loss = self.calculate_loss(
-                            noise_pred=noise_pred,
-                            noise=noise,
-                            noisy_latents=noisy_latents,
-                            timesteps=timesteps,
-                            batch=batch,
-                            mask_multiplier=mask_multiplier,
-                            prior_pred=prior_to_calculate_loss,
-                        )
+                        with self.timer('calculate_loss'):
+                            noise = noise.to(self.device_torch, dtype=dtype).detach()
+                            prior_to_calculate_loss = prior_pred
+                            # if we are doing diff_output_preservation and not noing inverted masked prior
+                            # then we need to send none here so it will not target the prior
+                            doing_preservation = self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation
+                            if doing_preservation and not do_inverted_masked_prior:
+                                prior_to_calculate_loss = None
+
+                            tst_loss = self.calculate_loss(
+                                noise_pred=noise_pred,
+                                noise=noise,
+                                noisy_latents=noisy_latents,
+                                timesteps=timesteps,
+                                batch=batch,
+                                mask_multiplier=mask_multiplier,
+                                prior_pred=prior_to_calculate_loss,
+                            )
+                    loss = tst_loss
                     
                     if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
                         with torch.no_grad():

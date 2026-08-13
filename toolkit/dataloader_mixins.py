@@ -321,6 +321,8 @@ class CaptionProcessingDTOMixin:
             self.raw_caption_short: str = None
             self.caption: str = None
             self.caption_short: str = None
+            self.caption_template: str = None
+            self.caption_short_template: str = None
             # caption with the trigger word replaced by the diff output preservation class
             self.caption_dop: str = None
 
@@ -432,6 +434,10 @@ class CaptionProcessingDTOMixin:
 
         # join back together
         caption = ', '.join(token_list)
+        if short_caption:
+            self.caption_short_template = caption
+        else:
+            self.caption_template = caption
         caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
 
         if self.dataset_config.random_triggers:

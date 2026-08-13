@@ -1,0 +1,1721 @@
+# IDEOGRAM 4 ARBITRARY-TRIGGER STYLE LORA PROJECT
+# CONTINUATION HANDOFF — V7-B SELECTED
+#
+# Date: 2026-08-12
+#
+# Main objective:
+# Make the arbitrary literal trigger <r1X1dOn9mA2> reliably activate the
+# user's target visual style on novel prompts, including prompts containing
+# competing style semantics.
+#
+# SELECTED NEXT EXPERIMENT:
+# V7-B = TARA-like token-aware Qwen activator + semantic anchor alignment.
+#
+# IMPORTANT CHANGE:
+# The semantic/class anchor is now:
+#
+#     "painting"
+#
+# NOT "Ghibli anime".
+#
+# Do not silently substitute another anchor.
+#
+# -------------------------------------------------------------------------
+# 1. USER / PROJECT CONSTRAINTS
+# -------------------------------------------------------------------------
+#
+# The user is highly technical and wants controlled causal experiments.
+#
+# Important preferences:
+#
+# - Do not burn 1000–2000 steps before an early kill gate.
+# - Separate:
+#       mechanical parameter movement
+#       gradient flow
+#       inference loading
+#       semantic success
+# - Do not interpret "weights changed" as "binding succeeded".
+# - Do not recommend changing:
+#
+#       content_or_style: content
+#
+#   to "style".
+#
+#   The user deliberately wants content mode because the desired learned
+#   behavior includes composition/content tendencies as part of the visual style.
+#
+# - Do not go back to pure Textual Inversion as the primary solution.
+# - Do not simply increase V6 text-encoder LR and retry the same formulation.
+# - Preserve current working AI Toolkit infrastructure unless a change is
+#   specifically required for V7-B.
+#
+#
+# -------------------------------------------------------------------------
+# 2. DATASET / TRIGGER
+# -------------------------------------------------------------------------
+#
+# Dataset:
+#
+#     40 curated target-style images
+#
+# Captions:
+#
+#     detailed manually authored Ideogram 4 JSON captions
+#
+# Trigger:
+#
+#     <r1X1dOn9mA2>
+#
+# The trigger appears multiple times in the captions, generally around three
+# occurrences in different style_description positions.
+#
+# Important:
+#
+#     detect ALL actual occurrences dynamically;
+#     do not hardcode "exactly 3" unless dataset validation proves that.
+#
+# The target visual style itself is intentionally NOT described by ordinary
+# style words. The random trigger is supposed to carry the binding.
+#
+#
+# -------------------------------------------------------------------------
+# 3. IDEOGRAM 4 TEXT ARCHITECTURE ALREADY ESTABLISHED
+# -------------------------------------------------------------------------
+#
+# Current Ideogram4 AI Toolkit implementation uses:
+#
+#     Qwen3-VL-8B-Instruct
+#
+# Text features are collected from 13 Qwen layers:
+#
+#     (0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 35)
+#
+# Qwen hidden size:
+#
+#     4096
+#
+# Ideogram concatenates those 13 tapped representations for conditioning.
+#
+# Qwen has 36 text decoder layers.
+#
+# Current AI Toolkit Ideogram prompt encoding processes prompts individually
+# through Qwen:
+#
+#     diffusion batch = 2
+#     Qwen encode batch = 1 per caption
+#
+#
+# -------------------------------------------------------------------------
+# 4. EXISTING V3 — GOOD STYLE CARRIER
+# -------------------------------------------------------------------------
+#
+# There is already a strong transformer-only LoRA called V3.
+#
+# V3:
+#
+#     Ideogram transformer LoRA
+#     rank 32
+#     good visual reproduction of the target style
+#
+# Main weakness:
+#
+#     activation/binding is unreliable.
+#
+# Known observations:
+#
+#     Base + semantic style phrase can move somewhat toward target.
+#     V3 + certain semantic style phrases activates target style strongly.
+#     Literal random trigger is unreliable.
+#
+# V3 therefore appears to contain the desired visual style reasonably well.
+#
+# Treat V3 as the STYLE CARRIER.
+#
+# For V7-B:
+#
+#     V3 should be loaded ACTIVE + FROZEN.
+#
+# DO NOT make V3 trainable in the initial V7-B experiment.
+#
+# This is essential.
+#
+# One major problem with V6 was that the trainable transformer LoRA could solve
+# diffusion reconstruction itself, giving the Qwen LoRA no incentive to become
+# a meaningful trigger activator.
+#
+# V7-B intentionally removes that shortcut:
+#
+#     style carrier = frozen V3
+#     activator      = trainable token-aware Qwen LoRA
+#
+#
+# -------------------------------------------------------------------------
+# 5. PREVIOUS TI EXPERIMENTS — DO NOT REPEAT
+# -------------------------------------------------------------------------
+#
+# Several Textual Inversion experiments were already performed.
+#
+# Pure TI moved substantially in parameter space but did not provide robust
+# semantic activation.
+#
+# A frozen-V3 + TI stress experiment also failed:
+#
+#     random TI initialization was sometimes better than trained TI.
+#
+# Therefore:
+#
+#     large embedding movement != useful semantic binding.
+#
+# Pure TI is not the selected path.
+#
+#
+# -------------------------------------------------------------------------
+# 6. V6 — JOINT QWEN LORA + TRANSFORMER LORA
+# -------------------------------------------------------------------------
+#
+# V6 trained:
+#
+#     Ideogram transformer LoRA
+#     +
+#     Qwen attention LoRA
+#
+# simultaneously under ordinary diffusion MSE.
+#
+# V6 Qwen target:
+#
+#     Qwen3VLTextAttention
+#
+# which created:
+#
+#     36 layers
+#     × q/k/v/o
+#     = 144 Qwen LoRA modules
+#
+# = 288 A/B tensors when saved.
+#
+# Example V6 config:
+#
+#     network:
+#       type: lora
+#       linear: 32
+#       linear_alpha: 16
+#       network_kwargs:
+#         target_te_modules:
+#           - Qwen3VLTextAttention
+#
+#     train:
+#       batch_size: 2
+#       train_unet: true
+#       train_text_encoder: false
+#       train_text_encoder_lora: true
+#       gradient_checkpointing: true
+#       timestep_type: sigmoid
+#       content_or_style: content
+#       cache_text_embeddings: false
+#       unload_text_encoder: false
+#       unet_lr: 8e-5
+#       text_encoder_lr: 2e-5
+#       dtype: bf16
+#       do_differential_guidance: true
+#       differential_guidance_scale: 3.0
+#
+#
+# -------------------------------------------------------------------------
+# 7. IMPORTANT TRAINING INFRASTRUCTURE ALREADY FIXED
+# -------------------------------------------------------------------------
+#
+# Several plumbing bugs were solved. Preserve these.
+#
+#
+# A. Separate flag:
+#
+#     train_text_encoder_lora
+#
+# Base Qwen stays frozen.
+#
+# Qwen LoRA is trainable.
+#
+#
+# B. Qwen autograd
+#
+# In Ideogram pipeline:
+#
+#     get_qwen3_vl_features(...)
+#
+# MUST NOT have @torch.no_grad().
+#
+#
+# C. Qwen must execute under autograd during TE-LoRA training.
+#
+# SDTrainer currently uses:
+#
+#     grad_on_text_encoder = (
+#         train_text_encoder
+#         or train_text_encoder_lora
+#     )
+#
+#
+# D. Base Qwen must NOT be Accelerator-prepared as a fully trainable text model.
+#
+# Keep:
+#
+#     train_text_encoder: false
+#
+#
+# E. Critical batch/multiplier fix
+#
+# Ideogram4 Qwen encodes captions one at a time (B=1), while normal AI Toolkit
+# LoRA network multiplier follows diffusion batch (e.g. [1,1]).
+#
+# This previously caused the apparent Qwen stall.
+#
+# During Qwen encoding, temporarily collapse a uniform diffusion-batch
+# multiplier:
+#
+#     [1.0, 1.0]
+#
+# to:
+#
+#     1.0
+#
+# Restore the original multiplier before diffusion-transformer forward.
+#
+# Preserve strict validation:
+#
+#     if batch weights differ, do NOT silently collapse them.
+#
+#
+# F. Native Hugging Face Qwen gradient checkpointing
+#
+# Qwen needs to be temporarily in train() mode during the gradient-bearing
+# student encode so HF GradientCheckpointingLayer actually activates.
+#
+# Base Qwen weights remain requires_grad=False.
+#
+# Restore the previous train/eval state after the encode.
+#
+#
+# G. Do not restore old debugging hacks:
+#
+#     no manual torch checkpoint wrapper
+#     no manual q_proj reconstruction
+#     no attention instrumentation
+#     no forced SDPA backend
+#     no gradient_checkpointing_disable()
+#
+#
+# -------------------------------------------------------------------------
+# 8. V6 INFERENCE PLUMBING IS NOW WORKING
+# -------------------------------------------------------------------------
+#
+# ComfyUI initially rejected every AI Toolkit Qwen key:
+#
+#     lora_te.language_model.layers.N.self_attn.q_proj.lora_A.weight
+#     ...
+#
+# A custom ComfyUI-gen2 compatibility loader was implemented.
+#
+# It now aliases AI Toolkit adapter BASE NAMES into ComfyUI's native CLIP
+# key map and lets stock ComfyUI parse A/B tensors.
+#
+# Current successful log:
+#
+#     AI-Toolkit Qwen TE keys
+#     detected=288
+#     aliased=288
+#     recognized=288
+#     unrecognized=0
+#
+# No lora-key-not-loaded warnings remain.
+#
+# Therefore do NOT treat V6's semantic failure as a simple key-loading failure.
+#
+#
+# -------------------------------------------------------------------------
+# 9. V6 SEMANTIC RESULT — FAILURE
+# -------------------------------------------------------------------------
+#
+# The following fixed-style comparisons were performed visually.
+#
+# B:
+#
+#     transformer/model LoRA = 1
+#     Qwen/clip LoRA         = 0
+#
+# D:
+#
+#     transformer/model LoRA = 1
+#     Qwen/clip LoRA         = 1
+#
+# On a dataset prompt:
+#
+#     B and D show no obvious visual difference.
+#
+# Also:
+#
+#     model=0
+#     clip=1
+#
+# on a dataset prompt:
+#
+#     no target style.
+#
+# And:
+#
+#     model=1
+#     clip=1
+#
+# on novel prompts:
+#
+#     no target style.
+#
+# Do not call V6 successful.
+#
+# Loader success != semantic success.
+#
+#
+# -------------------------------------------------------------------------
+# 10. WHY V7-B EXISTS
+# -------------------------------------------------------------------------
+#
+# Ordinary V6 joint training has an identifiability / shortcut problem:
+#
+#     diffusion target
+#          |
+#          +--> transformer LoRA can directly learn image appearance
+#          |
+#          +--> Qwen LoRA would need to learn a much harder semantic binding
+#
+# Nothing forces the optimizer to route style activation through the trigger.
+#
+# V7-B removes this competition.
+#
+#
+# -------------------------------------------------------------------------
+# 11. V7-B HIGH-LEVEL DESIGN
+# -------------------------------------------------------------------------
+#
+# V7-B:
+#
+#     FROZEN:
+#         base Qwen
+#         base Ideogram transformer
+#         V3 transformer style LoRA
+#
+#     TRAINABLE:
+#         new Qwen token-aware LoRA only
+#
+# Target behavior:
+#
+#     <r1X1dOn9mA2>
+#            |
+#            v
+#     Qwen token-aware activator
+#            |
+#            v
+#     conditioning that behaves like a stable "painting" semantic anchor
+#            |
+#            v
+#     frozen V3 style carrier interprets it
+#            |
+#            v
+#     target style
+#
+#
+# -------------------------------------------------------------------------
+# 12. IMPORTANT: ANCHOR IS "painting"
+# -------------------------------------------------------------------------
+#
+# The semantic/class anchor for V7-B is:
+#
+#     painting
+#
+# Use lowercase literal:
+#
+#     "painting"
+#
+# unless tokenizer/context inspection proves casing matters.
+#
+# Do NOT use:
+#
+#     "Ghibli anime"
+#
+# anywhere in V7-B.
+#
+# The purpose of "painting" is NOT to describe the full target style.
+#
+# It is a pretrained semantic anchor / class-like reference that the random
+# trigger can align toward.
+#
+# The actual target visual appearance continues to come primarily from:
+#
+#     dataset images + frozen V3 style carrier.
+#
+#
+# -------------------------------------------------------------------------
+# 13. V7-B IS TARA-LIKE, NOT A LITERAL TARA PORT
+# -------------------------------------------------------------------------
+#
+# Original TARA's useful principles are:
+#
+#     TFM:
+#         LoRA residual is allowed only at the rare-token positions.
+#
+#     TAL:
+#         rare-token representation is aligned toward a meaningful class-token
+#         representation.
+#
+# We adapt these ideas to Qwen3-VL.
+#
+# Ideogram4 does not expose the same SD/SDXL UNet cross-attention architecture,
+# so do NOT blindly copy TARA's exact modules.
+#
+#
+# -------------------------------------------------------------------------
+# 14. INITIAL V7-B QWEN TARGETS
+# -------------------------------------------------------------------------
+#
+# Initial experiment should target only:
+#
+#     k_proj
+#     v_proj
+#
+# inside:
+#
+#     Qwen3VLTextAttention
+#
+# NOT q_proj/o_proj initially.
+#
+# Reason:
+#
+# - closest analogue to TARA's K/V treatment;
+# - lower-capacity, more controlled experiment;
+# - trigger's K/V can influence subsequent causal Qwen tokens;
+# - makes attribution easier.
+#
+# Expected module count:
+#
+#     36 × 2 = 72 LoRA modules
+#
+# Expected A/B tensor count:
+#
+#     72 × 2 = 144 tensors
+#
+# Keep rank:
+#
+#     32
+#
+# initially, to avoid introducing rank as another experimental variable.
+#
+#
+# -------------------------------------------------------------------------
+# 15. DO NOT USE GLOBAL TE `only_if_contains` IF IT ALSO AFFECTS TRANSFORMER
+# -------------------------------------------------------------------------
+#
+# Add a TEXT-ENCODER-SPECIFIC child-module filter, e.g.:
+#
+#     target_te_child_modules:
+#       - k_proj
+#       - v_proj
+#
+# or an equivalent isolated mechanism.
+#
+# Do not accidentally filter the Ideogram transformer LoRA module discovery.
+#
+#
+# -------------------------------------------------------------------------
+# 16. TOKEN FOCUS MASK — CORE V7-B MECHANISM
+# -------------------------------------------------------------------------
+#
+# Train-time Qwen LoRA residual:
+#
+#     delta = B(A(x))
+#
+# Instead of:
+#
+#     y = W(x) + delta
+#
+# use:
+#
+#     y = W(x) + M_trigger * delta
+#
+# where:
+#
+#     M_trigger shape approximately [B, sequence_length, 1]
+#
+# and:
+#
+#     1 = token belongs to an occurrence of <r1X1dOn9mA2>
+#     0 = every other token
+#
+# Therefore:
+#
+#     LoRA output on trigger tokens      = trainable
+#     LoRA output on every other token   = exactly zero
+#
+# This mask must apply to the LoRA RESIDUAL ONLY.
+#
+# Never mask:
+#
+#     base Qwen output
+#     hidden states
+#     attention globally
+#
+#
+# -------------------------------------------------------------------------
+# 17. MASK ALL SUBTOKENS OF THE TRIGGER
+# -------------------------------------------------------------------------
+#
+# <r1X1dOn9mA2> is not assumed to be one tokenizer token.
+#
+# Determine the actual token span.
+#
+# All constituent Qwen tokens corresponding to each literal trigger occurrence
+# should receive mask=1.
+#
+# If there are multiple trigger occurrences in the JSON caption, mask every
+# occurrence.
+#
+#
+# -------------------------------------------------------------------------
+# 18. TOKEN-SPAN DETECTION
+# -------------------------------------------------------------------------
+#
+# Preferred:
+#
+#     tokenizer offset mappings
+#
+# Match literal character spans of:
+#
+#     <r1X1dOn9mA2>
+#
+# against token character offsets.
+#
+# A token receives mask=1 when its source-character range overlaps the trigger
+# literal span.
+#
+# This is preferable to assuming that:
+#
+#     tokenizer(trigger)
+#
+# always produces the exact same IDs in every surrounding punctuation context.
+#
+# If Qwen tokenizer path cannot provide offsets, build a tested fallback based
+# on token-ID subsequence matching and validate it exhaustively over all 40
+# captions.
+#
+#
+# -------------------------------------------------------------------------
+# 19. MASK VALIDATION MUST HAPPEN BEFORE TRAINING
+# -------------------------------------------------------------------------
+#
+# Build a dataset inspection utility.
+#
+# For every caption print/verify:
+#
+#     raw trigger occurrence count
+#     tokenized trigger span count
+#     token indices for each occurrence
+#     number of masked tokens
+#
+# Assertions:
+#
+#     every literal trigger occurrence maps to >=1 token
+#     no unrelated token is masked
+#     masked token count > 0 for every training caption
+#
+# Save a short summary such as:
+#
+#     captions: 40
+#     trigger occurrence distribution: ...
+#     unmapped occurrences: 0
+#
+# Do not launch training if span detection is ambiguous.
+#
+#
+# -------------------------------------------------------------------------
+# 20. IMPLEMENT TOKEN-AWARE LORA AS AN ISOLATED SUBCLASS
+# -------------------------------------------------------------------------
+#
+# Do not broadly modify generic ToolkitModuleMixin behavior.
+#
+# Preferred design:
+#
+#     TokenAwareLoRAModule
+#
+# subclassing the existing LoRAModule or equivalent.
+#
+# It should only be instantiated for:
+#
+#     Qwen TE k_proj/v_proj
+#
+# when V7-B token focus is enabled.
+#
+# Pseudocode:
+#
+#     base = original_forward(x)
+#     delta = lora_forward(x)
+#
+#     mask = network.current_te_token_mask
+#
+#     if mask is required:
+#         delta = delta * broadcast(mask)
+#
+#     return base + multiplier * scale * delta
+#
+# Match the installed AI Toolkit's existing LoRA scaling/multiplier semantics.
+#
+# Do NOT copy code from a different current-upstream version without checking
+# the local repository.
+#
+#
+# -------------------------------------------------------------------------
+# 21. RUNTIME MASK CONTEXT
+# -------------------------------------------------------------------------
+#
+# The network needs an ephemeral current token mask.
+#
+# Example concept:
+#
+#     with network.use_te_token_mask(mask):
+#         encode_prompt(...)
+#
+# Restore previous mask in finally.
+#
+# Avoid stale masks crossing between prompts.
+#
+# Student trigger encode:
+#
+#     mask = trigger mask
+#
+# Teacher/anchor encode:
+#
+#     V7-B LoRA disabled
+#
+# or:
+#
+#     zero mask
+#
+# but preferably explicit adapter-disabled mode.
+#
+#
+# -------------------------------------------------------------------------
+# 22. KEY INVARIANT — NO TRIGGER MUST MEAN NO TE EFFECT
+# -------------------------------------------------------------------------
+#
+# This is one of V7-B's biggest advantages.
+#
+# If a prompt contains no trigger:
+#
+#     M_trigger = all zeros
+#
+# therefore:
+#
+#     Qwen_with_V7B(prompt)
+#
+# must be numerically equivalent to:
+#
+#     base_Qwen(prompt)
+#
+# apart from floating-point noise.
+#
+# This becomes an extremely strong regression test.
+#
+#
+# -------------------------------------------------------------------------
+# 23. ANCHOR PROMPT CONSTRUCTION
+# -------------------------------------------------------------------------
+#
+# For every actual training caption:
+#
+# Student prompt:
+#
+#     original JSON caption containing <r1X1dOn9mA2>
+#
+# Teacher/anchor prompt:
+#
+#     exact same caption
+#
+# except each literal:
+#
+#     <r1X1dOn9mA2>
+#
+# is replaced in the SAME POSITION by:
+#
+#     painting
+#
+# Do not otherwise rewrite or simplify the caption.
+#
+# This keeps:
+#
+#     content
+#     composition
+#     object nouns
+#     surrounding JSON context
+#
+# matched between teacher and student.
+#
+#
+# -------------------------------------------------------------------------
+# 24. PAIR TRIGGER OCCURRENCES WITH PAINTING OCCURRENCES
+# -------------------------------------------------------------------------
+#
+# Occurrence #1 of trigger:
+#
+#     aligns to occurrence #1 of "painting"
+#
+# occurrence #2:
+#
+#     aligns to occurrence #2
+#
+# etc.
+#
+# Because trigger and painting may tokenize to different token counts, compare
+# POOLED SPAN representations rather than individual token positions.
+#
+# For span S:
+#
+#     span_repr = mean(features[:, S, :], token_dimension)
+#
+# This avoids requiring equal token counts.
+#
+#
+# -------------------------------------------------------------------------
+# 25. V7-B ANCHOR ALIGNMENT LOSS
+# -------------------------------------------------------------------------
+#
+# Use a TAL-inspired alignment between:
+#
+#     student trigger representation
+#
+# and:
+#
+#     frozen teacher "painting" representation
+#
+# Preferred first implementation:
+#
+# align K-projection outputs.
+#
+# For selected Qwen layer l:
+#
+#     K_anchor_l
+#         = effective BASE k_proj output for painting span
+#
+#     K_trigger_l
+#         = effective base + token-aware-LoRA k_proj output
+#           for trigger span
+#
+# Teacher:
+#
+#     no_grad
+#     V7-B adapter disabled
+#
+# Student:
+#
+#     grad enabled
+#     trigger mask active
+#
+# Pool each span independently.
+#
+# Suggested loss:
+#
+#     L_anchor =
+#         mean_l,occurrence(
+#             L1(
+#                 normalize(K_trigger),
+#                 normalize(K_anchor)
+#             )
+#         )
+#
+# or cosine-distance + a small magnitude-preserving L1 term.
+#
+# Start simple.
+#
+# Do NOT begin with many competing auxiliary objectives.
+#
+#
+# -------------------------------------------------------------------------
+# 26. SAFE IMPLEMENTATION OF ANCHOR K TARGETS
+# -------------------------------------------------------------------------
+#
+# Qwen is quantized during training.
+#
+# Avoid manually doing:
+#
+#     W_K @ hidden_state
+#
+# from raw quantized weights.
+#
+# Prefer capturing the REAL runtime k_proj output.
+#
+# Teacher forward:
+#
+#     capture base k_proj outputs for painting spans
+#     detach()
+#
+# Student forward:
+#
+#     capture effective masked-LoRA k_proj outputs
+#
+# This keeps quantization behavior identical to actual forward execution.
+#
+#
+# -------------------------------------------------------------------------
+# 27. GRADIENT CHECKPOINTING CAUTION
+# -------------------------------------------------------------------------
+#
+# Hugging Face gradient checkpointing may recompute Qwen layers during backward.
+#
+# Therefore do not implement activation capture using naive append-only hooks
+# that accumulate duplicate forward/recompute entries.
+#
+# The coding agent must explicitly design around checkpoint recomputation.
+#
+# Possible robust approaches:
+#
+# A. keyed activation slots overwritten by layer index;
+#
+# B. compute/return the needed representations through the existing Qwen
+#    feature-extraction path;
+#
+# C. dedicated context object keyed by:
+#       layer index
+#       occurrence
+#       current forward generation id
+#
+# Do not allow checkpoint recomputation to double-count L_anchor.
+#
+#
+# -------------------------------------------------------------------------
+# 28. MAIN DIFFUSION LOSS REMAINS
+# -------------------------------------------------------------------------
+#
+# Student branch must still train against the actual dataset image target.
+#
+# Frozen:
+#
+#     Ideogram base transformer
+#     V3 transformer LoRA
+#
+# Trainable:
+#
+#     V7-B Qwen K/V token-aware LoRA
+#
+# Continue ordinary Ideogram diffusion loss:
+#
+#     L_diff
+#
+# This teaches the activator to steer the frozen style carrier toward the actual
+# training images.
+#
+#
+# -------------------------------------------------------------------------
+# 29. TOTAL INITIAL LOSS
+# -------------------------------------------------------------------------
+#
+# First V7-B experiment:
+#
+#     L_total =
+#         L_diff
+#         +
+#         lambda_anchor * L_anchor
+#
+# Start:
+#
+#     lambda_anchor = 1.0
+#
+# but expose it in YAML/UI/config.
+#
+# Do not hardcode.
+#
+# Log both losses independently:
+#
+#     loss_diff
+#     loss_anchor
+#     loss_total
+#
+#
+# -------------------------------------------------------------------------
+# 30. DO NOT ADD A TRAINABLE TRANSFORMER RESIDUAL YET
+# -------------------------------------------------------------------------
+#
+# Very important:
+#
+#     train_unet: false
+#
+# for the NEW V7-B adapter.
+#
+# V3 is loaded frozen.
+#
+# If V7-B cannot alter behavior when it is the only trainable route, we learn
+# something useful.
+#
+# If transformer LoRA is trainable again immediately, we recreate V6's
+# shortcut problem.
+#
+#
+# -------------------------------------------------------------------------
+# 31. INITIAL CONFIG DIRECTION
+# -------------------------------------------------------------------------
+#
+# Example conceptual config:
+#
+#     trigger_word: "<r1X1dOn9mA2>"
+#
+#     network:
+#       type: lora
+#       linear: 32
+#       linear_alpha: 16
+#       network_kwargs:
+#         target_te_modules:
+#           - Qwen3VLTextAttention
+#         target_te_child_modules:
+#           - k_proj
+#           - v_proj
+#         te_token_focus: true
+#
+#     train:
+#       batch_size: 2
+#       train_unet: false
+#       train_text_encoder: false
+#       train_text_encoder_lora: true
+#       gradient_checkpointing: true
+#       cache_text_embeddings: false
+#       unload_text_encoder: false
+#       timestep_type: sigmoid
+#       content_or_style: content
+#       dtype: bf16
+#       do_differential_guidance: true
+#       differential_guidance_scale: 3.0
+#
+#       text_encoder_lr: 5e-5
+#
+#     model:
+#       quantize: true
+#       qtype: qfloat8
+#       quantize_te: true
+#       qtype_te: qfloat8
+#
+#     v7b:
+#       token_focus: true
+#       trigger_word: "<r1X1dOn9mA2>"
+#       anchor_word: "painting"
+#       anchor_loss_weight: 1.0
+#
+# These are STARTING values, not sacred constants.
+#
+# text_encoder_lr=5e-5 is a controlled initial increase from V6's 2e-5 now
+# that Qwen is the only trainable branch.
+#
+# Do not immediately run 2000 steps.
+#
+#
+# -------------------------------------------------------------------------
+# 32. LOAD V3 AS ACTIVE + FROZEN
+# -------------------------------------------------------------------------
+#
+# Earlier Ideogram4 code already acquired support for loading a frozen
+# transformer LoRA via model_config.lora_path / load_frozen_lora().
+#
+# Reuse this if still present.
+#
+# Required state:
+#
+#     V3 parameters requires_grad=False
+#     V3 active during student diffusion forward
+#     V3 optimizer params = 0
+#
+# Print at startup:
+#
+#     V3 modules:
+#     V3 total params:
+#     V3 trainable params: 0
+#
+#
+# -------------------------------------------------------------------------
+# 33. PARAMETER-STATE PROOF BEFORE TRAINING
+# -------------------------------------------------------------------------
+#
+# Required:
+#
+#     Qwen base:
+#         requires_grad = false
+#
+#     Ideogram base transformer:
+#         requires_grad = false
+#
+#     V3 transformer LoRA:
+#         requires_grad = false
+#
+#     V7-B Qwen K/V LoRA:
+#         requires_grad = true
+#
+# There should be NO other trainable parameter group.
+#
+#
+# -------------------------------------------------------------------------
+# 34. STEP-0 TOKEN-FOCUS PROOF
+# -------------------------------------------------------------------------
+#
+# For one real caption, inspect one Qwen layer.
+#
+# Compute LoRA residual norm:
+#
+#     trigger_positions_norm
+#     non_trigger_positions_norm
+#
+# Requirement:
+#
+#     trigger norm can be nonzero
+#
+#     non-trigger norm must equal 0
+#     except insignificant numerical noise if implementation requires casting
+#
+# Ideally:
+#
+#     non_trigger_max_abs == 0
+#
+# because masking is explicit multiplication.
+#
+#
+# -------------------------------------------------------------------------
+# 35. GRADIENT PROOF
+# -------------------------------------------------------------------------
+#
+# After backward, before optimizer step:
+#
+# Verify:
+#
+#     V7-B k_proj LoRA grad != None
+#     V7-B v_proj LoRA grad != None
+#     grad norm > 0
+#
+# and:
+#
+#     V3 grad is None
+#     Qwen base grad is None
+#     Ideogram base grad is None
+#
+# Do this once, then remove noisy diagnostics.
+#
+#
+# -------------------------------------------------------------------------
+# 36. ANCHOR-LOSS PROOF
+# -------------------------------------------------------------------------
+#
+# Before real training:
+#
+# For a sample:
+#
+#     L_anchor must be finite
+#     trigger spans detected > 0
+#     painting spans detected == trigger occurrence count
+#
+# Check that random/init V7-B does NOT already give zero anchor loss.
+#
+# Otherwise the objective is ineffective.
+#
+#
+# -------------------------------------------------------------------------
+# 37. SHORT TRAINING SCHEDULE / KILL GATES
+# -------------------------------------------------------------------------
+#
+# Suggested first run:
+#
+#     save step 25
+#     save step 50
+#     save step 100
+#     save step 200
+#
+# Do NOT start with a blind 2000-step commitment.
+#
+#
+# -------------------------------------------------------------------------
+# 38. PRIMARY SEMANTIC EVALUATION MATRIX
+# -------------------------------------------------------------------------
+#
+# At each checkpoint evaluate:
+#
+# 1. Dataset prompt, trigger ON
+#
+# 2. Same dataset content, trigger REMOVED
+#
+# 3. Novel neutral prompt, trigger ON
+#
+# 4. Same novel neutral prompt, trigger OFF
+#
+# 5. Novel prompt containing a competing style phrase, trigger ON
+#
+# 6. Same competing prompt, trigger OFF
+#
+# Use:
+#
+#     identical seed
+#     identical sampler
+#     identical steps
+#     identical V3 strength
+#
+#
+# -------------------------------------------------------------------------
+# 39. MOST IMPORTANT SUCCESS CONDITION
+# -------------------------------------------------------------------------
+#
+# V7-B is NOT successful merely because dataset reconstruction improves.
+#
+# Main success:
+#
+#     novel prompt + trigger
+#
+# must show materially more target-style activation than:
+#
+#     same novel prompt without trigger.
+#
+# Also test competing style semantics.
+#
+#
+# -------------------------------------------------------------------------
+# 40. NO-TRIGGER EXACT-PRESERVATION TEST
+# -------------------------------------------------------------------------
+#
+# Because TFM zeros the V7-B residual when no trigger exists:
+#
+# compare Qwen conditioning:
+#
+#     V3 + V7B loaded, prompt WITHOUT trigger
+#
+# versus:
+#
+#     V3 + no V7B, same prompt
+#
+# Required:
+#
+#     relative difference approximately zero.
+#
+# This should be evaluated numerically, not visually.
+#
+#
+# -------------------------------------------------------------------------
+# 41. NUMERICAL CONDITIONING DIAGNOSTIC
+# -------------------------------------------------------------------------
+#
+# We did not yet have a convenient ComfyUI conditioning comparison tool.
+#
+# Build one during this project.
+#
+# For two conditioning tensors A/B report:
+#
+#     L2 norm A
+#     L2 norm B
+#     delta L2
+#     mean(abs(delta))
+#     max(abs(delta))
+#     relative L2:
+#
+#         ||B-A|| / ||A||
+#
+#     cosine similarity
+#
+# This prevents future visual ambiguity.
+#
+#
+# -------------------------------------------------------------------------
+# 42. ANCHOR SIMILARITY METRIC
+# -------------------------------------------------------------------------
+#
+# During training log:
+#
+#     cosine(trigger_span_K, painting_span_K)
+#
+# before and after V7-B.
+#
+# We want the similarity to move in the intended direction.
+#
+# But do not accept anchor similarity alone as success.
+#
+# Final criterion is generated behavior on novel prompts.
+#
+#
+# -------------------------------------------------------------------------
+# 43. TOKEN-FOCUS LEAKAGE METRIC
+# -------------------------------------------------------------------------
+#
+# Compute:
+#
+#     sum(abs(LoRA residual on non-trigger tokens))
+#     ------------------------------------------------
+#     sum(abs(all LoRA residuals))
+#
+# Expected:
+#
+#     ~0
+#
+# by construction.
+#
+#
+# -------------------------------------------------------------------------
+# 44. IF STEP 100 SHOWS ZERO BEHAVIORAL DIFFERENCE
+# -------------------------------------------------------------------------
+#
+# First inspect:
+#
+#     gradient norms
+#     anchor loss trajectory
+#     conditioning delta
+#     trigger K/painting K similarity
+#
+# Do NOT immediately train longer.
+#
+# Cases:
+#
+# A.
+# Anchor loss not decreasing:
+#
+#     optimization / implementation problem.
+#
+# B.
+# Anchor loss decreases strongly but Qwen conditioning barely changes:
+#
+#     loss may be aligned to a representation that Ideogram does not use
+#     strongly enough.
+#
+# C.
+# Conditioning changes materially but output does not:
+#
+#     V3 may not decode the chosen "painting" direction sufficiently.
+#
+# D.
+# Dataset output changes but novel output does not:
+#
+#     still overfitting / insufficient semantic generalization.
+#
+#
+# -------------------------------------------------------------------------
+# 45. IMPORTANT FALLBACK, BUT DO NOT IMPLEMENT INITIALLY
+# -------------------------------------------------------------------------
+#
+# If TFM + K anchor alignment clearly optimizes but does not produce visual
+# activation, the next controlled extension is:
+#
+#     teacher diffusion-prediction distillation
+#
+# Teacher:
+#
+#     frozen Qwen
+#     anchor prompt with "painting"
+#     frozen V3
+#
+# Student:
+#
+#     trigger prompt
+#     V7-B token-aware Qwen
+#     frozen V3
+#
+# Same:
+#
+#     latent
+#     noise
+#     timestep
+#
+# Additional loss:
+#
+#     MSE(
+#         student_velocity,
+#         teacher_velocity.detach()
+#     )
+#
+# Do NOT add this in the first V7-B implementation unless necessary.
+#
+# We want to know whether the simpler TFM + TAL-style anchor works first.
+#
+#
+# -------------------------------------------------------------------------
+# 46. COMFYUI CONSEQUENCE — VERY IMPORTANT
+# -------------------------------------------------------------------------
+#
+# V7-B Qwen TE LoRA CANNOT be deployed as an ordinary static ComfyUI LoRA
+# patch if token focus is part of the model function.
+#
+# Standard ModelPatcher weight LoRA implements effectively:
+#
+#     W' = W + delta_W
+#
+# globally for every token.
+#
+# V7-B requires:
+#
+#     output =
+#         W(x)
+#         +
+#         M_trigger(x_tokens) * delta_W(x)
+#
+# which is input/token dependent.
+#
+# Therefore inference also needs runtime token-aware behavior.
+#
+# Original TFM-style masking must be active at inference too.
+#
+#
+# -------------------------------------------------------------------------
+# 47. CURRENT COMFYUI CUSTOM LOADER
+# -------------------------------------------------------------------------
+#
+# Existing custom node:
+#
+#     ComfyUI-gen2/gen2_sampling/ideogram4_aitk_lora.py
+#
+# currently solves namespace compatibility for ordinary AI Toolkit Qwen LoRA.
+#
+# It aliases:
+#
+#     lora_te.language_model.layers...
+#
+# into ComfyUI's Qwen CLIP targets.
+#
+# For V7-B this loader will need an additional TOKEN-AWARE TE path.
+#
+#
+# -------------------------------------------------------------------------
+# 48. DO NOT THROW AWAY STOCK COMFYUI MODEL PATCHING FOR TRANSFORMER
+# -------------------------------------------------------------------------
+#
+# V3 / model-side LoRA can remain stock ComfyUI ModelPatcher behavior.
+#
+# Only the V7-B Qwen K/V adapter needs dynamic masking.
+#
+#
+# -------------------------------------------------------------------------
+# 49. RECOMMENDED R&D ARTIFACT STRATEGY
+# -------------------------------------------------------------------------
+#
+# During V7-B development, keep:
+#
+#     V3 transformer style carrier
+#
+# and:
+#
+#     V7-B Qwen activator
+#
+# as SEPARATE files.
+#
+# This makes experiments clean:
+#
+#     V3 only
+#     V7B only
+#     V3 + V7B
+#
+# It also prevents accidental retraining/merging confusion.
+#
+# Only package them together after semantic success has been demonstrated.
+#
+#
+# -------------------------------------------------------------------------
+# 50. V7-B SAVE METADATA
+# -------------------------------------------------------------------------
+#
+# Add metadata if possible:
+#
+#     token_aware_te_lora = true
+#     trigger_word = "<r1X1dOn9mA2>"
+#     anchor_word = "painting"
+#     token_mask_mode = "literal_trigger_span"
+#     target_te_projections = "k_proj,v_proj"
+#     architecture = "ideogram4_qwen3vl"
+#
+# This lets the ComfyUI custom loader detect that this is NOT a normal static
+# TE LoRA.
+#
+#
+# -------------------------------------------------------------------------
+# 51. COMFYUI TOKEN-MASK IMPLEMENTATION
+# -------------------------------------------------------------------------
+#
+# Do not implement this before AI Toolkit V7-B shows semantic promise.
+#
+# Once training works:
+#
+# modify the custom ComfyUI loader so Qwen K/V LoRA residual is applied at
+# runtime only to trigger token positions.
+#
+# Need to inspect current:
+#
+#     comfy/text_encoders/ideogram4.py
+#     comfy/text_encoders/qwen3vl.py
+#     CLIP tokenization / encode_from_tokens path
+#
+# The runtime adapter must have access to the current token IDs / mask before
+# Qwen forward.
+#
+#
+# -------------------------------------------------------------------------
+# 52. DO NOT USE TRAIN-TIME MASK + UNMASKED INFERENCE
+# -------------------------------------------------------------------------
+#
+# This is not acceptable.
+#
+# If the LoRA is trained with:
+#
+#     delta only on trigger tokens
+#
+# but inference applies:
+#
+#     delta to every token
+#
+# then inference is a different function and reintroduces exactly the
+# token-leakage problem V7-B is meant to remove.
+#
+#
+# -------------------------------------------------------------------------
+# 53. IDEOGRAM CONDITIONAL / UNCONDITIONAL INFERENCE
+# -------------------------------------------------------------------------
+#
+# Existing practical setup:
+#
+# Conditional branch:
+#
+#     V3 MODEL adaptation
+#     +
+#     V7-B token-aware Qwen CLIP adaptation
+#
+# Unconditional diffusion branch:
+#
+#     V3 MODEL adaptation
+#
+# No separate Qwen encoding is required specifically for the unconditional
+# diffusion model in the standard Ideogram4 ComfyUI workflow.
+#
+# Do not apply the V7-B Qwen adapter twice.
+#
+#
+# -------------------------------------------------------------------------
+# 54. DO NOT CONFUSE THE OFFICIAL IDEOGRAM UNCONDITIONAL LORA
+# -------------------------------------------------------------------------
+#
+# Current AI Toolkit model config also uses:
+#
+#     ostris/ideogram_4_unconditional_lora/...
+#
+# This is a separate Ideogram unconditional adapter.
+#
+# It is NOT V3 and NOT V7-B.
+#
+# Keep those concepts separate.
+#
+#
+# -------------------------------------------------------------------------
+# 55. FIRST CODING PHASE
+# -------------------------------------------------------------------------
+#
+# Before editing anything, inspect current working files:
+#
+#     toolkit/config_modules.py
+#     toolkit/lora_special.py
+#     toolkit/network_mixins.py
+#     jobs/process/BaseSDTrainProcess.py
+#     extensions_built_in/sd_trainer/SDTrainer.py
+#     extensions_built_in/diffusion_models/ideogram4/ideogram4.py
+#     extensions_built_in/diffusion_models/ideogram4/src/pipeline.py
+#
+# Identify the smallest integration points.
+#
+# Prefer ADDITIVE / isolated implementation.
+#
+#
+# -------------------------------------------------------------------------
+# 56. SUGGESTED CODE FOOTPRINT
+# -------------------------------------------------------------------------
+#
+# Prefer something approximately:
+#
+# toolkit/config_modules.py
+#     + V7-B config fields
+#
+# toolkit/lora_special.py
+#     + text-encoder-specific child-module target support
+#     + instantiate token-aware TE LoRA class when requested
+#
+# new:
+# toolkit/token_aware_lora.py
+#     + TokenAwareLoRAModule
+#     + runtime token-mask context
+#
+# Ideogram pipeline/tokenizer path
+#     + robust trigger-span mask generation
+#     + optional anchor prompt construction
+#
+# SDTrainer.py
+#     + teacher anchor encode
+#     + L_anchor
+#     + total-loss integration
+#
+# Avoid broad changes to:
+#
+#     generic network_mixins.py
+#
+# if a subclass can do the job.
+#
+#
+# -------------------------------------------------------------------------
+# 57. TESTS REQUIRED BEFORE REAL TRAINING
+# -------------------------------------------------------------------------
+#
+# Unit:
+#
+# [ ] literal trigger character span → correct token mask
+#
+# [ ] multiple trigger occurrences → all detected
+#
+# [ ] prompt without trigger → zero mask
+#
+# [ ] painting replacement preserves surrounding text
+#
+# [ ] trigger and painting span pairing correct
+#
+# [ ] TokenAwareLoRAModule masks residual only
+#
+# [ ] non-trigger residual exactly zero
+#
+# [ ] K/V only are adapted
+#
+# [ ] q_proj/o_proj untouched
+#
+#
+# Integration:
+#
+# [ ] Qwen base frozen
+#
+# [ ] V3 frozen
+#
+# [ ] V7-B optimizer contains only 72 K/V LoRA modules
+#
+# [ ] student encode grad works
+#
+# [ ] teacher encode has no grad
+#
+# [ ] scalar TE multiplier fix still works with batch=2
+#
+# [ ] Qwen checkpointing works
+#
+# [ ] anchor loss finite
+#
+# [ ] backward gives V7-B gradients
+#
+#
+# -------------------------------------------------------------------------
+# 58. FIRST TRAINING KILL GATE
+# -------------------------------------------------------------------------
+#
+# Run only enough to obtain:
+#
+#     step 25 / 50 / 100
+#
+# At step 100, stop and evaluate.
+#
+# Continue only if at least one of these is clearly true:
+#
+#     trigger materially changes conditioning;
+#     trigger materially changes V3 output;
+#     anchor similarity is moving meaningfully;
+#     novel-prompt target activation starts appearing.
+#
+# If literally nothing differs from V3-only:
+#
+#     do not continue to 2000.
+#
+#
+# -------------------------------------------------------------------------
+# 59. WHAT SUCCESS WOULD LOOK LIKE
+# -------------------------------------------------------------------------
+#
+# Best-case V7-B:
+#
+# WITHOUT trigger:
+#
+#     normal V3/base behavior
+#
+# WITH <r1X1dOn9mA2>:
+#
+#     target style strongly activates
+#
+# ON novel content:
+#
+#     target style persists
+#
+# WITH competing style words:
+#
+#     trigger meaningfully resists competing semantics
+#
+# AND:
+#
+#     content/prompt structure remains usable.
+#
+#
+# -------------------------------------------------------------------------
+# 60. RESEARCH REFERENCE
+# -------------------------------------------------------------------------
+#
+# The conceptual inspiration is TARA:
+#
+#     Token-Aware LoRA for Composable Personalization in Diffusion Models
+#     Peng et al.
+#     arXiv:2508.08812 / AAAI 2026
+#
+# Relevant concepts:
+#
+#     Token Focus Masking
+#     Token Alignment Loss
+#
+# But this project is an adaptation for:
+#
+#     Ideogram4
+#     Qwen3-VL
+#     single-stream diffusion conditioning
+#     style activation
+#
+# not a direct SD/SDXL reproduction.
+#
+#
+# -------------------------------------------------------------------------
+# 61. FINAL DESIGN SUMMARY
+# -------------------------------------------------------------------------
+#
+# V3:
+#
+#     frozen visual style carrier
+#
+# V7-B:
+#
+#     Qwen K/V LoRA
+#     rank 32
+#     trigger-token residual masking
+#     only active on <r1X1dOn9mA2> token spans
+#
+# Anchor:
+#
+#     "painting"
+#
+# Loss:
+#
+#     actual dataset diffusion loss
+#     +
+#     TAL-like trigger → painting K alignment
+#
+# Training:
+#
+#     no trainable transformer LoRA
+#
+# Inference:
+#
+#     trigger-aware Qwen runtime masking REQUIRED
+#
+# Evaluation:
+#
+#     novel prompts are the main criterion
+#     not training-image reconstruction
+#
+# Key philosophical goal:
+#
+#     Do not merely teach the model the style again.
+#     Teach the random trigger to become the CONTROL SIGNAL for the style
+#     that V3 already knows how to render.
+#
+# END HANDOFF
