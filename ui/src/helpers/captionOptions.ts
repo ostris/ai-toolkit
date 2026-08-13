@@ -110,7 +110,7 @@ export const captionerTypes: CaptionOption[] = [
         label: 'Qwen3-Omni',
         group: 'video',
         defaults: {
-            'config.process[0].caption.model_name_or_path': ['ostris/Qwen3-Omni-30B-A3B-Instruct', defaultNameOrPath],
+            'config.process[0].caption.model_name_or_path': ['ai-toolkit/Qwen3-Omni-30B-A3B-Instruct', defaultNameOrPath],
             'config.process[0].caption.extensions': [extensionsVideo, defaultExtensions],
             'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
             'config.process[0].caption.max_res': [512, undefined],
@@ -119,7 +119,9 @@ export const captionerTypes: CaptionOption[] = [
             'config.process[0].caption.compile': [true, false],
         },
         name_or_path_options: [
-            { value: 'ostris/Qwen3-Omni-30B-A3B-Instruct', label: 'ostris/Qwen3-Omni-30B-A3B-Instruct' },
+            { value: 'ai-toolkit/Qwen3-Omni-30B-A3B-Instruct', label: 'ai-toolkit/Qwen3-Omni-30B-A3B-Instruct' },
+            { value: 'ai-toolkit/Qwen3-Omni-30B-A3B-Thinking', label: 'ai-toolkit/Qwen3-Omni-30B-A3B-Thinking' },
+            { value: 'ai-toolkit/Huihui-Qwen3-Omni-30B-A3B-Thinking-abliterated', label: 'ai-toolkit/Huihui-Qwen3-Omni-30B-A3B-Thinking-abliterated' },
         ],
         captionPrompts: {
             'General': defaultVideoCaptionPrompt,
@@ -131,6 +133,7 @@ export const captionerTypes: CaptionOption[] = [
             'caption.max_new_tokens',
             'caption.batch_size',
             'caption.layer_offloading',
+            'caption.thinking',
         ],
     },
     {

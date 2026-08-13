@@ -1,4 +1,4 @@
-from transformers import AutoConfig, AutoProcessor
+from transformers import AutoConfig, AutoProcessor, StoppingCriteria
 from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerForConditionalGeneration,
 )
@@ -32,12 +32,60 @@ VIDEO_FPS = 2
 # every video; the real per-caption budget is enforced by a stopping criterion
 STATIC_MAX_LENGTH = 8192
 
-# single-file comfy-format checkpoint (thinker only, convrot8 int8) produced by
-# scripts/convert_vllm_to_comfy.py. This is always what we load — never the
-# original bf16 shards.
-CONVROT_FILENAME = "qwen3_omni_30b_a3b_instruct_thinker_convrot8.safetensors"
-# config + processor (tokenizer, feature extractors) come from the original repo
-BASE_REPO = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+# reasoning cap for thinking models: the visible caption gets the full
+# max_new_tokens budget only after </think> closes
+MAX_THINKING_TOKENS = 4096
+
+# single-file comfy-format checkpoints (thinker only, convrot8 int8) produced
+# by scripts/convert_vllm_to_comfy.py. This is always what we load — never the
+# original bf16 shards. base_repo supplies config + processor (tokenizer,
+# feature extractors, chat template — thinking models need the thinking
+# template, which the finetune repos don't always ship).
+CONVROT_MODELS = {
+    "ai-toolkit/Qwen3-Omni-30B-A3B-Instruct": {
+        "filename": "qwen3_omni_30b_a3b_instruct_thinker_convrot8.safetensors",
+        "base_repo": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        "thinking": False,
+    },
+    "ai-toolkit/Qwen3-Omni-30B-A3B-Thinking": {
+        "filename": "qwen3_omni_30b_a3b_thinking_convrot8.safetensors",
+        "base_repo": "Qwen/Qwen3-Omni-30B-A3B-Thinking",
+        "thinking": True,
+    },
+    "ai-toolkit/Huihui-Qwen3-Omni-30B-A3B-Thinking-abliterated": {
+        "filename": "huihui_qwen3_omni_30b_a3b_thinking_abliterated_convrot8.safetensors",
+        "base_repo": "Qwen/Qwen3-Omni-30B-A3B-Thinking",
+        "thinking": True,
+    },
+}
+DEFAULT_CONVROT_MODEL = "ai-toolkit/Qwen3-Omni-30B-A3B-Instruct"
+
+
+class BatchThinkingBudgetCriteria(StoppingCriteria):
+    """Per-row thinking budget: let each sequence reason freely, then count
+    max_new_tokens from the token after its </think> so the visible caption
+    gets the full budget regardless of how long the reasoning ran. Rows that
+    never close their think block are bounded by the accompanying
+    MaxLengthCriteria / max_new_tokens ceiling."""
+
+    def __init__(self, think_end_token_id: int, max_new_tokens: int):
+        self.think_end_token_id = think_end_token_id
+        self.max_new_tokens = max_new_tokens
+        self.answer_start = None
+
+    def __call__(self, input_ids, scores, **kwargs):
+        batch, length = input_ids.shape
+        if self.answer_start is None:
+            self.answer_start = torch.full(
+                (batch,), -1, dtype=torch.long, device=input_ids.device
+            )
+        newly_closed = (input_ids[:, -1] == self.think_end_token_id) & (
+            self.answer_start < 0
+        )
+        self.answer_start[newly_closed] = length
+        return (self.answer_start >= 0) & (
+            length - self.answer_start >= self.max_new_tokens
+        )
 
 
 class OstrisQwen3OmniThinker(Qwen3OmniMoeThinkerForConditionalGeneration):
@@ -442,40 +490,54 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         MODELS_PATH/text_encoders."""
         from toolkit.paths import MODELS_PATH
 
+        def info_for_filename(filename):
+            for info in CONVROT_MODELS.values():
+                if info["filename"] == filename:
+                    return info
+            return CONVROT_MODELS[DEFAULT_CONVROT_MODEL]
+
         name_or_path = self.caption_config.model_name_or_path
         if os.path.isfile(name_or_path):
+            self._model_info = info_for_filename(os.path.basename(name_or_path))
             return name_or_path
+
+        model_info = CONVROT_MODELS.get(name_or_path, CONVROT_MODELS[DEFAULT_CONVROT_MODEL])
+        filename = model_info["filename"]
+
         if os.path.isdir(name_or_path):
-            candidate = os.path.join(name_or_path, CONVROT_FILENAME)
+            candidate = os.path.join(name_or_path, filename)
             if os.path.exists(candidate):
+                self._model_info = model_info
                 return candidate
             files = [f for f in os.listdir(name_or_path) if f.endswith(".safetensors")]
             if len(files) == 1:
+                self._model_info = info_for_filename(files[0])
                 return os.path.join(name_or_path, files[0])
             raise FileNotFoundError(
-                f"No {CONVROT_FILENAME} (or single .safetensors) in {name_or_path}"
+                f"No {filename} (or single .safetensors) in {name_or_path}"
             )
 
+        self._model_info = model_info
         te_dir = os.path.join(MODELS_PATH, "text_encoders")
         for candidate in (
-            os.path.join(te_dir, CONVROT_FILENAME),
-            os.path.join(MODELS_PATH, CONVROT_FILENAME),
+            os.path.join(te_dir, filename),
+            os.path.join(MODELS_PATH, filename),
         ):
             if os.path.exists(candidate):
                 return candidate
         if os.path.isdir(te_dir):
             for dirpath, dirnames, filenames in os.walk(te_dir):
                 dirnames.sort()
-                if CONVROT_FILENAME in filenames:
-                    return os.path.join(dirpath, CONVROT_FILENAME)
+                if filename in filenames:
+                    return os.path.join(dirpath, filename)
 
         import huggingface_hub
 
         self.print_and_status_update(
-            f"Downloading {CONVROT_FILENAME} from {name_or_path} into {te_dir}"
+            f"Downloading {filename} from {name_or_path} into {te_dir}"
         )
         return huggingface_hub.hf_hub_download(
-            repo_id=name_or_path, filename=CONVROT_FILENAME, local_dir=te_dir
+            repo_id=name_or_path, filename=filename, local_dir=te_dir
         )
 
     def load_model(self):
@@ -483,9 +545,16 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         from safetensors.torch import load_file
 
         ckpt_path = self._resolve_checkpoint()
-        self.print_and_status_update("Loading Qwen3-Omni thinker (convrot8)")
+        base_repo = self._model_info["base_repo"]
+        self.is_thinking_model = self._model_info["thinking"]
+        # thinking models reason by default; the template's enable_thinking=False
+        # (an empty <think></think> block) suppresses it unless the user asked
+        self.thinking_enabled = self.is_thinking_model and self.caption_config.thinking
+        self.print_and_status_update(
+            f"Loading Qwen3-Omni thinker (convrot8, base {base_repo})"
+        )
 
-        config = AutoConfig.from_pretrained(BASE_REPO)
+        config = AutoConfig.from_pretrained(base_repo)
         with init_empty_weights(include_buffers=False):
             model = OstrisQwen3OmniThinker(config.thinker_config)
         model.eval()
@@ -535,8 +604,9 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         # falls into repetition loops on long captions (A-B-A-B forever on
         # low-motion clips). Qwen's recommended sampling for the Qwen3 family:
         model.generation_config.do_sample = True
-        model.generation_config.temperature = 0.7
-        model.generation_config.top_p = 0.8
+        # Qwen's recommended sampling: instruct 0.7/0.8, thinking 0.6/0.95
+        model.generation_config.temperature = 0.6 if self.is_thinking_model else 0.7
+        model.generation_config.top_p = 0.95 if self.is_thinking_model else 0.8
         model.generation_config.top_k = 20
         model.generation_config.repetition_penalty = 1.05
 
@@ -578,7 +648,7 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                 ignore_modules=ignore,
             )
         self.model.to(self.device_torch)
-        self.processor = AutoProcessor.from_pretrained(BASE_REPO)
+        self.processor = AutoProcessor.from_pretrained(self._model_info["base_repo"])
         flush()
 
     def _build_messages(self, _file_path: str):
@@ -619,8 +689,14 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                 audio = a
         except Exception:
             pass
+        template_kwargs = {}
+        if self.is_thinking_model and not self.thinking_enabled:
+            template_kwargs["enable_thinking"] = False
         text = self.processor.apply_chat_template(
-            self._build_messages(file_path), tokenize=False, add_generation_prompt=True
+            self._build_messages(file_path),
+            tokenize=False,
+            add_generation_prompt=True,
+            **template_kwargs,
         )
         item = {"file": file_path, "frames": frames, "audio": audio, "text": text}
         if self.caption_config.batch_size <= 1:
@@ -653,33 +729,46 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         # under static cache, generate hands the forward a prepared 4D mask;
         # the true 2D padding mask is needed for the prefill rope index
         self.model._pad_mask_2d = inputs.get("attention_mask", None)
-        gen_kwargs = {}
-        if self.model.generation_config.cache_implementation == "static":
-            # constant max_length -> constant cache shape -> no recompiles;
-            # the actual budget comes from the stopping criterion
-            from transformers.generation import MaxLengthCriteria, StoppingCriteriaList
-
-            input_len = inputs["input_ids"].shape[1]
-            gen_kwargs["max_length"] = STATIC_MAX_LENGTH
-            gen_kwargs["stopping_criteria"] = StoppingCriteriaList(
-                [
-                    MaxLengthCriteria(
-                        max_length=input_len + self.caption_config.max_new_tokens
-                    )
-                ]
-            )
-        else:
-            gen_kwargs["max_new_tokens"] = self.caption_config.max_new_tokens
         generated_ids = self.model.generate(
             **inputs,
             use_audio_in_video=use_audio,
-            **gen_kwargs,
+            **self._gen_kwargs(inputs["input_ids"].shape[1]),
         )
         trimmed = generated_ids[:, inputs["input_ids"].shape[1] :]
         captions = self.processor.batch_decode(
             trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
+        # thinking models emit reasoning first; keep only what follows it
+        captions = [c.split("</think>")[-1] if "</think>" in c else c for c in captions]
         return [c.strip() for c in captions]
+
+    def _gen_kwargs(self, input_len: int) -> dict:
+        """Generation length controls. Thinking models get their reasoning
+        budget on top: max_new_tokens starts counting after </think> closes.
+        Under compiled decode, max_length stays constant (fixed cache shape)
+        and the real budget lives in the stopping criteria."""
+        from transformers.generation import MaxLengthCriteria, StoppingCriteriaList
+
+        max_new = self.caption_config.max_new_tokens
+        compiled = self.model.generation_config.cache_implementation == "static"
+        criteria = []
+        if self.thinking_enabled:
+            think_end_id = self.processor.tokenizer.convert_tokens_to_ids("</think>")
+            if think_end_id is not None:
+                criteria.append(BatchThinkingBudgetCriteria(think_end_id, max_new))
+            budget = MAX_THINKING_TOKENS + max_new
+        else:
+            budget = max_new
+        if compiled:
+            criteria.append(MaxLengthCriteria(max_length=input_len + budget))
+            return {
+                "max_length": STATIC_MAX_LENGTH,
+                "stopping_criteria": StoppingCriteriaList(criteria),
+            }
+        kwargs = {"max_new_tokens": budget}
+        if criteria:
+            kwargs["stopping_criteria"] = StoppingCriteriaList(criteria)
+        return kwargs
 
     def run_caption_loop(self):
         """Batched pipeline: CPU worker threads decode/preprocess videos ahead
@@ -820,8 +909,14 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             # render the chat text only; the media goes to the processor
             # directly so the audio track is interleaved INTO the video block
             # (use_audio_in_video) instead of forming a separate audio segment
+            template_kwargs = {}
+            if self.is_thinking_model and not self.thinking_enabled:
+                template_kwargs["enable_thinking"] = False
             text = self.processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **template_kwargs,
             )
 
             # pull the audio track out of the video file; silent videos fall
@@ -857,10 +952,11 @@ class Qwen3OmniCaptioner(BaseCaptioner):
             )
             inputs = inputs.to(self.device_torch).to(self.torch_dtype)
 
+            self.model._pad_mask_2d = inputs.get("attention_mask", None)
             generated_ids = self.model.generate(
                 **inputs,
                 use_audio_in_video=use_audio,
-                max_new_tokens=self.caption_config.max_new_tokens,
+                **self._gen_kwargs(inputs["input_ids"].shape[1]),
             )
             generated_ids_trimmed = [
                 out_ids[len(in_ids) :]
@@ -872,7 +968,10 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                 clean_up_tokenization_spaces=False,
             )
 
-            return output_text[0].strip()
+            caption = output_text[0]
+            if "</think>" in caption:
+                caption = caption.split("</think>")[-1]
+            return caption.strip()
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
             traceback.print_exc()
