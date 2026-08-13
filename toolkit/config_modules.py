@@ -399,6 +399,7 @@ class TriggerSelectivePath3Config:
     def __init__(self, **kwargs):
         self.loss_type: str = kwargs.get('loss_type', 'hinge')
         self.gain_epsilon: float = float(kwargs.get('gain_epsilon', 1.0e-6))
+        self.decoy_gain_mode: str = kwargs.get('decoy_gain_mode', 'detached')
         self.margin_schedule = TriggerSelectiveMarginScheduleConfig(
             **kwargs.get('margin_schedule', {})
         )

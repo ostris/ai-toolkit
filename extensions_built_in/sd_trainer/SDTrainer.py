@@ -1501,10 +1501,24 @@ class SDTrainer(BaseSDTrainProcess):
         student_decoy_loss = per_item_mse(student_decoy, target)
         base_trigger_loss = per_item_mse(base_trigger, target)
         student_trigger_loss = per_item_mse(student_trigger, target)
-        decoy_gain = normalized_gain(student_decoy_loss, base_decoy_loss, self.trigger_selective_training.path3.gain_epsilon).detach()
-        trigger_gain = normalized_gain(student_trigger_loss, base_trigger_loss, self.trigger_selective_training.path3.gain_epsilon)
+        decoy_gain = normalized_gain(
+            student_decoy_loss,
+            base_decoy_loss,
+            self.trigger_selective_training.path3.gain_epsilon,
+        )
+        trigger_gain = normalized_gain(
+            student_trigger_loss,
+            base_trigger_loss,
+            self.trigger_selective_training.path3.gain_epsilon,
+        )
+        decoy_gain_positive = torch.relu(decoy_gain)
         margin = get_scheduled_margin(self.trigger_selective_training, self.step_num)
-        path3_per_item = trigger_advantage_hinge(trigger_gain, decoy_gain, margin)
+        path3_per_item = trigger_advantage_hinge(
+            trigger_gain,
+            decoy_gain,
+            margin,
+            self.trigger_selective_training.path3.decoy_gain_mode,
+        )
         weights = get_scheduled_loss_weights(self.trigger_selective_training, self.step_num)
         path2 = path2_per_item.mean()
         path3 = path3_per_item.mean()
@@ -1525,14 +1539,30 @@ class SDTrainer(BaseSDTrainProcess):
                 'grad_norm/path3': self._tst_gradient_norm(weighted_path3),
             }
 
-        category_counts = {}
-        category_gain_gaps = {}
+        category_names = [
+            category.name
+            for category in self.trigger_selective_training.negative_styles.categories
+        ]
+        category_counts = {category: 0 for category in category_names}
+        category_gain_gaps = {category: [] for category in category_names}
         for category, gap in zip(
             [sample.category for sample in negative_samples],
             (trigger_gain.detach() - decoy_gain).tolist(),
         ):
-            category_counts[category] = category_counts.get(category, 0) + 1
-            category_gain_gaps.setdefault(category, []).append(float(gap))
+            category_counts[category] += 1
+            category_gain_gaps[category].append(float(gap))
+        category_logs = {
+            f'negative/{category}_count': category_counts[category]
+            for category in category_names
+        }
+        category_logs.update({
+            f'gain/{category}_gap': (
+                sum(category_gain_gaps[category]) / len(category_gain_gaps[category])
+                if category_gain_gaps[category]
+                else 0.0
+            )
+            for category in category_names
+        })
         self.additional_logs.update({
             'loss/path1_raw': path1.detach().item(),
             'loss/path2_raw': path2.detach().item(),
@@ -1546,17 +1576,17 @@ class SDTrainer(BaseSDTrainProcess):
             'weight/path3': weights['path3'],
             'path3/margin': margin,
             'path3/margin_satisfied': (path3_per_item <= 0).float().mean().item(),
+            'path3/trigger_component': (-trigger_gain.detach()).mean().item(),
+            'path3/decoy_component': (
+                decoy_gain.detach().mean().item()
+                if self.trigger_selective_training.path3.decoy_gain_mode == 'detached'
+                else decoy_gain_positive.detach().mean().item()
+            ),
             'gain/trigger': trigger_gain.detach().mean().item(),
-            'gain/decoy': decoy_gain.mean().item(),
-            'gain/gap': (trigger_gain.detach() - decoy_gain).mean().item(),
-            **{
-                f'negative/{category}_count': count
-                for category, count in category_counts.items()
-            },
-            **{
-                f'gain/{category}_gap': sum(gaps) / len(gaps)
-                for category, gaps in category_gain_gaps.items()
-            },
+            'gain/decoy': decoy_gain.detach().mean().item(),
+            'gain/decoy_positive': decoy_gain_positive.detach().mean().item(),
+            'gain/gap': (trigger_gain.detach() - decoy_gain.detach()).mean().item(),
+            **category_logs,
             **gradient_logs,
         })
         if self.tst_metrics_writer is not None and self.step_num % self.trigger_selective_training.logging.log_every == 0:

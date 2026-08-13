@@ -91,7 +91,11 @@ def validate_trigger_selective_config(
         raise ValueError('trigger_selective_training category probabilities must sum to 1.0')
 
     if config.path3.loss_type != 'hinge':
-        raise ValueError("trigger_selective_training path3.loss_type must be 'hinge' in v1")
+        raise ValueError("trigger_selective_training path3.loss_type must be 'hinge'")
+    if config.path3.decoy_gain_mode not in {'detached', 'positive_clamped'}:
+        raise ValueError(
+            "trigger_selective_training path3.decoy_gain_mode must be 'detached' or 'positive_clamped'"
+        )
     if not math.isfinite(config.path3.gain_epsilon) or config.path3.gain_epsilon <= 0:
         raise ValueError('trigger_selective_training path3.gain_epsilon must be positive')
 
@@ -228,8 +232,16 @@ def trigger_advantage_hinge(
     trigger_gain: torch.Tensor,
     decoy_gain: torch.Tensor,
     margin: float,
+    decoy_gain_mode: str = 'detached',
 ) -> torch.Tensor:
-    return torch.relu(torch.as_tensor(margin, device=trigger_gain.device, dtype=trigger_gain.dtype) - trigger_gain + decoy_gain.detach())
+    if decoy_gain_mode == 'detached':
+        decoy_component = decoy_gain.detach()
+    elif decoy_gain_mode == 'positive_clamped':
+        decoy_component = torch.relu(decoy_gain)
+    else:
+        raise ValueError(f'unsupported decoy gain mode: {decoy_gain_mode}')
+    margin_tensor = torch.as_tensor(margin, device=trigger_gain.device, dtype=trigger_gain.dtype)
+    return torch.relu(margin_tensor - trigger_gain + decoy_component)
 
 
 def shared_loss_target(

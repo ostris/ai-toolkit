@@ -78,6 +78,41 @@ class TriggerSelectiveTrainingTest(unittest.TestCase):
         self.assertIsNotNone(trigger_gain.grad)
         self.assertIsNone(student_loss.grad)
 
+    def test_positive_clamped_decoy_gain_keeps_only_positive_gradient(self):
+        student_loss = torch.tensor([2.0], requires_grad=True)
+        base_loss = torch.tensor([4.0])
+        decoy_gain = normalized_gain(student_loss, base_loss, 1.0e-6)
+        trigger_gain = torch.tensor([0.01], requires_grad=True)
+        loss = trigger_advantage_hinge(
+            trigger_gain,
+            decoy_gain,
+            0.1,
+            decoy_gain_mode='positive_clamped',
+        ).sum()
+        loss.backward()
+        self.assertIsNotNone(trigger_gain.grad)
+        self.assertIsNotNone(student_loss.grad)
+        self.assertLess(student_loss.grad.item(), 0.0)
+
+    def test_positive_clamped_decoy_gain_stops_below_base(self):
+        student_loss = torch.tensor([5.0], requires_grad=True)
+        base_loss = torch.tensor([4.0])
+        decoy_gain = normalized_gain(student_loss, base_loss, 1.0e-6)
+        trigger_gain = torch.tensor([0.01], requires_grad=True)
+        loss = trigger_advantage_hinge(
+            trigger_gain,
+            decoy_gain,
+            0.1,
+            decoy_gain_mode='positive_clamped',
+        ).sum()
+        loss.backward()
+        self.assertIsNotNone(student_loss.grad)
+        self.assertEqual(student_loss.grad.item(), 0.0)
+
+    def test_validation_accepts_v2_decoy_gain_mode(self):
+        self.config.path3.decoy_gain_mode = 'positive_clamped'
+        validate_trigger_selective_config(self.config, '<trigger>')
+
     def test_differential_guidance_target_is_detached_and_shared(self):
         class _Config:
             do_guidance_loss = True
