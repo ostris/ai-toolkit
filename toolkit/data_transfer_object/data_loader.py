@@ -169,6 +169,7 @@ class FileItemDTO(
 
         # self.caption_path: str = kwargs.get('caption_path', None)
         self.raw_caption: str = kwargs.get("raw_caption", None)
+        self.caption_template: str = kwargs.get("caption_template", None)
         # we scale first, then crop
         self.scale_to_width: int = kwargs.get(
             "scale_to_width", int(self.width * self.dataset_config.scale)

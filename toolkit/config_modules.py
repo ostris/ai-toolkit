@@ -372,6 +372,71 @@ ContentOrStyleType = Literal['balanced', 'style', 'content']
 LossTarget = Literal['noise', 'source', 'unaugmented', 'differential_noise']
 
 
+class TriggerSelectiveNegativeStyleCategoryConfig:
+    def __init__(self, **kwargs):
+        self.name: str = kwargs.get('name', '')
+        self.probability: float = float(kwargs.get('probability', 0.0))
+        self.phrases: List[str] = kwargs.get('phrases', [])
+
+
+class TriggerSelectiveNegativeStylesConfig:
+    def __init__(self, **kwargs):
+        self.expected_category_count: Optional[int] = kwargs.get('expected_category_count', None)
+        self.sample_scope: str = kwargs.get('sample_scope', 'per_item')
+        categories = kwargs.get('categories', [])
+        self.categories: List[TriggerSelectiveNegativeStyleCategoryConfig] = [
+            TriggerSelectiveNegativeStyleCategoryConfig(**category) for category in categories
+        ]
+
+
+class TriggerSelectiveMarginScheduleConfig:
+    def __init__(self, **kwargs):
+        self.interpolation: str = kwargs.get('interpolation', 'smoothstep')
+        self.keyframes: List[Dict] = kwargs.get('keyframes', [])
+
+
+class TriggerSelectivePath3Config:
+    def __init__(self, **kwargs):
+        self.loss_type: str = kwargs.get('loss_type', 'hinge')
+        self.gain_epsilon: float = float(kwargs.get('gain_epsilon', 1.0e-6))
+        self.margin_schedule = TriggerSelectiveMarginScheduleConfig(
+            **kwargs.get('margin_schedule', {})
+        )
+
+
+class TriggerSelectiveLossScheduleConfig:
+    def __init__(self, **kwargs):
+        self.interpolation: str = kwargs.get('interpolation', 'smoothstep')
+        self.normalize_weights: bool = kwargs.get('normalize_weights', True)
+        self.keyframes: List[Dict] = kwargs.get('keyframes', [])
+
+
+class TriggerSelectiveLoggingConfig:
+    def __init__(self, **kwargs):
+        self.log_every: int = int(kwargs.get('log_every', 25))
+        self.log_category_stats: bool = kwargs.get('log_category_stats', True)
+        self.log_gain_stats: bool = kwargs.get('log_gain_stats', True)
+        self.debug_gradient_contributions: bool = kwargs.get('debug_gradient_contributions', False)
+        self.gradient_diagnostic_steps: List[int] = kwargs.get(
+            'gradient_diagnostic_steps', [1, 10, 25, 50, 100, 250, 500, 1000, 1500]
+        )
+        self.metrics_filename: str = kwargs.get('metrics_filename', 'tst_metrics.jsonl')
+
+
+class TriggerSelectiveTrainingConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.require_trigger_placeholder: bool = kwargs.get('require_trigger_placeholder', True)
+        self.negative_styles = TriggerSelectiveNegativeStylesConfig(
+            **kwargs.get('negative_styles', {})
+        )
+        self.path3 = TriggerSelectivePath3Config(**kwargs.get('path3', {}))
+        self.loss_schedule = TriggerSelectiveLossScheduleConfig(
+            **kwargs.get('loss_schedule', {})
+        )
+        self.logging = TriggerSelectiveLoggingConfig(**kwargs.get('logging', {}))
+
+
 class TrainConfig:
     def __init__(self, **kwargs):
         self.noise_scheduler = kwargs.get('noise_scheduler', 'ddpm')
@@ -1472,7 +1537,10 @@ def validate_configs(
     train_config: TrainConfig,
     model_config: ModelConfig,
     save_config: SaveConfig,
-    dataset_configs: List[DatasetConfig]
+    dataset_configs: List[DatasetConfig],
+    trigger_selective_training: Optional[TriggerSelectiveTrainingConfig] = None,
+    trigger_word: Optional[str] = None,
+    network_config: Optional[NetworkConfig] = None,
 ):
     if model_config.is_flux:
         if save_config.save_format != 'diffusers':
@@ -1505,6 +1573,30 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
-    
+
+    if trigger_selective_training is not None and trigger_selective_training.enabled:
+        if train_config.diff_output_preservation:
+            raise ValueError(
+                'trigger_selective_training cannot be combined with legacy diff_output_preservation in v1.'
+            )
+        if model_config.arch != 'ideogram4':
+            raise ValueError('trigger_selective_training v1 is restricted to model.arch: ideogram4')
+        if network_config is None or network_config.type != 'lora':
+            raise ValueError('trigger_selective_training v1 requires network.type: lora')
+        if train_config.train_text_encoder:
+            raise ValueError('trigger_selective_training v1 does not support training the text encoder')
+        if train_config.cache_text_embeddings or any(dataset.cache_text_embeddings for dataset in dataset_configs):
+            raise ValueError('trigger_selective_training requires dynamic prompt encoding; disable text embedding caching')
+        if train_config.unload_text_encoder:
+            raise ValueError('trigger_selective_training requires the text encoder to remain loaded')
+        if train_config.do_guidance_loss or train_config.train_turbo or train_config.loss_target != 'noise':
+            raise ValueError(
+                'trigger_selective_training v1 requires do_guidance_loss=false, train_turbo=false and loss_target=noise'
+            )
+        if train_config.single_item_batching:
+            raise ValueError('trigger_selective_training v1 does not support single_item_batching')
+        from toolkit.trigger_selective_training import validate_trigger_selective_config
+        validate_trigger_selective_config(trigger_selective_training, trigger_word)
+
     if train_config.batch_size > 1 and any(dataset_config.auto_frame_count for dataset_config in dataset_configs):
         raise ValueError("Cannot use batch size greater than 1 with auto_frame_count. Please set batch_size to 1 or auto_frame_count to False.")
