@@ -24,6 +24,7 @@ from toolkit.trigger_binding_artifacts import (
     save_artifact,
     save_checkpoint_manifest,
     sha256_bytes,
+    tensor_sha256,
     source_fingerprint,
 )
 
@@ -72,6 +73,34 @@ class TriggerBindingArtifactsTest(unittest.TestCase):
                             len(loaded_manifest["tensors"][key]["sha256"]),
                             64,
                         )
+
+    def test_tensor_hash_supports_bfloat16_scalars_empty_and_noncontiguous_tensors(self):
+        scalar = torch.tensor(1.25, dtype=torch.bfloat16)
+        vector = scalar.reshape(1)
+        self.assertEqual(tensor_sha256(scalar), tensor_sha256(vector))
+
+        empty = torch.empty(0, dtype=torch.bfloat16)
+        self.assertEqual(tensor_sha256(empty), sha256_bytes(b""))
+
+        base = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        noncontiguous = base.transpose(0, 1)
+        self.assertFalse(noncontiguous.is_contiguous())
+        self.assertEqual(
+            tensor_sha256(noncontiguous),
+            tensor_sha256(noncontiguous.contiguous()),
+        )
+
+    def test_artifact_round_trip_supports_bfloat16_scalar_tensor(self):
+        tensors = {
+            "adapter.scale": torch.tensor(1.0, dtype=torch.bfloat16),
+            "adapter.weight": torch.ones(2, 2, dtype=torch.bfloat16),
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path, manifest = self._save(temp_dir, tensors=tensors)
+            loaded, loaded_manifest = load_artifact(path, expected_type="te_adapter")
+            self.assertEqual(manifest, loaded_manifest)
+            self.assertEqual(loaded["adapter.scale"].shape, torch.Size([]))
+            self.assertTrue(torch.equal(loaded["adapter.scale"], tensors["adapter.scale"]))
 
     def test_fingerprints_are_canonical_and_order_independent(self):
         self.assertEqual(config_fingerprint({"a": 1, "b": 2}), config_fingerprint({"b": 2, "a": 1}))

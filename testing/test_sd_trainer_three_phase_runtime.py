@@ -3,6 +3,7 @@ import contextlib
 import importlib
 import inspect
 import os
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -19,8 +20,8 @@ def _load_runtime_methods():
     names = {
         'three_phase_enabled', '_load_trigger_binding_modules', '_call_supported', '_first_callable',
         '_phase_config', '_activator_component_flags', '_configure_phase_trainability',
-        'hook_add_extra_train_params', '_activator_mode', '_calculate_trigger_binding_loss',
-        '_install_trigger_binding_prompt_encoder', 'encode_static_prompt',
+        'hook_add_extra_train_params', '_activator_mode', '_write_trigger_binding_metrics',
+        '_calculate_trigger_binding_loss', '_install_trigger_binding_prompt_encoder', 'encode_static_prompt',
     }
     selected = [node for node in class_node.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
     module = ast.Module(body=[ast.ClassDef(name='SDTrainerRuntimeHarness', bases=[], keywords=[], body=selected, decorator_list=[])], type_ignores=[])
@@ -196,6 +197,26 @@ class ThreePhaseRuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'every training caption must contain'):
             trainer.sd.get_prompt_embeds(['caption without the required token'])
 
+    def test_phase_metrics_are_written_independently_and_once_per_step(self):
+        trainer = self._trainer('a1')
+        trainer.step_num = 7
+        trainer._trigger_binding_last_metrics = {'gain': 0.25}
+        trainer._trigger_binding_last_metrics_written_step = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trainer.save_root = temp_dir
+            trainer.three_phase_trigger_training.run_root = temp_dir
+            trainer.three_phase_trigger_training.artifacts = SimpleNamespace(
+                phase_a1=SimpleNamespace(metrics_file='metrics.jsonl'),
+            )
+            trainer._write_trigger_binding_metrics(torch.tensor(0.5))
+            trainer._write_trigger_binding_metrics(torch.tensor(0.75))
+            metrics_path = Path(temp_dir) / 'phase_a1' / 'metrics.jsonl'
+            records = metrics_path.read_text(encoding='utf-8').splitlines()
+            self.assertEqual(len(records), 1)
+            self.assertIn('"step": 7', records[0])
+            self.assertIn('"loss": 0.5', records[0])
+            self.assertIn('"gain": 0.25', records[0])
+
     def test_a_phase_loss_receives_shared_latent_noise_timestep_and_target(self):
         trainer = self._trainer('a1')
         trainer.device_torch = torch.device('cpu')
@@ -223,6 +244,7 @@ class ThreePhaseRuntimeTest(unittest.TestCase):
         trainer._trigger_binding_modules = {
             'losses': types.SimpleNamespace(calculate_trigger_binding_losses=fake_losses)
         }
+        trainer._write_trigger_binding_metrics = lambda _loss: None
         loss = trainer._calculate_trigger_binding_loss(
             noisy, noise, timesteps, batch, {}, 1.0, torch.float32
         )

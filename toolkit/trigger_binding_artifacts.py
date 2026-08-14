@@ -129,7 +129,7 @@ def to_json_compatible(value: Any) -> Any:
         return {"__type__": "torch.dtype", "value": str(value).removeprefix("torch.")}
     if isinstance(value, torch.Tensor):
         tensor = value.detach().cpu().contiguous()
-        raw = tensor.view(torch.uint8).numpy().tobytes()
+        raw = _tensor_bytes(tensor)
         return {
             "__type__": "torch.Tensor",
             "dtype": str(tensor.dtype).removeprefix("torch."),
@@ -207,7 +207,13 @@ def decode_rng_state(encoded: Any) -> Any:
 
 
 def _tensor_bytes(tensor: torch.Tensor) -> bytes:
-    return tensor.detach().cpu().contiguous().view(torch.uint8).numpy().tobytes()
+    normalized = tensor.detach().cpu().contiguous()
+    if normalized.numel() == 0:
+        return b""
+    # PyTorch cannot reinterpret a zero-dimensional tensor as a dtype with a
+    # different element size. Flattening preserves the exact storage bytes and
+    # also handles BF16, scalar adapter scales, and non-contiguous inputs.
+    return normalized.reshape(-1).view(torch.uint8).numpy().tobytes()
 
 
 def tensor_sha256(tensor: torch.Tensor) -> str:

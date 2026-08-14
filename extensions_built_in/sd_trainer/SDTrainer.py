@@ -119,6 +119,7 @@ class SDTrainer(BaseSDTrainProcess):
         self._trigger_binding_initial_parameters = {}
         self._trigger_binding_prompt_encoder = None
         self._trigger_binding_last_metrics = {}
+        self._trigger_binding_last_metrics_written_step = None
 
         self.dfe: Optional[DiffusionFeatureExtractor] = None
         self.unconditional_embeds = None
@@ -1757,6 +1758,33 @@ class SDTrainer(BaseSDTrainProcess):
                     setter(previous)
         return runtime_context()
 
+    def _write_trigger_binding_metrics(self, loss=None):
+        if not self.three_phase_enabled or self.runtime_phase not in {'a1', 'a2'}:
+            return
+        if self._trigger_binding_last_metrics_written_step == self.step_num:
+            return
+        artifact_config = getattr(
+            self.three_phase_trigger_training.artifacts,
+            f'phase_{self.runtime_phase}',
+        )
+        phase_root = os.path.join(
+            self.three_phase_trigger_training.run_root or self.save_root,
+            f'phase_{self.runtime_phase}',
+        )
+        metrics_path = os.path.join(phase_root, artifact_config.metrics_file)
+        os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+        record = {
+            'phase': self.runtime_phase,
+            'step': self.step_num,
+            'metrics': self._trigger_binding_last_metrics,
+        }
+        if loss is not None:
+            record['loss'] = float(loss.detach().item() if torch.is_tensor(loss) else loss)
+        import json
+        with open(metrics_path, 'a', encoding='utf-8') as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + '\n')
+        self._trigger_binding_last_metrics_written_step = self.step_num
+
     def _calculate_trigger_binding_loss(
         self,
         noisy_latents,
@@ -1875,6 +1903,7 @@ class SDTrainer(BaseSDTrainProcess):
             if isinstance(value, (int, float)):
                 self.additional_logs[f'phase/{self.runtime_phase}/{key}'] = float(value)
         self.additional_logs[f'phase/{self.runtime_phase}/loss'] = float(loss.detach().item())
+        self._write_trigger_binding_metrics(loss)
         return loss
 
     def _encode_tst_prompt_variants(self, batch, trigger_prompts, decoy_prompts, dtype):
@@ -3131,17 +3160,6 @@ class SDTrainer(BaseSDTrainProcess):
                         'parameter_change_proof': proof,
                     },
                 )
-        metrics_path = os.path.join(phase_root, artifact_config.metrics_file)
-        os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
-        with open(metrics_path, 'a', encoding='utf-8') as handle:
-            import json
-            handle.write(json.dumps({
-                'phase': self.runtime_phase,
-                'step': self.step_num,
-                'metrics': self._trigger_binding_last_metrics,
-                'parameter_change_proof': proof,
-            }, sort_keys=True) + '\n')
-
     def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
         if isinstance(batch, list):
             batch_list = batch
