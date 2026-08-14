@@ -388,8 +388,13 @@ class SDTrainer(BaseSDTrainProcess):
         self._trigger_binding_prompt_encoder = original
 
         def encode_with_binding(sd_model, prompt):
-            if not self.three_phase_enabled or self.runtime_phase == 'b':
-                return original(prompt)
+            runtime_mode = getattr(sd_model, 'text_activator_runtime_mode', None)
+            if (
+                not self.three_phase_enabled
+                or self.runtime_phase == 'b'
+                or runtime_mode == 'activator_bypass'
+            ):
+                return original(prompt, runtime_mode=runtime_mode)
             prompts = [prompt] if isinstance(prompt, str) else list(prompt)
             runtime = modules['runtime']
             batch = runtime.bind_trigger_batch(
@@ -467,14 +472,14 @@ class SDTrainer(BaseSDTrainProcess):
         return control_image
 
     def encode_static_prompt(self, prompt, **kwargs):
-        # static embeds (blank/trigger/uncond/DOP class) are always plain text.
-        # Some models (edit models) cannot encode a prompt without control images
-        # and raise, only then fall back to a blank control image. Real errors
-        # surface on the fallback call.
-        try:
-            return self.sd.encode_prompt(prompt, **kwargs)
-        except Exception:
-            return self.sd.encode_prompt(prompt, control_images=self.get_blank_control_image(), **kwargs)
+        # Static embeds are infrastructure prompts rather than trigger-bearing
+        # dataset captions, so the text activator must stay bypassed for both
+        # the primary encode and the edit-model control-image fallback.
+        with self._activator_mode('activator_bypass'):
+            try:
+                return self.sd.encode_prompt(prompt, **kwargs)
+            except Exception:
+                return self.sd.encode_prompt(prompt, control_images=self.get_blank_control_image(), **kwargs)
     
     def cache_sample_prompts(self):
         if self.train_config.disable_sampling:

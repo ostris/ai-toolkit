@@ -20,6 +20,7 @@ def _load_runtime_methods():
         'three_phase_enabled', '_load_trigger_binding_modules', '_call_supported', '_first_callable',
         '_phase_config', '_activator_component_flags', '_configure_phase_trainability',
         'hook_add_extra_train_params', '_activator_mode', '_calculate_trigger_binding_loss',
+        '_install_trigger_binding_prompt_encoder', 'encode_static_prompt',
     }
     selected = [node for node in class_node.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
     module = ast.Module(body=[ast.ClassDef(name='SDTrainerRuntimeHarness', bases=[], keywords=[], body=selected, decorator_list=[])], type_ignores=[])
@@ -108,6 +109,52 @@ class ThreePhaseRuntimeTest(unittest.TestCase):
         selected = {id(parameter) for group in filtered for parameter in group['params']}
         self.assertEqual(selected, {id(parameter) for parameter in trainer.network.parameters()})
         self.assertTrue(all(not parameter.requires_grad for parameter in trainer.text_activator.parameters()))
+
+    def test_static_prompt_bypasses_required_trigger_binding(self):
+        trainer = self._trainer('a1')
+        modes = []
+
+        class _ModeContext:
+            def __init__(self, mode):
+                self.mode = mode
+
+            def __enter__(self):
+                modes.append(self.mode)
+
+            def __exit__(self, *_args):
+                modes.append('restored')
+
+        trainer._activator_mode = lambda mode: _ModeContext(mode)
+        trainer.sd = SimpleNamespace(
+            encode_prompt=lambda prompt, **_kwargs: ('encoded', prompt),
+        )
+
+        result = trainer.encode_static_prompt([''])
+
+        self.assertEqual(result, ('encoded', ['']))
+        self.assertEqual(modes, ['activator_bypass', 'restored'])
+
+    def test_prompt_encoder_allows_static_prompt_only_in_bypass_mode(self):
+        trainer = self._trainer('a1')
+        original_calls = []
+
+        class _SD:
+            text_activator_runtime_mode = 'activator_bypass'
+
+            def get_prompt_embeds(self, prompt, **kwargs):
+                original_calls.append((prompt, kwargs))
+                return ('plain', prompt)
+
+        trainer.sd = _SD()
+        trainer.three_phase_trigger_training.literal = '<trigger>'
+        trainer.three_phase_trigger_training.placeholder = '[trigger]'
+        trainer.three_phase_trigger_training.mask_all_occurrences = True
+        trainer._install_trigger_binding_prompt_encoder(SimpleNamespace())
+
+        result = trainer.sd.get_prompt_embeds([''])
+
+        self.assertEqual(result, ('plain', ['']))
+        self.assertEqual(original_calls[0][1]['runtime_mode'], 'activator_bypass')
 
     def test_a_phase_loss_receives_shared_latent_noise_timestep_and_target(self):
         trainer = self._trainer('a1')
