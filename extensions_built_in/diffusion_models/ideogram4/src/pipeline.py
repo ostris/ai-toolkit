@@ -14,6 +14,7 @@ import math
 from typing import Any, List, Optional
 
 import torch
+from torch.utils.checkpoint import checkpoint
 from PIL import Image
 from diffusers.utils.torch_utils import randn_tensor
 
@@ -297,14 +298,37 @@ def get_qwen3_vl_features(
         tap_set = set(QWEN3_VL_ACTIVATION_LAYERS)
         captured: dict[int, torch.Tensor] = {}
         hidden_states = inputs_embeds
-        for layer_idx, decoder_layer in enumerate(language_model.layers):
-            hidden_states = decoder_layer(
-                hidden_states,
-                attention_mask=causal_mask,
-                position_ids=text_position_ids,
-                past_key_values=None,
-                position_embeddings=position_embeddings,
+        use_gradient_checkpointing = bool(
+            torch.is_grad_enabled()
+            and (
+                getattr(text_encoder, "is_gradient_checkpointing", False)
+                or getattr(language_model, "gradient_checkpointing", False)
             )
+        )
+        for layer_idx, decoder_layer in enumerate(language_model.layers):
+            if use_gradient_checkpointing:
+                def layer_forward(states, layer=decoder_layer):
+                    return layer(
+                        states,
+                        attention_mask=causal_mask,
+                        position_ids=text_position_ids,
+                        past_key_values=None,
+                        position_embeddings=position_embeddings,
+                    )
+
+                hidden_states = checkpoint(
+                    layer_forward,
+                    hidden_states,
+                    use_reentrant=False,
+                )
+            else:
+                hidden_states = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask,
+                    position_ids=text_position_ids,
+                    past_key_values=None,
+                    position_embeddings=position_embeddings,
+                )
             if text_activator is not None and _runtime_component_enabled(
                 runtime_mode, "internal"
             ):

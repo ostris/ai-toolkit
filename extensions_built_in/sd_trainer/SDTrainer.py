@@ -1783,8 +1783,11 @@ class SDTrainer(BaseSDTrainProcess):
                 **pred_kwargs,
             )
         with self._activator_mode('activator_bypass'):
-            bypass_embeds = self.sd.encode_prompt(raw_prompts, long_prompts=self.do_long_prompts)
             with torch.no_grad():
+                bypass_embeds = self.sd.encode_prompt(
+                    raw_prompts,
+                    long_prompts=self.do_long_prompts,
+                ).detach()
                 bypass_pred = self.predict_noise(
                     noisy_latents=noisy_latents,
                     timesteps=timesteps,
