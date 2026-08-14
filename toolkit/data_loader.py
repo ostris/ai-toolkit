@@ -19,7 +19,7 @@ import albumentations as A
 from toolkit import image_utils
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin, TextEmbeddingCachingMixin
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin, TextEmbeddingCachingMixin, read_caption_source
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
@@ -39,6 +39,77 @@ if TYPE_CHECKING:
 image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
 audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
+
+
+def discover_tst_caption_sources(dataset_root, file_list, caption_sources):
+    if not caption_sources or not caption_sources.enabled:
+        return {}
+    dataset_root = os.path.abspath(dataset_root)
+    unique_files = list(dict.fromkeys(os.path.abspath(path) for path in file_list))
+    source_map = {}
+    trigger_counts = {source.name: {} for source in caption_sources.sources}
+    expected_mirror_images = set()
+    expected_mirror_captions = set()
+    problems = []
+
+    for image_path in unique_files:
+        relative_id = os.path.normpath(os.path.relpath(image_path, dataset_root))
+        source_map[image_path] = {'item_id': relative_id, 'sources': {}}
+        relative_stem = os.path.splitext(relative_id)[0]
+        for source in caption_sources.sources:
+            source_root = dataset_root if source.use_main_dataset else os.path.abspath(source.path)
+            source_image = image_path if source.use_main_dataset else os.path.join(source_root, relative_id)
+            caption_path = os.path.join(source_root, relative_stem + source.caption_ext)
+            if not source.use_main_dataset:
+                expected_mirror_images.add(os.path.normcase(os.path.abspath(source_image)))
+                expected_mirror_captions.add(os.path.normcase(os.path.abspath(caption_path)))
+                if not os.path.isfile(source_image):
+                    problems.append(f'missing mirror image: {source_image}')
+            if not os.path.isfile(caption_path):
+                problems.append(f'missing {source.name} caption: {caption_path}')
+                continue
+            try:
+                caption = read_caption_source(caption_path, source.format, source.caption_field)
+            except Exception as error:
+                problems.append(str(error))
+                continue
+            occurrences = caption.count('[trigger]')
+            trigger_counts[source.name][occurrences] = trigger_counts[source.name].get(occurrences, 0) + 1
+            if occurrences < 1:
+                problems.append(f'caption lacks [trigger]: {caption_path}')
+            source_map[image_path]['sources'][source.name] = {
+                'path': caption_path,
+                'caption': caption,
+            }
+
+    for source in caption_sources.sources:
+        if source.use_main_dataset:
+            continue
+        source_root = os.path.abspath(source.path)
+        actual_images = set()
+        actual_captions = set()
+        for root, dirs, files in os.walk(source_root):
+            dirs[:] = [directory for directory in dirs if not directory.startswith('.')]
+            for filename in files:
+                absolute = os.path.normcase(os.path.abspath(os.path.join(root, filename)))
+                if filename.lower().endswith(tuple(image_extensions)):
+                    actual_images.add(absolute)
+                if filename.lower().endswith(source.caption_ext.lower()):
+                    actual_captions.add(absolute)
+        for orphan in sorted(actual_images - expected_mirror_images):
+            problems.append(f'orphan mirror image: {orphan}')
+        for orphan in sorted(actual_captions - expected_mirror_captions):
+            problems.append(f'orphan {source.name} caption: {orphan}')
+
+    print_acc(f'  -  TST caption source scan: {len(unique_files)} images')
+    for source in caption_sources.sources:
+        caption_count = sum(1 for item in source_map.values() if source.name in item['sources'])
+        print_acc(f'  -  TST source {source.name}: {caption_count} captions, trigger occurrences {trigger_counts[source.name]}')
+    if problems:
+        preview = '\n'.join(f'  - {problem}' for problem in problems[:50])
+        suffix = '' if len(problems) <= 50 else f'\n  - ... {len(problems) - 50} more'
+        raise ValueError(f'TST caption source validation failed with {len(problems)} problem(s):\n{preview}{suffix}')
+    return source_map
 
 
 class RescaleTransform:
@@ -449,6 +520,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         # remove items in the _controls_ folder
         file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]
 
+        tst_dataset_root = self.dataset_path if os.path.isdir(self.dataset_path) else os.path.dirname(self.dataset_path)
+        tst_caption_source_map = discover_tst_caption_sources(
+            tst_dataset_root,
+            file_list,
+            self.dataset_config.trigger_selective_caption_sources,
+        )
+
         if self.dataset_config.num_repeats > 1:
             # repeat the list
             file_list = file_list * self.dataset_config.num_repeats
@@ -545,6 +623,15 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     temporal_compression=temporal_compression,
                     sample_rate=self.sd.sample_rate if self.is_audio_model and self.sd is not None else 48000,
                 )
+                tst_item = tst_caption_source_map.get(os.path.abspath(file))
+                if tst_item is not None:
+                    file_item.dataset_relative_item_id = tst_item['item_id']
+                    file_item.caption_sources_raw = {
+                        name: value['caption'] for name, value in tst_item['sources'].items()
+                    }
+                    file_item.caption_source_paths = {
+                        name: value['path'] for name, value in tst_item['sources'].items()
+                    }
                 self.file_list.append(file_item)
             except Exception as e:
                 print_acc(traceback.format_exc())

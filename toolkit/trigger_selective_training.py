@@ -99,11 +99,16 @@ def validate_trigger_selective_config(
     if not math.isfinite(config.path3.gain_epsilon) or config.path3.gain_epsilon <= 0:
         raise ValueError('trigger_selective_training path3.gain_epsilon must be positive')
 
-    for interpolation, name in (
-        (config.path3.margin_schedule.interpolation, 'path3.margin_schedule'),
-        (config.loss_schedule.interpolation, 'loss_schedule'),
-    ):
-        if interpolation not in _ALLOWED_INTERPOLATIONS:
+    schedules = [
+        (config.path3.margin_schedule, 'path3.margin_schedule'),
+        (config.loss_schedule, 'loss_schedule'),
+    ]
+    if config.path3.gain_floor.enabled:
+        schedules.append((config.path3.gain_floor.schedule, 'path3.gain_floor.schedule'))
+    if config.caption_sources.enabled:
+        schedules.append((config.caption_sources.schedule, 'caption_sources.schedule'))
+    for schedule, name in schedules:
+        if schedule.interpolation not in _ALLOWED_INTERPOLATIONS:
             raise ValueError(f'{name}.interpolation must be linear or smoothstep')
 
     _validate_keyframes(
@@ -119,6 +124,44 @@ def validate_trigger_selective_config(
     for keyframe in config.loss_schedule.keyframes:
         if sum(float(keyframe[key]) for key in ('path1', 'path2', 'path3')) <= 0:
             raise ValueError('trigger_selective_training loss schedule weights cannot all be zero')
+
+    if config.path3.gain_floor.enabled:
+        if not math.isfinite(config.path3.gain_floor.weight) or config.path3.gain_floor.weight < 0:
+            raise ValueError('trigger_selective_training path3.gain_floor.weight must be non-negative')
+        _validate_keyframes(
+            config.path3.gain_floor.schedule.keyframes,
+            ('value',),
+            'trigger_selective_training path3.gain_floor.schedule',
+        )
+
+    if config.caption_sources.enabled:
+        if len(config.caption_sources.sources) < 2:
+            raise ValueError('trigger_selective_training caption_sources requires at least two sources')
+        source_names = [source.name for source in config.caption_sources.sources]
+        if any(not name or not name.strip() for name in source_names):
+            raise ValueError('trigger_selective_training caption source names must be non-empty')
+        if len(set(source_names)) != len(source_names):
+            raise ValueError('trigger_selective_training caption source names must be unique')
+        main_sources = [source for source in config.caption_sources.sources if source.use_main_dataset]
+        if len(main_sources) != 1:
+            raise ValueError('trigger_selective_training caption_sources requires exactly one use_main_dataset source')
+        for source in config.caption_sources.sources:
+            if source.format not in {'text', 'json'}:
+                raise ValueError(f'unsupported caption source format for {source.name}: {source.format}')
+            if not source.caption_ext:
+                raise ValueError(f'caption source {source.name} requires caption_ext')
+            if not source.use_main_dataset and not source.path:
+                raise ValueError(f'caption source {source.name} requires path')
+            if source.format == 'json' and not source.caption_field:
+                raise ValueError(f'JSON caption source {source.name} requires caption_field')
+        _validate_keyframes(
+            config.caption_sources.schedule.keyframes,
+            tuple(source_names),
+            'trigger_selective_training caption_sources.schedule',
+        )
+        for keyframe in config.caption_sources.schedule.keyframes:
+            if sum(float(keyframe[name]) for name in source_names) <= 0:
+                raise ValueError('trigger_selective_training caption source weights cannot all be zero')
 
     if config.logging.log_every <= 0:
         raise ValueError('trigger_selective_training logging.log_every must be positive')
@@ -170,6 +213,15 @@ def get_scheduled_margin(config: TriggerSelectiveTrainingConfig, step: int) -> f
     )['value']
 
 
+def _normalize_scheduled_weights(weights: Dict[str, float], enabled: bool, name: str) -> Dict[str, float]:
+    if not enabled:
+        return weights
+    total = sum(weights.values())
+    if total <= 0:
+        raise ValueError(f'{name} interpolated weights sum to zero')
+    return {key: value / total for key, value in weights.items()}
+
+
 def get_scheduled_loss_weights(config: TriggerSelectiveTrainingConfig, step: int) -> Dict[str, float]:
     weights = interpolate_keyframes(
         config.loss_schedule.keyframes,
@@ -177,12 +229,65 @@ def get_scheduled_loss_weights(config: TriggerSelectiveTrainingConfig, step: int
         ('path1', 'path2', 'path3'),
         config.loss_schedule.interpolation,
     )
-    if config.loss_schedule.normalize_weights:
-        total = sum(weights.values())
-        if total <= 0:
-            raise ValueError('trigger_selective_training interpolated loss weights sum to zero')
-        weights = {key: value / total for key, value in weights.items()}
-    return weights
+    return _normalize_scheduled_weights(
+        weights,
+        config.loss_schedule.normalize_weights,
+        'trigger_selective_training loss schedule',
+    )
+
+
+def get_scheduled_caption_source_weights(
+    config: TriggerSelectiveTrainingConfig,
+    step: int,
+) -> Dict[str, float]:
+    if not config.caption_sources.enabled:
+        return {}
+    source_names = tuple(source.name for source in config.caption_sources.sources)
+    weights = interpolate_keyframes(
+        config.caption_sources.schedule.keyframes,
+        step,
+        source_names,
+        config.caption_sources.schedule.interpolation,
+    )
+    return _normalize_scheduled_weights(
+        weights,
+        config.caption_sources.schedule.normalize_weights,
+        'trigger_selective_training caption source schedule',
+    )
+
+
+def sample_caption_sources(
+    config: TriggerSelectiveTrainingConfig,
+    step: int,
+    count: int,
+    rng: Optional[random.Random] = None,
+) -> Tuple[List[str], Dict[str, float]]:
+    weights = get_scheduled_caption_source_weights(config, step)
+    if not weights:
+        return [], weights
+    rng = rng or random
+    names = list(weights.keys())
+    return rng.choices(names, weights=[weights[name] for name in names], k=count), weights
+
+
+def get_scheduled_gain_floor(config: TriggerSelectiveTrainingConfig, step: int) -> float:
+    if not config.path3.gain_floor.enabled:
+        return 0.0
+    return interpolate_keyframes(
+        config.path3.gain_floor.schedule.keyframes,
+        step,
+        ('value',),
+        config.path3.gain_floor.schedule.interpolation,
+    )['value']
+
+
+def trigger_gain_floor_hinge(trigger_gain: torch.Tensor, gain_floor: float) -> torch.Tensor:
+    floor_tensor = torch.as_tensor(
+        gain_floor,
+        device=trigger_gain.device,
+        dtype=trigger_gain.dtype,
+    )
+    return torch.relu(floor_tensor - trigger_gain)
 
 
 def sample_negative_styles(
@@ -204,16 +309,23 @@ def resolve_trigger_placeholder(raw_prompt: str, replacement: str, require_place
 
 def resolve_prompt_variants(
     raw_prompts: Sequence[str],
-    trigger_word: str,
+    trigger_word,
     negative_samples: Sequence[NegativeStyleSample],
     require_placeholder: bool = True,
 ) -> Tuple[List[str], List[str]]:
     if len(raw_prompts) != len(negative_samples):
         raise ValueError('raw prompt and negative sample counts must match')
+    trigger_words = (
+        list(trigger_word)
+        if isinstance(trigger_word, (list, tuple))
+        else [trigger_word] * len(raw_prompts)
+    )
+    if len(trigger_words) != len(raw_prompts):
+        raise ValueError('trigger word and raw prompt counts must match')
     trigger_prompts = []
     decoy_prompts = []
-    for raw_prompt, sample in zip(raw_prompts, negative_samples):
-        trigger_prompts.append(resolve_trigger_placeholder(raw_prompt, trigger_word, require_placeholder))
+    for raw_prompt, effective_trigger, sample in zip(raw_prompts, trigger_words, negative_samples):
+        trigger_prompts.append(resolve_trigger_placeholder(raw_prompt, effective_trigger, require_placeholder))
         decoy_prompts.append(resolve_trigger_placeholder(raw_prompt, sample.phrase, require_placeholder))
     return trigger_prompts, decoy_prompts
 

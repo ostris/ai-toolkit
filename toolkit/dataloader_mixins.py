@@ -313,6 +313,22 @@ class BucketsMixin:
             print_acc(f'{len(self.buckets)} buckets made')
 
 
+def read_caption_source(path: str, source_format: str = 'text', caption_field: str = 'caption') -> str:
+    with open(path, 'r', encoding='utf-8') as handle:
+        if source_format == 'text':
+            value = handle.read()
+        elif source_format == 'json':
+            payload = json.load(handle)
+            if caption_field not in payload:
+                raise ValueError(f'caption field {caption_field!r} is missing from {path}')
+            value = payload[caption_field]
+        else:
+            raise ValueError(f'unsupported caption source format: {source_format}')
+    if not isinstance(value, str):
+        raise ValueError(f'caption source value must be a string: {path}')
+    return clean_caption(value)
+
+
 class CaptionProcessingDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):
         if hasattr(super(), '__init__'):
@@ -323,6 +339,9 @@ class CaptionProcessingDTOMixin:
             self.caption_short: str = None
             self.caption_template: str = None
             self.caption_short_template: str = None
+            self.caption_sources_raw: Dict[str, str] = {}
+            self.caption_source_templates: Dict[str, str] = {}
+            self.caption_source_paths: Dict[str, str] = {}
             # caption with the trigger word replaced by the diff output preservation class
             self.caption_dop: str = None
 
@@ -369,6 +388,19 @@ class CaptionProcessingDTOMixin:
             self.raw_caption_short = short_caption
 
         self.caption = self.get_caption()
+        if self.caption_sources_raw:
+            main_source_name = None
+            source_config = self.dataset_config.trigger_selective_caption_sources
+            if source_config is not None:
+                main_source_name = next(
+                    (source.name for source in source_config.sources if source.use_main_dataset),
+                    None,
+                )
+            for source_name, raw_caption in self.caption_sources_raw.items():
+                if source_name == main_source_name and raw_caption == self.raw_caption:
+                    self.caption_source_templates[source_name] = self.caption_template
+                else:
+                    self.caption_source_templates[source_name] = self.process_caption_template(raw_caption)
         if self.raw_caption_short is not None:
             self.caption_short = self.get_caption(short_caption=True)
         if self.dataset_config.diff_output_preservation:
@@ -379,6 +411,25 @@ class CaptionProcessingDTOMixin:
                 self.caption_dop = self.caption.replace(
                     self.trigger_word, self.dataset_config.diff_output_preservation_class
                 )
+
+    def process_caption_template(self: 'FileItemDTO', raw_caption: str) -> str:
+        if raw_caption is None:
+            raw_caption = ''
+        if self.dataset_config.caption_dropout_rate > 0 and not self.dataset_config.cache_text_embeddings:
+            if random.random() < self.dataset_config.caption_dropout_rate:
+                return ''
+        token_list = raw_caption.split(',')
+        if self.dataset_config.token_dropout_rate > 0 and not self.dataset_config.cache_text_embeddings:
+            kept = []
+            for idx, token in enumerate(token_list):
+                if idx < self.dataset_config.keep_tokens:
+                    kept.append(token)
+                elif self.dataset_config.token_dropout_rate < 1.0 and random.random() > self.dataset_config.token_dropout_rate:
+                    kept.append(token)
+            token_list = kept
+        if self.dataset_config.shuffle_tokens:
+            random.shuffle(token_list)
+        return ', '.join(token_list)
 
     def get_caption(
             self: 'FileItemDTO',

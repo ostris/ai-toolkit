@@ -44,15 +44,19 @@ from toolkit.basic import flush
 from toolkit.trigger_selective_training import (
     TSTMetricsWriter,
     apply_differential_guidance_target,
+    get_scheduled_caption_source_weights,
+    get_scheduled_gain_floor,
     get_scheduled_loss_weights,
     get_scheduled_margin,
     network_disabled,
     normalized_gain,
     per_item_mse,
     resolve_prompt_variants,
+    sample_caption_sources,
     sample_negative_styles,
     shared_loss_target,
     trigger_advantage_hinge,
+    trigger_gain_floor_hinge,
 )
 
 
@@ -1429,10 +1433,21 @@ class SDTrainer(BaseSDTrainProcess):
         network,
         dtype,
     ):
-        raw_templates = [
-            getattr(file_item, 'caption_template', None) or file_item.raw_caption
-            for file_item in batch.file_items
-        ]
+        if self.trigger_selective_training.caption_sources.enabled:
+            selected_sources, source_probabilities = sample_caption_sources(
+                self.trigger_selective_training,
+                self.step_num,
+                len(batch.file_items),
+                self.tst_rng,
+            )
+            raw_templates = batch.get_caption_source_templates(selected_sources)
+        else:
+            selected_sources = ['legacy'] * len(batch.file_items)
+            source_probabilities = {'legacy': 1.0}
+            raw_templates = [
+                getattr(file_item, 'caption_template', None) or file_item.raw_caption
+                for file_item in batch.file_items
+            ]
         negative_samples = sample_negative_styles(
             self.trigger_selective_training,
             len(raw_templates),
@@ -1513,14 +1528,24 @@ class SDTrainer(BaseSDTrainProcess):
         )
         decoy_gain_positive = torch.relu(decoy_gain)
         margin = get_scheduled_margin(self.trigger_selective_training, self.step_num)
-        path3_per_item = trigger_advantage_hinge(
+        path3_relative_per_item = trigger_advantage_hinge(
             trigger_gain,
             decoy_gain,
             margin,
             self.trigger_selective_training.path3.decoy_gain_mode,
         )
+        gain_floor = get_scheduled_gain_floor(self.trigger_selective_training, self.step_num)
+        path3_floor_per_item = trigger_gain_floor_hinge(trigger_gain, gain_floor)
+        floor_weight = (
+            self.trigger_selective_training.path3.gain_floor.weight
+            if self.trigger_selective_training.path3.gain_floor.enabled
+            else 0.0
+        )
+        path3_per_item = path3_relative_per_item + floor_weight * path3_floor_per_item
         weights = get_scheduled_loss_weights(self.trigger_selective_training, self.step_num)
         path2 = path2_per_item.mean()
+        path3_relative = path3_relative_per_item.mean()
+        path3_floor = path3_floor_per_item.mean()
         path3 = path3_per_item.mean()
         weighted_path1 = weights['path1'] * path1
         weighted_path2 = weights['path2'] * path2
@@ -1533,10 +1558,14 @@ class SDTrainer(BaseSDTrainProcess):
             logging_config.debug_gradient_contributions
             and self.step_num in logging_config.gradient_diagnostic_steps
         ):
+            weighted_path3_relative = weights['path3'] * path3_relative
+            weighted_path3_floor = weights['path3'] * floor_weight * path3_floor
             gradient_logs = {
                 'grad_norm/path1': self._tst_gradient_norm(weighted_path1),
                 'grad_norm/path2': self._tst_gradient_norm(weighted_path2),
                 'grad_norm/path3': self._tst_gradient_norm(weighted_path3),
+                'grad_norm/path3_relative': self._tst_gradient_norm(weighted_path3_relative),
+                'grad_norm/path3_gain_floor': self._tst_gradient_norm(weighted_path3_floor),
             }
 
         category_names = [
@@ -1563,10 +1592,34 @@ class SDTrainer(BaseSDTrainProcess):
             )
             for category in category_names
         })
+        source_names = list(source_probabilities.keys())
+        source_counts = {name: 0 for name in source_names}
+        source_values = {
+            name: {'trigger': [], 'decoy': [], 'gap': [], 'effective_gap': []}
+            for name in source_names
+        }
+        for index, source_name in enumerate(selected_sources):
+            source_counts[source_name] += 1
+            source_values[source_name]['trigger'].append(float(trigger_gain.detach()[index].item()))
+            source_values[source_name]['decoy'].append(float(decoy_gain.detach()[index].item()))
+            source_values[source_name]['gap'].append(float((trigger_gain.detach()[index] - decoy_gain.detach()[index]).item()))
+            source_values[source_name]['effective_gap'].append(float((trigger_gain.detach()[index] - decoy_gain_positive.detach()[index]).item()))
+        source_logs = {}
+        for source_name in source_names:
+            source_logs[f'caption_source/{source_name}_count'] = source_counts[source_name]
+            source_logs[f'caption_source/{source_name}_probability'] = source_probabilities[source_name]
+            for metric_name, values in source_values[source_name].items():
+                source_logs[f'gain/{source_name}_{metric_name}'] = sum(values) / len(values) if values else 0.0
+
         self.additional_logs.update({
             'loss/path1_raw': path1.detach().item(),
             'loss/path2_raw': path2.detach().item(),
             'loss/path3_raw': path3.detach().item(),
+            'loss/path3_relative_raw': path3_relative.detach().item(),
+            'loss/path3_gain_floor_raw': path3_floor.detach().item(),
+            'loss/path3_gain_floor_weighted': (floor_weight * path3_floor.detach()).item(),
+            'gain/floor': gain_floor,
+            'gain/floor_satisfied_fraction': (path3_floor_per_item <= 0).float().mean().item(),
             'loss/path1_weighted': (weights['path1'] * path1.detach()).item(),
             'loss/path2_weighted': (weights['path2'] * path2.detach()).item(),
             'loss/path3_weighted': (weights['path3'] * path3.detach()).item(),
@@ -1586,15 +1639,30 @@ class SDTrainer(BaseSDTrainProcess):
             'gain/decoy': decoy_gain.detach().mean().item(),
             'gain/decoy_positive': decoy_gain_positive.detach().mean().item(),
             'gain/gap': (trigger_gain.detach() - decoy_gain.detach()).mean().item(),
+            'gain/effective_gap': (trigger_gain.detach() - decoy_gain_positive.detach()).mean().item(),
             **category_logs,
+            **source_logs,
             **gradient_logs,
         })
         if self.tst_metrics_writer is not None and self.step_num % self.trigger_selective_training.logging.log_every == 0:
             self.tst_metrics_writer.write({
                 'step': self.step_num,
                 **{key: float(value) for key, value in self.additional_logs.items() if isinstance(value, (int, float))},
-                'negative_category': [sample.category for sample in negative_samples],
-                'negative_phrase': [sample.phrase for sample in negative_samples],
+                'items': [
+                    {
+                        'item_id': file_item.dataset_relative_item_id,
+                        'caption_source': source_name,
+                        'negative_category': sample.category,
+                        'negative_phrase': sample.phrase,
+                        'trigger_gain': float(trigger_gain.detach()[index].item()),
+                        'decoy_gain': float(decoy_gain.detach()[index].item()),
+                        'raw_gap': float((trigger_gain.detach()[index] - decoy_gain.detach()[index]).item()),
+                        'effective_gap': float((trigger_gain.detach()[index] - decoy_gain_positive.detach()[index]).item()),
+                    }
+                    for index, (file_item, source_name, sample) in enumerate(
+                        zip(batch.file_items, selected_sources, negative_samples)
+                    )
+                ],
             })
         return loss
 

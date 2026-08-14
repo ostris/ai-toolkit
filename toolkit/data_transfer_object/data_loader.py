@@ -59,6 +59,10 @@ class FileItemDTO(
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get("path", "")
         self.dataset_config: "DatasetConfig" = kwargs.get("dataset_config", None)
+        self.dataset_relative_item_id: str = kwargs.get("dataset_relative_item_id", '')
+        self.caption_sources_raw: dict = kwargs.get("caption_sources_raw", {})
+        self.caption_source_templates: dict = kwargs.get("caption_source_templates", {})
+        self.caption_source_paths: dict = kwargs.get("caption_source_paths", {})
         # a video dataset can contain both videos and images. Images are
         # treated as single-frame items and bucketed separately from videos
         dataset_is_video = self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count
@@ -170,6 +174,10 @@ class FileItemDTO(
         # self.caption_path: str = kwargs.get('caption_path', None)
         self.raw_caption: str = kwargs.get("raw_caption", None)
         self.caption_template: str = kwargs.get("caption_template", None)
+        self.dataset_relative_item_id = kwargs.get("dataset_relative_item_id", self.dataset_relative_item_id)
+        self.caption_sources_raw = kwargs.get("caption_sources_raw", self.caption_sources_raw)
+        self.caption_source_templates = kwargs.get("caption_source_templates", self.caption_source_templates)
+        self.caption_source_paths = kwargs.get("caption_source_paths", self.caption_source_paths)
         # we scale first, then crop
         self.scale_to_width: int = kwargs.get(
             "scale_to_width", int(self.width * self.dataset_config.scale)
@@ -208,9 +216,20 @@ class FileItemDTO(
 
 
 class DataLoaderBatchDTO:
+    def get_caption_source_templates(self, source_names: List[str]) -> List[str]:
+        if len(source_names) != len(self.file_items):
+            raise ValueError('caption source selection count must match batch size')
+        templates = []
+        for item, source_name in zip(self.file_items, source_names):
+            if source_name not in item.caption_source_templates:
+                raise ValueError(f'caption source {source_name!r} is unavailable for {item.dataset_relative_item_id}')
+            templates.append(item.caption_source_templates[source_name])
+        return templates
+
     def __init__(self, **kwargs):
         try:
             self.file_items: List["FileItemDTO"] = kwargs.get("file_items", None)
+            self.dataset_relative_item_ids = [item.dataset_relative_item_id for item in self.file_items]
             is_latents_cached = self.file_items[0].is_latent_cached
             self.tensor: Union[torch.Tensor, None] = None
             self.latents: Union[torch.Tensor, None] = None

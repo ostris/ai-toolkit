@@ -389,10 +389,42 @@ class TriggerSelectiveNegativeStylesConfig:
         ]
 
 
-class TriggerSelectiveMarginScheduleConfig:
+class TriggerSelectiveScheduleConfig:
     def __init__(self, **kwargs):
         self.interpolation: str = kwargs.get('interpolation', 'smoothstep')
+        self.normalize_weights: bool = kwargs.get('normalize_weights', False)
         self.keyframes: List[Dict] = kwargs.get('keyframes', [])
+
+
+class TriggerSelectiveCaptionSourceConfig:
+    def __init__(self, **kwargs):
+        self.name: str = kwargs.get('name', '')
+        self.path: Optional[str] = kwargs.get('path', None)
+        self.caption_ext: str = kwargs.get('caption_ext', '.txt')
+        if self.caption_ext and not self.caption_ext.startswith('.'):
+            self.caption_ext = '.' + self.caption_ext
+        self.format: str = kwargs.get('format', 'text')
+        self.caption_field: str = kwargs.get('caption_field', 'caption')
+        self.use_main_dataset: bool = kwargs.get('use_main_dataset', False)
+
+
+class TriggerSelectiveCaptionSourcesConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.sources: List[TriggerSelectiveCaptionSourceConfig] = [
+            TriggerSelectiveCaptionSourceConfig(**source)
+            for source in kwargs.get('sources', [])
+        ]
+        schedule_kwargs = dict(kwargs.get('schedule', {}))
+        schedule_kwargs.setdefault('normalize_weights', True)
+        self.schedule = TriggerSelectiveScheduleConfig(**schedule_kwargs)
+
+
+class TriggerSelectiveGainFloorConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.weight: float = float(kwargs.get('weight', 1.0))
+        self.schedule = TriggerSelectiveScheduleConfig(**kwargs.get('schedule', {}))
 
 
 class TriggerSelectivePath3Config:
@@ -400,8 +432,11 @@ class TriggerSelectivePath3Config:
         self.loss_type: str = kwargs.get('loss_type', 'hinge')
         self.gain_epsilon: float = float(kwargs.get('gain_epsilon', 1.0e-6))
         self.decoy_gain_mode: str = kwargs.get('decoy_gain_mode', 'detached')
-        self.margin_schedule = TriggerSelectiveMarginScheduleConfig(
+        self.margin_schedule = TriggerSelectiveScheduleConfig(
             **kwargs.get('margin_schedule', {})
+        )
+        self.gain_floor = TriggerSelectiveGainFloorConfig(
+            **kwargs.get('gain_floor', {})
         )
 
 
@@ -430,6 +465,9 @@ class TriggerSelectiveTrainingConfig:
         self.require_trigger_placeholder: bool = kwargs.get('require_trigger_placeholder', True)
         self.negative_styles = TriggerSelectiveNegativeStylesConfig(
             **kwargs.get('negative_styles', {})
+        )
+        self.caption_sources = TriggerSelectiveCaptionSourcesConfig(
+            **kwargs.get('caption_sources', {})
         )
         self.path3 = TriggerSelectivePath3Config(**kwargs.get('path3', {}))
         self.loss_schedule = TriggerSelectiveLossScheduleConfig(
@@ -1004,6 +1042,7 @@ class DatasetConfig:
         self.random_triggers: List[str] = random_triggers
         self.random_triggers_max: int = kwargs.get('random_triggers_max', 1)
         self.caption_ext: str = kwargs.get('caption_ext', '.txt')
+        self.trigger_selective_caption_sources = kwargs.get('trigger_selective_caption_sources', None)
         # if caption_ext doesnt start with a dot, add it
         if self.caption_ext and not self.caption_ext.startswith('.'):
             self.caption_ext = '.' + self.caption_ext
