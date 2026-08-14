@@ -156,6 +156,46 @@ class ThreePhaseRuntimeTest(unittest.TestCase):
         self.assertEqual(result, ('plain', ['']))
         self.assertEqual(original_calls[0][1]['runtime_mode'], 'activator_bypass')
 
+    def test_prompt_encoder_bypasses_already_injected_literal_caption(self):
+        trainer = self._trainer('a1')
+        original_calls = []
+
+        class _SD:
+            text_activator_runtime_mode = 'full'
+
+            def get_prompt_embeds(self, prompt, **kwargs):
+                original_calls.append((prompt, kwargs))
+                return ('plain', prompt)
+
+        trainer.sd = _SD()
+        trainer.three_phase_trigger_training.literal = '<trigger>'
+        trainer.three_phase_trigger_training.placeholder = '[trigger]'
+        trainer.three_phase_trigger_training.mask_all_occurrences = True
+        trainer._install_trigger_binding_prompt_encoder(SimpleNamespace())
+
+        result = trainer.sd.get_prompt_embeds(['caption with <trigger> already injected'])
+
+        self.assertEqual(result, ('plain', ['caption with <trigger> already injected']))
+        self.assertEqual(original_calls[0][1]['runtime_mode'], 'activator_bypass')
+
+    def test_prompt_encoder_still_rejects_caption_without_placeholder_or_literal(self):
+        trainer = self._trainer('a1')
+
+        class _SD:
+            text_activator_runtime_mode = 'full'
+
+            def get_prompt_embeds(self, prompt, **kwargs):
+                return ('plain', prompt, kwargs)
+
+        trainer.sd = _SD()
+        trainer.three_phase_trigger_training.literal = '<trigger>'
+        trainer.three_phase_trigger_training.placeholder = '[trigger]'
+        trainer.three_phase_trigger_training.mask_all_occurrences = True
+        trainer._install_trigger_binding_prompt_encoder(SimpleNamespace())
+
+        with self.assertRaisesRegex(ValueError, 'every training caption must contain'):
+            trainer.sd.get_prompt_embeds(['caption without the required token'])
+
     def test_a_phase_loss_receives_shared_latent_noise_timestep_and_target(self):
         trainer = self._trainer('a1')
         trainer.device_torch = torch.device('cpu')

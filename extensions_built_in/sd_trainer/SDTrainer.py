@@ -396,6 +396,21 @@ class SDTrainer(BaseSDTrainProcess):
             ):
                 return original(prompt, runtime_mode=runtime_mode)
             prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+            placeholder = self.three_phase_trigger_training.placeholder
+            literal = self.three_phase_trigger_training.literal
+            placeholder_presence = [placeholder in text for text in prompts]
+            if not any(placeholder_presence) and all(literal in text for text in prompts):
+                # The standard ai-toolkit caption path has already replaced the
+                # placeholder with the literal. A1/A2 recompute their real
+                # active/bypass pair from caption_template later, so this
+                # otherwise-unused compatibility encode must not activate the
+                # learned trigger a second time.
+                return original(prompt, runtime_mode='activator_bypass')
+            if not all(placeholder_presence):
+                raise ValueError(
+                    'three-phase trigger prompt batch mixes bound and unbound captions; '
+                    f'every training caption must contain {placeholder!r}'
+                )
             runtime = modules['runtime']
             batch = runtime.bind_trigger_batch(
                 sd_model.tokenizer,
