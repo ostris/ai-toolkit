@@ -4,6 +4,17 @@
 # the encoder/decoder forwards are monkeypatched with copies of the upstream
 # forwards that add checkpointing branches, and the subclass re-enables
 # _supports_gradient_checkpointing (upstream has it turned off).
+# The checkpointing branches only run cache-free (the chunked-cache path
+# mutates shared lists, which is unsafe under checkpoint recompute), but
+# upstream _encode always goes through the chunked cache — so when
+# checkpointing is active, _encode runs the encoder cache-free over the whole
+# clip in one pass instead. Causal convs make that pass identical to the
+# chunked one; the only divergence is downsample3d WanResample, whose temporal
+# conv upstream applies only via the cache path, so it gets a cache-free
+# forward that reproduces the chunked semantics exactly:
+# out = cat([x[:, :, :1], time_conv(x)], dim=2)
+# (chunk 0 is returned as-is; later chunks run time_conv(cat([prev_last,
+# chunk])), which tiles into exactly these stride-2 windows).
 
 import torch
 
@@ -12,6 +23,8 @@ from diffusers.models.autoencoders.autoencoder_kl_wan import (
     AutoencoderKLWan as AutoencoderKLWanBase,
     WanDecoder3d,
     WanEncoder3d,
+    WanResample,
+    patchify,
 )
 
 
@@ -111,9 +124,41 @@ def _wan_decoder_forward(self, x, feat_cache=None, feat_idx=[0], first_chunk=Fal
     return x
 
 
+_wan_resample_stock_forward = WanResample.forward
+
+
+# cache-free downsample3d matching the chunked-cache semantics (see module
+# docstring); upstream's cache-free path skips the temporal conv entirely
+def _wan_resample_forward(self, x, feat_cache=None, feat_idx=[0]):
+    if self.mode != "downsample3d" or feat_cache is not None:
+        return _wan_resample_stock_forward(self, x, feat_cache=feat_cache, feat_idx=feat_idx)
+    b, c, t, h, w = x.size()
+    x = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+    x = self.resample(x)
+    x = x.view(b, t, x.size(1), x.size(2), x.size(3)).permute(0, 2, 1, 3, 4)
+    x = torch.cat([x[:, :, :1], self.time_conv(x)], dim=2)
+    return x
+
+
 WanEncoder3d.forward = _wan_encoder_forward
 WanDecoder3d.forward = _wan_decoder_forward
+WanResample.forward = _wan_resample_forward
 
 
 class AutoencoderKLWan(AutoencoderKLWanBase):
     _supports_gradient_checkpointing = True
+
+    def _encode(self, x: torch.Tensor):
+        # the chunked-cache encode never reaches the checkpointing branches in
+        # _wan_encoder_forward (they need feat_cache=None), so run cache-free
+        # in one pass when checkpointing is active
+        if not (torch.is_grad_enabled() and self.encoder.gradient_checkpointing):
+            return super()._encode(x)
+
+        _, _, num_frame, height, width = x.shape
+        if self.config.patch_size is not None:
+            x = patchify(x, patch_size=self.config.patch_size)
+        if self.use_tiling and (width > self.tile_sample_min_width or height > self.tile_sample_min_height):
+            return self.tiled_encode(x)
+        out = self.encoder(x)
+        return self.quant_conv(out)
