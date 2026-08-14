@@ -1,6 +1,10 @@
+import contextlib
+import importlib
+import inspect
 import os
 import random
 from collections import OrderedDict
+from types import MethodType
 from typing import Union, Literal, List, Optional
 
 import numpy as np
@@ -108,7 +112,14 @@ class SDTrainer(BaseSDTrainProcess):
                 self.save_root,
                 self.trigger_selective_training.logging.metrics_filename,
             )
-        
+
+        self.runtime_phase = None
+        self.text_activator = None
+        self._trigger_binding_modules = {}
+        self._trigger_binding_initial_parameters = {}
+        self._trigger_binding_prompt_encoder = None
+        self._trigger_binding_last_metrics = {}
+
         self.dfe: Optional[DiffusionFeatureExtractor] = None
         self.unconditional_embeds = None
         
@@ -141,6 +152,308 @@ class SDTrainer(BaseSDTrainProcess):
         else:
             raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
 
+
+    @property
+    def three_phase_enabled(self):
+        return bool(getattr(self.three_phase_trigger_training, 'enabled', False))
+
+    def _load_trigger_binding_modules(self):
+        if self._trigger_binding_modules:
+            return self._trigger_binding_modules
+        required = {
+            'runtime': 'toolkit.trigger_binding',
+            'activator': 'toolkit.models.ideogram4_trigger_activator',
+            'losses': 'toolkit.trigger_binding_losses',
+            'artifacts': 'toolkit.trigger_binding_artifacts',
+        }
+        loaded = {}
+        missing = []
+        for key, module_name in required.items():
+            try:
+                loaded[key] = importlib.import_module(module_name)
+            except ImportError as exc:
+                missing.append(f'{module_name}: {exc}')
+        if missing:
+            raise RuntimeError(
+                'three_phase_trigger_training requires the trigger-binding runtime modules; '
+                + '; '.join(missing)
+            )
+        self._trigger_binding_modules = loaded
+        return loaded
+
+    @staticmethod
+    def _call_supported(callable_obj, **kwargs):
+        try:
+            signature = inspect.signature(callable_obj)
+        except (TypeError, ValueError):
+            return callable_obj(**kwargs)
+        if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+            return callable_obj(**kwargs)
+        return callable_obj(**{key: value for key, value in kwargs.items() if key in signature.parameters})
+
+    @staticmethod
+    def _first_callable(module, names):
+        for name in names:
+            candidate = getattr(module, name, None)
+            if callable(candidate):
+                return candidate
+        return None
+
+    def _resolve_runtime_phase(self):
+        configured = getattr(self.three_phase_trigger_training, 'active_phase', None)
+        phase = configured or os.environ.get('AI_TOOLKIT_RUNTIME_PHASE') or os.environ.get('AITK_RUNTIME_PHASE')
+        if phase is None:
+            enabled = [
+                name for name in ('a1', 'b', 'a2')
+                if getattr(getattr(self.three_phase_trigger_training, f'phase_{name}'), 'enabled', False)
+            ]
+            if len(enabled) == 1:
+                phase = enabled[0]
+        phase = str(phase).lower() if phase is not None else None
+        if phase not in {'a1', 'b', 'a2'}:
+            raise ValueError(
+                'three_phase_trigger_training child runtime requires runtime_phase a1, b, or a2 '
+                '(set config runtime_phase or AI_TOOLKIT_RUNTIME_PHASE)'
+            )
+        phase_config = getattr(self.three_phase_trigger_training, f'phase_{phase}')
+        if not phase_config.enabled:
+            raise ValueError(f'three_phase_trigger_training runtime_phase {phase!r} is disabled')
+        self.runtime_phase = phase
+        return phase
+
+    def _phase_config(self):
+        return getattr(self.three_phase_trigger_training, f'phase_{self.runtime_phase}')
+
+    def _activator_component_flags(self):
+        train = self._phase_config().train
+        return {
+            'embedding': bool(train.get('embedding', train.get('trigger_embedding', False))),
+            'te_adapter': bool(train.get('internal', train.get('te_adapter', train.get('text_encoder_adapter', False)))),
+            'tap_adapters': bool(train.get('tap', train.get('tap_adapters', False))),
+        }
+
+    def _configure_phase_trainability(self):
+        flags = self._activator_component_flags()
+        phase_is_b = self.runtime_phase == 'b'
+        for component, trainable in flags.items():
+            setter = getattr(self.text_activator, 'set_component_mode', None)
+            if callable(setter):
+                setter(component, active=True, trainable=trainable and not phase_is_b)
+            else:
+                module = getattr(self.text_activator, component, None)
+                if module is not None:
+                    module.requires_grad_(trainable and not phase_is_b)
+        if phase_is_b:
+            self.text_activator.requires_grad_(False)
+        if self.network is not None:
+            network_trainable = bool(self._phase_config().train.get('diffusion_lora', phase_is_b))
+            self.network.requires_grad_(network_trainable)
+        return flags
+
+    def _build_text_activator(self, modules):
+        activator_module = modules['activator']
+        factory = self._first_callable(
+            activator_module,
+            ('create_text_activator', 'build_text_activator', 'create_ideogram4_text_activator'),
+        )
+        config = self.three_phase_trigger_training.text_activator
+        common = {
+            'config': config,
+            'text_activator_config': config,
+            'sd': self.sd,
+            'model': self.sd,
+            'text_encoder': self.sd.text_encoder,
+            'tokenizer': self.sd.tokenizer,
+            'device': self.device_torch,
+            'dtype': get_torch_dtype(config.embedding.dtype),
+            'phase': self.runtime_phase,
+            'phase_config': self._phase_config(),
+        }
+        if factory is not None:
+            return self._call_supported(factory, **common)
+
+        TextActivator = getattr(activator_module, 'TextActivator')
+        language_model = self.sd.text_encoder.language_model
+        hidden_size = int(getattr(language_model.config, 'hidden_size'))
+        literal = self.three_phase_trigger_training.literal
+        tokenizer = self.sd.tokenizer
+        tokenizer.add_tokens([literal], special_tokens=True)
+        atomic_ids = tokenizer(literal, add_special_tokens=False)['input_ids']
+        if len(atomic_ids) != 1:
+            raise RuntimeError(f'failed to register atomic trigger token {literal!r}: {atomic_ids}')
+        atomic_token_id = int(atomic_ids[0])
+        init_ids = tokenizer(config.embedding.init_words, add_special_tokens=False)['input_ids']
+        if not init_ids:
+            raise RuntimeError('text activator semantic initializer produced no tokens')
+        embedding_table = language_model.embed_tokens
+        safe_ids = [token_id for token_id in init_ids if token_id < embedding_table.num_embeddings]
+        if not safe_ids:
+            raise RuntimeError('text activator initializer token IDs are outside the Qwen embedding table')
+        initializer_ids = torch.tensor(safe_ids, device=embedding_table.weight.device, dtype=torch.long)
+        with torch.no_grad():
+            initializer = embedding_table(initializer_ids).float().mean(dim=0, keepdim=True)
+        te_config = config.te_adapter
+        te_adapter = None
+        if te_config.enabled:
+            adapter_class = getattr(activator_module, 'MaskedLowRankAdapter')
+            te_adapter = adapter_class(
+                hidden_size=hidden_size,
+                rank=te_config.rank,
+                alpha=te_config.alpha,
+                dropout=te_config.dropout,
+            )
+        tap_config = config.tap_adapters
+        activator = TextActivator(
+            embedding_dim=hidden_size,
+            hidden_size=hidden_size,
+            embedding_tokens=config.embedding.tokens,
+            initializer=initializer,
+            te_adapter=te_adapter,
+            tap_layers=tap_config.tap_layers,
+            tap_rank=tap_config.rank,
+            tap_alpha=tap_config.alpha,
+            tap_dropout=tap_config.dropout,
+            tap_learnable_scale=tap_config.learnable_scale,
+            tap_scale_init=tap_config.scale_init,
+            per_tap=tap_config.per_tap,
+        ).to(self.device_torch, dtype=get_torch_dtype(config.embedding.dtype))
+        activator.atomic_token_id = atomic_token_id
+        activator.lookup_token_id = int(safe_ids[0])
+        return activator
+
+    def _load_activator_source(self, modules):
+        source = self._phase_config().text_activator_source
+        checkpoint = source.path or self.three_phase_trigger_training.text_activator.embedding.checkpoint_path
+        if checkpoint is None:
+            return
+        loader = self._first_callable(
+            modules['artifacts'],
+            ('load_text_activator_artifacts', 'load_text_activator', 'load_activator_artifacts'),
+        )
+        if loader is None:
+            state = load_file(checkpoint)
+            self.text_activator.load_state_dict(state, strict=True)
+            return
+        self._call_supported(
+            loader,
+            activator=self.text_activator,
+            text_activator=self.text_activator,
+            source=source,
+            checkpoint=checkpoint,
+            phase=self.runtime_phase,
+            config=self.three_phase_trigger_training,
+        )
+
+    def hook_after_model_load(self):
+        if not self.three_phase_enabled:
+            return
+        self._resolve_runtime_phase()
+        modules = self._load_trigger_binding_modules()
+        self.text_activator = self._build_text_activator(modules)
+        if not hasattr(self.text_activator, 'apply_embeddings') and hasattr(self.text_activator, 'apply_embedding'):
+            self.text_activator.apply_embeddings = MethodType(
+                lambda activator, value, **kwargs: activator.apply_embedding(
+                    value, token_mask=kwargs.get('trigger_mask')
+                ),
+                self.text_activator,
+            )
+        if not hasattr(self.text_activator, 'apply_internal_adapter') and hasattr(self.text_activator, 'apply_te_adapter'):
+            self.text_activator.apply_internal_adapter = MethodType(
+                lambda activator, value, **kwargs: activator.apply_te_adapter(
+                    value, token_mask=kwargs.get('trigger_mask')
+                ),
+                self.text_activator,
+            )
+        if not hasattr(self.text_activator, 'apply_tap_adapter') and hasattr(self.text_activator, 'apply_tap'):
+            self.text_activator.apply_tap_adapter = MethodType(
+                lambda activator, value, **kwargs: activator.apply_tap(
+                    kwargs.get('layer_idx', kwargs.get('tap_index')), value,
+                    token_mask=kwargs.get('trigger_mask'),
+                ),
+                self.text_activator,
+            )
+        self._load_activator_source(modules)
+        installer = getattr(self.sd, 'install_text_activator', None) or getattr(self.sd, 'set_text_activator', None)
+        if not callable(installer):
+            raise RuntimeError('loaded StableDiffusion model does not expose install_text_activator')
+        installer(self.text_activator, runtime_mode='full')
+        self._trigger_binding_initial_parameters = {
+            name: parameter.detach().float().cpu().clone()
+            for name, parameter in self.text_activator.named_parameters()
+        }
+        self._install_trigger_binding_prompt_encoder(modules)
+
+    def _install_trigger_binding_prompt_encoder(self, modules):
+        original = self.sd.get_prompt_embeds
+        self._trigger_binding_prompt_encoder = original
+
+        def encode_with_binding(sd_model, prompt):
+            if not self.three_phase_enabled or self.runtime_phase == 'b':
+                return original(prompt)
+            prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+            runtime = modules['runtime']
+            batch = runtime.bind_trigger_batch(
+                sd_model.tokenizer,
+                prompts,
+                self.three_phase_trigger_training.literal,
+                placeholder=self.three_phase_trigger_training.placeholder,
+                max_length=getattr(sd_model, 'max_text_length', None),
+                require_placeholder=True,
+                mask_all_occurrences=self.three_phase_trigger_training.mask_all_occurrences,
+                require_atomic=True,
+                expected_token_id=getattr(self.text_activator, 'atomic_token_id', None),
+            ).to(sd_model.text_encoder.device)
+            pipeline = importlib.import_module(
+                'extensions_built_in.diffusion_models.ideogram4.src.pipeline'
+            )
+            features = pipeline.get_qwen3_vl_features(
+                sd_model.text_encoder,
+                batch.input_ids,
+                batch.attention_mask,
+                (batch.attention_mask.cumsum(dim=-1) - 1).clamp(min=0).long(),
+                trigger_mask=batch.trigger_mask,
+                text_activator=self.text_activator,
+                runtime_mode='full',
+            )
+            from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
+            return AdvancedPromptEmbeds(
+                text_embeds=[features[index].to(sd_model.torch_dtype) for index in range(features.shape[0])]
+            )
+
+        self.sd.get_prompt_embeds = MethodType(encode_with_binding, self.sd)
+
+    def hook_add_extra_train_params(self, params):
+        if not self.three_phase_enabled:
+            return params
+        self._configure_phase_trainability()
+        phase_is_b = self.runtime_phase == 'b'
+        allowed_ids = set()
+        if phase_is_b:
+            if self.network is not None:
+                allowed_ids.update(id(parameter) for parameter in self.network.parameters() if parameter.requires_grad)
+        else:
+            allowed_ids.update(id(parameter) for parameter in self.text_activator.parameters() if parameter.requires_grad)
+        filtered = []
+        for group in params:
+            if isinstance(group, dict):
+                kept = [parameter for parameter in group.get('params', []) if id(parameter) in allowed_ids]
+                if kept:
+                    copied = dict(group)
+                    copied['params'] = kept
+                    filtered.append(copied)
+            elif id(group) in allowed_ids:
+                filtered.append(group)
+        if not phase_is_b:
+            learning_rates = self._phase_config().learning_rates
+            groups = self.text_activator.parameter_groups(learning_rates)
+            present = {id(parameter) for group in filtered for parameter in (group.get('params', []) if isinstance(group, dict) else [group])}
+            for group in groups:
+                group['params'] = [parameter for parameter in group['params'] if id(parameter) not in present]
+                if group['params']:
+                    filtered.append(group)
+        if not filtered:
+            raise RuntimeError(f'runtime_phase {self.runtime_phase} selected no trainable parameters')
+        return filtered
 
     def before_model_load(self):
         pass
@@ -295,6 +608,34 @@ class SDTrainer(BaseSDTrainProcess):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
+        if self.three_phase_enabled:
+            probe_config = self.three_phase_trigger_training.reachability_probe
+            if probe_config.get('enabled', True):
+                modules = self._load_trigger_binding_modules()
+                probe = self._first_callable(
+                    modules['runtime'],
+                    ('run_reachability_probe', 'probe_reachability', 'validate_reachability'),
+                ) or self._first_callable(
+                    modules['losses'],
+                    ('run_reachability_probe', 'probe_reachability', 'validate_reachability'),
+                )
+                if probe is not None:
+                    result = self._call_supported(
+                        probe,
+                        trainer=self,
+                        sd=self.sd,
+                        activator=self.text_activator,
+                        text_activator=self.text_activator,
+                        phase=self.runtime_phase,
+                        config=probe_config,
+                        phase_config=self._phase_config(),
+                    )
+                    if result is False or (isinstance(result, dict) and not result.get('reachable', result.get('ok', True))):
+                        raise RuntimeError(f'trigger activator reachability probe failed: {result}')
+                else:
+                    diagnostics = self.text_activator.probe_diagnostics()
+                    if not diagnostics.active or diagnostics.total_parameters == 0:
+                        raise RuntimeError(f'trigger activator reachability probe failed: {diagnostics}')
         if self.is_caching_text_embeddings:
             # make sure model is on cpu for this part so we don't oom.
             self.sd.unet.to('cpu')
@@ -1379,6 +1720,140 @@ class SDTrainer(BaseSDTrainProcess):
         )
     
 
+    def _activator_mode(self, mode):
+        if not self.three_phase_enabled or self.text_activator is None:
+            return contextlib.nullcontext()
+        setter = getattr(self.sd, 'set_text_activator_runtime_mode', None)
+        previous = getattr(self.sd, 'text_activator_runtime_mode', None)
+
+        @contextlib.contextmanager
+        def runtime_context():
+            if callable(setter):
+                setter(mode)
+            try:
+                yield
+            finally:
+                if callable(setter):
+                    setter(previous)
+        return runtime_context()
+
+    def _calculate_trigger_binding_loss(
+        self,
+        noisy_latents,
+        noise,
+        timesteps,
+        batch,
+        pred_kwargs,
+        mask_multiplier,
+        dtype,
+    ):
+        raw_prompts = [
+            getattr(item, 'caption_template', None) or item.raw_caption
+            for item in batch.file_items
+        ]
+        with self._activator_mode('full'):
+            active_embeds = self.sd.encode_prompt(raw_prompts, long_prompts=self.do_long_prompts)
+            active_pred = self.predict_noise(
+                noisy_latents=noisy_latents,
+                timesteps=timesteps,
+                conditional_embeds=active_embeds.to(self.device_torch, dtype=dtype),
+                unconditional_embeds=None,
+                batch=batch,
+                is_primary_pred=True,
+                **pred_kwargs,
+            )
+        with self._activator_mode('activator_bypass'):
+            bypass_embeds = self.sd.encode_prompt(raw_prompts, long_prompts=self.do_long_prompts)
+            with torch.no_grad():
+                bypass_pred = self.predict_noise(
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    conditional_embeds=bypass_embeds.to(self.device_torch, dtype=dtype),
+                    unconditional_embeds=None,
+                    batch=batch,
+                    **pred_kwargs,
+                ).detach()
+        target = shared_loss_target(self, noise, batch, timesteps)
+        loss_module = self._load_trigger_binding_modules()['losses']
+        loss_fn = self._first_callable(
+            loss_module,
+            ('calculate_trigger_binding_losses', 'trigger_binding_losses', 'compute_trigger_binding_losses'),
+        )
+        if loss_fn is not None:
+            result = self._call_supported(
+                loss_fn,
+                trainer=self,
+                phase=self.runtime_phase,
+                phase_config=self._phase_config(),
+                config=self.three_phase_trigger_training,
+                active_prediction=active_pred,
+                activator_prediction=active_pred,
+                bypass_prediction=bypass_pred,
+                baseline_prediction=bypass_pred,
+                target=target,
+                noise=noise,
+                noisy_latents=noisy_latents,
+                timesteps=timesteps,
+                batch=batch,
+                mask_multiplier=mask_multiplier,
+                active_embeddings=active_embeds,
+                bypass_embeddings=bypass_embeds,
+            )
+        elif self.runtime_phase == 'a1' and callable(getattr(loss_module, 'compute_a1_loss', None)):
+            floor_config = self._phase_config().activator_gain_floor
+            floor = 0.0
+            if floor_config.enabled and floor_config.schedule.keyframes:
+                floor = loss_module.scheduled_gain_floor(
+                    self.step_num,
+                    floor_config.schedule.keyframes,
+                    floor_config.schedule.interpolation,
+                )
+            result = loss_module.compute_a1_loss(
+                active_pred,
+                target,
+                bypass_prediction=bypass_pred,
+                gain_floor=floor,
+                gain_floor_weight=floor_config.weight if floor_config.enabled else 0.0,
+            )
+        elif self.runtime_phase == 'a2' and callable(getattr(loss_module, 'compute_a2_loss', None)):
+            floor_config = self._phase_config().activator_gain_floor
+            floor = 0.0
+            if floor_config.enabled and floor_config.schedule.keyframes:
+                floor = loss_module.scheduled_gain_floor(
+                    self.step_num,
+                    floor_config.schedule.keyframes,
+                    floor_config.schedule.interpolation,
+                )
+            result = loss_module.compute_a2_loss(
+                active_pred,
+                bypass_pred,
+                target,
+                gain_floor=floor,
+                gain_floor_weight=floor_config.weight if floor_config.enabled else 0.0,
+            )
+        else:
+            raise RuntimeError('toolkit.trigger_binding_losses has no supported loss entry point')
+        metrics = {}
+        if torch.is_tensor(result):
+            loss = result
+        elif isinstance(result, tuple):
+            loss, metrics = result[0], result[1] if len(result) > 1 else {}
+        elif isinstance(result, dict):
+            loss = result.get('loss', result.get('total_loss'))
+            metrics = result.get('metrics', result.get('logs', {}))
+        else:
+            loss = getattr(result, 'loss', getattr(result, 'total_loss', None))
+            metrics = getattr(result, 'metrics', {})
+        if loss is None:
+            raise RuntimeError('trigger binding loss entry point did not return a loss tensor')
+        self._trigger_binding_last_metrics = dict(metrics or {})
+        self.additional_logs['runtime_phase'] = self.runtime_phase
+        for key, value in self._trigger_binding_last_metrics.items():
+            if isinstance(value, (int, float)):
+                self.additional_logs[f'phase/{self.runtime_phase}/{key}'] = float(value)
+        self.additional_logs[f'phase/{self.runtime_phase}/loss'] = float(loss.detach().item())
+        return loss
+
     def _encode_tst_prompt_variants(self, batch, trigger_prompts, decoy_prompts, dtype):
         prompt_kwargs = {}
         if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
@@ -2439,7 +2914,18 @@ class SDTrainer(BaseSDTrainProcess):
                     )
                 else:
                     tst_loss = None
-                    if self.trigger_selective_training.enabled:
+                    if self.three_phase_enabled and self.runtime_phase in {'a1', 'a2'}:
+                        with self.timer('trigger_binding_predict_and_loss'):
+                            tst_loss = self._calculate_trigger_binding_loss(
+                                noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                                noise=noise.to(self.device_torch, dtype=dtype).detach(),
+                                timesteps=timesteps,
+                                batch=batch,
+                                pred_kwargs=pred_kwargs,
+                                mask_multiplier=mask_multiplier,
+                                dtype=dtype,
+                            )
+                    elif self.trigger_selective_training.enabled:
                         with self.timer('tst_predict_and_loss'):
                             tst_loss = self._calculate_tst_loss(
                                 noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
@@ -2546,6 +3032,92 @@ class SDTrainer(BaseSDTrainProcess):
 
         return loss.detach()
         # flush()
+
+    def post_save_hook(self, save_path):
+        if not self.three_phase_enabled or self.text_activator is None:
+            return
+        modules = self._load_trigger_binding_modules()
+        proof = {}
+        for name, parameter in self.text_activator.named_parameters():
+            initial = self._trigger_binding_initial_parameters.get(name)
+            if initial is None:
+                continue
+            proof[name] = float((parameter.detach().float().cpu() - initial).norm().item())
+        writer = self._first_callable(
+            modules['artifacts'],
+            ('save_phase_artifacts', 'save_trigger_binding_artifacts', 'save_text_activator_artifacts'),
+        )
+        artifact_config = getattr(
+            self.three_phase_trigger_training.artifacts, f'phase_{self.runtime_phase}'
+        )
+        if writer is not None:
+            self._call_supported(
+                writer,
+                trainer=self,
+                activator=self.text_activator,
+                text_activator=self.text_activator,
+                phase=self.runtime_phase,
+                step=self.step_num,
+                save_path=save_path,
+                save_root=self.save_root,
+                config=self.three_phase_trigger_training,
+                phase_config=self._phase_config(),
+                artifact_config=artifact_config,
+                metrics=self._trigger_binding_last_metrics,
+                parameter_change_proof=proof,
+            )
+            return
+        save_artifact = getattr(modules['artifacts'], 'save_artifact', None)
+        if not callable(save_artifact):
+            raise RuntimeError('toolkit.trigger_binding_artifacts has no supported save entry point')
+        phase_root = os.path.join(
+            self.three_phase_trigger_training.run_root or self.save_root,
+            f'phase_{self.runtime_phase}',
+        )
+        output_dir = os.path.join(
+            phase_root,
+            artifact_config.final_dir if self.step_num >= self._phase_config().steps else artifact_config.checkpoint_dir,
+        )
+        if self.step_num < self._phase_config().steps:
+            output_dir = os.path.join(output_dir, str(self.step_num))
+        os.makedirs(output_dir, exist_ok=True)
+        component_specs = (
+            ('embedding', self.text_activator.embedding, artifact_config.embedding_filename),
+            ('te_adapter', self.text_activator.te_adapter, artifact_config.te_adapter_filename),
+            ('tap_adapter', self.text_activator.tap_adapters, artifact_config.tap_adapter_filename),
+        )
+        for artifact_type, component, filename in component_specs:
+            if component is None:
+                continue
+            tensors = {
+                name: tensor.detach().cpu()
+                for name, tensor in component.state_dict().items()
+            }
+            if tensors:
+                save_artifact(
+                    os.path.join(output_dir, filename),
+                    artifact_type,
+                    tensors,
+                    phase=self._phase_config(),
+                    source=self._phase_config().text_activator_source,
+                    config=self.three_phase_trigger_training.text_activator,
+                    extra={
+                        'runtime_phase': self.runtime_phase,
+                        'step': self.step_num,
+                        'metrics': self._trigger_binding_last_metrics,
+                        'parameter_change_proof': proof,
+                    },
+                )
+        metrics_path = os.path.join(phase_root, artifact_config.metrics_file)
+        os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+        with open(metrics_path, 'a', encoding='utf-8') as handle:
+            import json
+            handle.write(json.dumps({
+                'phase': self.runtime_phase,
+                'step': self.step_num,
+                'metrics': self._trigger_binding_last_metrics,
+                'parameter_change_proof': proof,
+            }, sort_keys=True) + '\n')
 
     def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
         if isinstance(batch, list):

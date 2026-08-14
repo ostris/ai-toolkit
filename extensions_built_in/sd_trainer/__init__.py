@@ -39,6 +39,17 @@ class UITrainerExtension(Extension):
 
 
 # This is a universal trainer that can be from ui or api
+class ThreePhaseTriggerTrainerExtension(Extension):
+    uid = "three_phase_trigger_trainer"
+    name = "Three-Phase Trigger Trainer"
+
+    @classmethod
+    def get_process(cls):
+        from .ThreePhaseTriggerTrainer import ThreePhaseTriggerTrainer
+
+        return ThreePhaseTriggerTrainer
+
+
 class DiffusionTrainerExtension(Extension):
     # uid must be unique, it is how the extension is identified
     uid = "diffusion_trainer"
@@ -67,4 +78,5 @@ AI_TOOLKIT_EXTENSIONS = [
     TextualInversionTrainer,
     UITrainerExtension,
     DiffusionTrainerExtension,
+    ThreePhaseTriggerTrainerExtension,
 ]

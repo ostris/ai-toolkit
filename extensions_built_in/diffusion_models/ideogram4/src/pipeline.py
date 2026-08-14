@@ -7,8 +7,11 @@ sampling pipeline used to render preview images during training.
 
 from __future__ import annotations
 
+import contextlib
+import importlib
+import inspect
 import math
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 from PIL import Image
@@ -104,48 +107,240 @@ def unpatchify_latents(z: torch.Tensor, patch_size: int = 2) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-@torch.no_grad()
+def _call_activator(
+    activator: Any,
+    method_names: tuple[str, ...],
+    value: torch.Tensor,
+    **kwargs,
+) -> torch.Tensor:
+    """Call the first supported activator hook without imposing a hard API."""
+    for method_name in method_names:
+        method = getattr(activator, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            signature = None
+        leading_args = (value,)
+        if method_name == "apply_tap" and "tap_layer" in kwargs:
+            leading_args = (kwargs["tap_layer"], value)
+        call_kwargs = dict(kwargs)
+        if method_name == "apply_tap":
+            call_kwargs.pop("tap_layer", None)
+        if signature is not None:
+            accepted = signature.parameters
+            call_kwargs = {
+                key: item for key, item in call_kwargs.items() if key in accepted
+            }
+        result = method(*leading_args, **call_kwargs)
+        if result is None:
+            return value
+        if isinstance(result, dict):
+            for key in ("hidden_states", "inputs_embeds", "embeddings", "output"):
+                if key in result:
+                    return result[key]
+        if isinstance(result, (tuple, list)):
+            return result[0]
+        return result
+    return value
+
+
+def _activator_runtime_context(
+    activator: Any,
+    runtime_mode: Optional[str],
+    trigger_mask: Optional[torch.Tensor],
+):
+    if activator is None:
+        return contextlib.nullcontext()
+
+    stack = contextlib.ExitStack()
+    runtime_module = None
+    try:
+        runtime_module = importlib.import_module("toolkit.trigger_binding")
+    except ImportError:
+        pass
+    activator_module = None
+    try:
+        activator_module = importlib.import_module(
+            "toolkit.models.ideogram4_trigger_activator"
+        )
+    except ImportError:
+        pass
+
+    trigger_runtime = getattr(activator_module, "trigger_runtime", None)
+    if callable(trigger_runtime):
+        stack.enter_context(
+            trigger_runtime(
+                {
+                    "token_mask": trigger_mask,
+                    "trigger_mask": trigger_mask,
+                    "runtime_mode": runtime_mode,
+                }
+            )
+        )
+    mode_context = getattr(runtime_module, "activator_runtime_mode", None)
+    if callable(mode_context) and runtime_mode is not None:
+        stack.enter_context(mode_context(activator, runtime_mode))
+    else:
+        for method_name in ("runtime", "runtime_context", "use_runtime_mode"):
+            method = getattr(activator, method_name, None)
+            if callable(method):
+                try:
+                    stack.enter_context(method(runtime_mode))
+                except TypeError:
+                    stack.enter_context(method(mode=runtime_mode))
+                break
+    return stack
+
+
+def _runtime_component_enabled(runtime_mode: Optional[str], component: str) -> bool:
+    if runtime_mode is None:
+        return True
+    try:
+        module = importlib.import_module("toolkit.trigger_binding")
+        state = module.get_activator_runtime_state(runtime_mode)
+    except (ImportError, AttributeError):
+        return runtime_mode not in ("activator_bypass", "stock_literal")
+    return bool(getattr(state, f"{component}_enabled", False))
+
+
+def _adapt_text_activator(activator: Any) -> Any:
+    """Give optional toolkit modules a chance to adapt their evolving runtime API."""
+    if activator is None:
+        return None
+    for module_name in (
+        "toolkit.trigger_binding",
+        "toolkit.models.ideogram4_trigger_activator",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        for adapter_name in (
+            "adapt_ideogram4_text_activator",
+            "adapt_text_activator",
+            "ensure_ideogram4_text_activator",
+        ):
+            adapter = getattr(module, adapter_name, None)
+            if callable(adapter):
+                adapted = adapter(activator)
+                if adapted is not None:
+                    activator = adapted
+                break
+    return activator
+
+
 def get_qwen3_vl_features(
     text_encoder,
     token_ids: torch.Tensor,
     attention_mask: torch.Tensor,
     pos_2d: torch.Tensor,
-) -> torch.Tensor:
-    """Run Qwen3-VL and concat the hidden states from the activation layers.
+    trigger_mask: Optional[torch.Tensor] = None,
+    text_activator: Any = None,
+    runtime_mode: Optional[str] = None,
+    return_taps: bool = False,
+):
+    """Run Qwen3-VL and optionally apply trigger-selective text activation.
 
-    Returns a (B, L, hidden_size * num_layers) tensor (in the encoder's dtype),
-    zeroed at non-text (padding) positions.
+    Gradient ownership belongs to the caller. With no activator and
+    ``return_taps=False`` this returns the original concatenated feature tensor.
     """
     language_model = text_encoder.language_model
+    text_activator = _adapt_text_activator(text_activator)
+    activator_kwargs = {
+        "runtime_mode": runtime_mode,
+        "token_ids": token_ids,
+        "attention_mask": attention_mask,
+    }
 
-    inputs_embeds = language_model.embed_tokens(token_ids)
+    with _activator_runtime_context(text_activator, runtime_mode, trigger_mask):
+        lookup_ids = token_ids
+        atomic_token_id = getattr(text_activator, "atomic_token_id", None)
+        lookup_token_id = getattr(text_activator, "lookup_token_id", None)
+        if atomic_token_id is not None and lookup_token_id is not None:
+            lookup_ids = token_ids.masked_fill(
+                token_ids == int(atomic_token_id), int(lookup_token_id)
+            )
+        inputs_embeds = language_model.embed_tokens(lookup_ids)
+        if text_activator is not None and _runtime_component_enabled(
+            runtime_mode, "embedding"
+        ):
+            inputs_embeds = _call_activator(
+                text_activator,
+                (
+                    "apply_embedding",
+                    "override_embeddings",
+                    "apply_embedding_override",
+                    "apply_embeddings",
+                ),
+                inputs_embeds,
+                token_mask=trigger_mask,
+                **activator_kwargs,
+            )
 
-    position_ids_4d = pos_2d[None, ...].expand(4, pos_2d.shape[0], -1)
-    text_position_ids = position_ids_4d[0]
-    mrope_position_ids = position_ids_4d[1:]
+        position_ids_4d = pos_2d[None, ...].expand(4, pos_2d.shape[0], -1)
+        text_position_ids = position_ids_4d[0]
+        mrope_position_ids = position_ids_4d[1:]
 
-    causal_mask = create_causal_mask(
-        config=language_model.config,
-        inputs_embeds=inputs_embeds,
-        attention_mask=attention_mask,
-        past_key_values=None,
-        position_ids=text_position_ids,
-    )
-    position_embeddings = language_model.rotary_emb(inputs_embeds, mrope_position_ids)
-
-    tap_set = set(QWEN3_VL_ACTIVATION_LAYERS)
-    captured: dict[int, torch.Tensor] = {}
-    hidden_states = inputs_embeds
-    for layer_idx, decoder_layer in enumerate(language_model.layers):
-        hidden_states = decoder_layer(
-            hidden_states,
-            attention_mask=causal_mask,
-            position_ids=text_position_ids,
+        causal_mask = create_causal_mask(
+            config=language_model.config,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
             past_key_values=None,
-            position_embeddings=position_embeddings,
+            position_ids=text_position_ids,
         )
-        if layer_idx in tap_set:
-            captured[layer_idx] = hidden_states
+        position_embeddings = language_model.rotary_emb(
+            inputs_embeds, mrope_position_ids
+        )
+
+        tap_set = set(QWEN3_VL_ACTIVATION_LAYERS)
+        captured: dict[int, torch.Tensor] = {}
+        hidden_states = inputs_embeds
+        for layer_idx, decoder_layer in enumerate(language_model.layers):
+            hidden_states = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                position_ids=text_position_ids,
+                past_key_values=None,
+                position_embeddings=position_embeddings,
+            )
+            if text_activator is not None and _runtime_component_enabled(
+                runtime_mode, "internal"
+            ):
+                hidden_states = _call_activator(
+                    text_activator,
+                    (
+                        "apply_te_adapter",
+                        "apply_internal_adapter",
+                        "apply_hidden_states",
+                    ),
+                    hidden_states,
+                    token_mask=trigger_mask,
+                    layer_idx=layer_idx,
+                    **activator_kwargs,
+                )
+            if layer_idx in tap_set:
+                tap = hidden_states
+                if text_activator is not None and _runtime_component_enabled(
+                    runtime_mode, "tap"
+                ):
+                    tap = _call_activator(
+                        text_activator,
+                        (
+                            "apply_tap",
+                            "adapt_tap",
+                            "apply_tap_adapter",
+                            "apply_pre_concat",
+                        ),
+                        tap,
+                        tap_layer=layer_idx,
+                        token_mask=trigger_mask,
+                        layer_idx=layer_idx,
+                        tap_index=QWEN3_VL_ACTIVATION_LAYERS.index(layer_idx),
+                        **activator_kwargs,
+                    )
+                captured[layer_idx] = tap
 
     selected = [captured[i] for i in QWEN3_VL_ACTIVATION_LAYERS]
     batch_size, seq_len = token_ids.shape
@@ -155,6 +350,8 @@ def get_qwen3_vl_features(
 
     text_mask = attention_mask.to(stacked.dtype).unsqueeze(-1)
     stacked = stacked * text_mask
+    if return_taps:
+        return stacked, selected
     return stacked
 
 

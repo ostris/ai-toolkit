@@ -63,7 +63,7 @@ from tqdm import tqdm
 
 from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
     GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs, \
-    DecoratorConfig, TriggerSelectiveTrainingConfig
+    DecoratorConfig, TriggerSelectiveTrainingConfig, ThreePhaseTriggerTrainingConfig
 from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
@@ -113,6 +113,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.trigger_selective_training = TriggerSelectiveTrainingConfig(
             **self.get_conf('trigger_selective_training', {})
         )
+        self.three_phase_trigger_training = ThreePhaseTriggerTrainingConfig(
+            **self.get_conf('three_phase_trigger_training', {})
+        )
+        if self.three_phase_trigger_training.literal is None:
+            self.three_phase_trigger_training.literal = self.get_conf('trigger_word', None)
         model_config = self.get_conf('model', {})
         self.modules_being_trained: List[torch.nn.Module] = []
 
@@ -271,6 +276,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.trigger_selective_training,
             self.trigger_word,
             self.network_config,
+            self.three_phase_trigger_training,
         )
         
         do_profiler = self.get_conf('torch_profiler', False)

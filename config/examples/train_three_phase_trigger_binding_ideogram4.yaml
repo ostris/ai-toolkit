@@ -1,0 +1,161 @@
+---
+job: extension
+config:
+  name: ig4_three_phase_trigger_binding
+  process:
+    - type: three_phase_trigger_trainer
+      name: ig4_three_phase_trigger_binding
+      training_folder: ./output
+      device: cuda
+      trigger_word: <r1X1dOn9mA2>
+      network:
+        type: lora
+        linear: 32
+        linear_alpha: 16
+      datasets:
+        - folder_path: /path/to/ideogram4/images
+          caption_ext: json
+          cache_text_embeddings: false
+          resolution: [256, 768, 1280]
+      train:
+        batch_size: 1
+        steps: 1
+        train_unet: true
+        train_text_encoder: false
+        cache_text_embeddings: false
+        unload_text_encoder: false
+        optimizer: adamw8bit
+        lr: 0.00008
+        dtype: bf16
+        gradient_checkpointing: true
+        disable_sampling: true
+      save:
+        dtype: bf16
+        save_every: 100
+        save_format: safetensors
+      model:
+        name_or_path: ideogram-ai/ideogram-4-fp8
+        arch: ideogram4
+        quantize: true
+        qtype: qfloat8
+        quantize_te: false
+        low_vram: false
+      sample:
+        samples: []
+      trigger_selective_training:
+        enabled: true
+        caption_sources:
+          enabled: true
+          sources:
+            - name: json
+              use_main_dataset: true
+              caption_ext: .json
+              format: text
+            - name: natural
+              path: /path/to/natural/captions
+              caption_ext: .txt
+              format: text
+          schedule:
+            keyframes:
+              - {step: 0, json: 1.0, natural: 0.0}
+              - {step: 1000, json: 0.5, natural: 0.5}
+        negative_styles:
+          expected_category_count: 3
+          categories:
+            - {name: neutral, probability: 0.3, phrases: [""]}
+            - {name: hard, probability: 0.4, phrases: [painting, illustration, anime]}
+            - {name: far, probability: 0.3, phrases: [line art, photorealistic photograph, 3D render]}
+        path3:
+          decoy_gain_mode: positive_clamped
+          margin_schedule:
+            keyframes: [{step: 0, value: 0.02}, {step: 1000, value: 0.1}]
+          gain_floor:
+            enabled: true
+            weight: 1.0
+            schedule:
+              keyframes: [{step: 0, value: 0.0}, {step: 1000, value: 0.08}]
+        loss_schedule:
+          keyframes:
+            - {step: 0, path1: 0.8, path2: 0.1, path3: 0.1}
+            - {step: 1000, path1: 0.5, path2: 0.15, path3: 0.35}
+      three_phase_trigger_training:
+        enabled: true
+        trigger:
+          placeholder: "[trigger]"
+          literal: <r1X1dOn9mA2>
+          span_detection: offsets
+          mask_all_occurrences: true
+          occurrence_mode: additive
+        text_activator:
+          embedding:
+            enabled: true
+            tokens: 1
+            init_mode: semantic
+            init_words: illustration
+            dtype: bf16
+          te_adapter:
+            enabled: false
+            rank: 4
+            alpha: 4
+            child_modules: [down_proj]
+          tap_adapters:
+            enabled: false
+            rank: 4
+            alpha: 4
+            tap_layers: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 35]
+        reachability_probe:
+          enabled: true
+          require_finite_gradients: true
+          require_mask_zero_outside_trigger: true
+        phase_a1:
+          enabled: true
+          steps: 400
+          optimizer: adamw
+          learning_rates: {embedding: 0.001}
+          train: {embedding: true}
+          caption_sources: {paired: [json, natural]}
+          save_steps: [100, 200, 400]
+          losses:
+            trigger_gain_floor:
+              enabled: true
+              weight: 1.0
+              schedule:
+                keyframes: [{step: 0, value: 0.0}, {step: 400, value: 0.05}]
+            context_consistency:
+              enabled: true
+              weight: 0.02
+              loss_type: cosine
+              warmup_steps: 100
+              min_delta_norm: 0.000001
+        phase_b:
+          enabled: true
+          steps: 2000
+          optimizer: adamw8bit
+          learning_rates: {diffusion_lora: 0.00008}
+          train: {diffusion_lora: true}
+          text_activator_source: {phase: a1, step: final}
+          save_steps: [500, 1000, 1500, 2000]
+        phase_a2:
+          enabled: true
+          steps: 400
+          optimizer: adamw
+          learning_rates: {embedding: 0.0001}
+          train: {embedding: true}
+          text_activator_source: {phase: a1, step: final}
+          diffusion_lora_source: {phase: b, step: final}
+          caption_sources: {paired: [json, natural]}
+          save_steps: [100, 200, 400]
+          losses:
+            activator_gain_floor:
+              enabled: true
+              weight: 1.0
+              schedule:
+                keyframes: [{step: 0, value: 0.02}, {step: 400, value: 0.08}]
+            context_consistency:
+              enabled: true
+              weight: 0.02
+              loss_type: cosine
+              warmup_steps: 100
+              min_delta_norm: 0.000001
+        artifacts:
+          output_root: ./output/ig4_three_phase_trigger_binding

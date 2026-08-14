@@ -1,5 +1,7 @@
+import importlib
+import inspect
 import os
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 import yaml
@@ -25,7 +27,11 @@ import huggingface_hub
 from huggingface_hub.errors import EntryNotFoundError
 from transformers import AutoModel, AutoTokenizer
 
-from .src.transformer import Ideogram4Config, Ideogram4Transformer2DModel
+from .src.transformer import (
+    QWEN3_VL_ACTIVATION_LAYERS,
+    Ideogram4Config,
+    Ideogram4Transformer2DModel,
+)
 from .src.vae import AutoEncoder, AutoEncoderParams, convert_diffusers_state_dict
 from .src.latent_norm import get_latent_norm
 from .src.pipeline import (
@@ -194,6 +200,8 @@ class Ideogram4Model(BaseModel):
         # CFG pass. Loaded from model_config.unconditional_lora_path if set; stays
         # inactive everywhere else (training, conditional pass).
         self.unconditional_lora: Optional[LoRASpecialNetwork] = None
+        self.text_activator: Any = None
+        self.text_activator_runtime_mode: Optional[str] = None
 
     @property
     def text_embedding_space_version(self):
@@ -203,6 +211,46 @@ class Ideogram4Model(BaseModel):
     @staticmethod
     def get_train_scheduler():
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
+
+    def install_text_activator(self, text_activator, runtime_mode: Optional[str] = None):
+        """Install an optional trigger activator while keeping its API decoupled."""
+        activator = text_activator
+        for module_name in (
+            "toolkit.trigger_binding",
+            "toolkit.models.ideogram4_trigger_activator",
+        ):
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+            for name in (
+                "adapt_ideogram4_text_activator",
+                "adapt_text_activator",
+                "ensure_ideogram4_text_activator",
+            ):
+                adapter = getattr(module, name, None)
+                if callable(adapter):
+                    adapted = adapter(activator)
+                    if adapted is not None:
+                        activator = adapted
+                    break
+        self.text_activator = activator
+        self.text_activator_runtime_mode = runtime_mode
+        return activator
+
+    def set_text_activator(self, text_activator, runtime_mode: Optional[str] = None):
+        return self.install_text_activator(text_activator, runtime_mode)
+
+    def clear_text_activator(self):
+        self.text_activator = None
+        self.text_activator_runtime_mode = None
+
+    def set_text_activator_runtime_mode(self, runtime_mode: Optional[str]):
+        self.text_activator_runtime_mode = runtime_mode
+        activator = self.text_activator
+        setter = getattr(activator, "set_runtime_mode", None)
+        if callable(setter):
+            setter(runtime_mode)
 
     def get_bucket_divisibility(self):
         # 8 for the VAE downsample, 2 for the patch size.
@@ -502,23 +550,98 @@ class Ideogram4Model(BaseModel):
         )
         return pred
 
-    def get_prompt_embeds(self, prompt) -> AdvancedPromptEmbeds:
+    def _resolve_trigger_mask(
+        self,
+        prompt: str,
+        token_ids: torch.Tensor,
+        trigger_mask: Optional[torch.Tensor],
+        text_activator: Any,
+    ) -> Optional[torch.Tensor]:
+        if trigger_mask is not None:
+            mask = torch.as_tensor(trigger_mask, device=token_ids.device)
+            if mask.dim() == 1:
+                mask = mask.unsqueeze(0)
+            if mask.shape != token_ids.shape:
+                raise ValueError(
+                    f"trigger_mask shape {tuple(mask.shape)} does not match token ids "
+                    f"shape {tuple(token_ids.shape)}"
+                )
+            return mask.to(dtype=torch.bool)
+
+        candidates = [text_activator]
+        for module_name in (
+            "toolkit.trigger_binding",
+            "toolkit.models.ideogram4_trigger_activator",
+        ):
+            try:
+                candidates.append(importlib.import_module(module_name))
+            except ImportError:
+                pass
+        kwargs = {
+            "prompt": prompt,
+            "text": prompt,
+            "token_ids": token_ids,
+            "input_ids": token_ids,
+            "tokenizer": self.tokenizer,
+        }
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            for name in (
+                "get_trigger_mask",
+                "build_trigger_mask",
+                "resolve_trigger_mask",
+                "detect_trigger_mask",
+            ):
+                method = getattr(candidate, name, None)
+                if not callable(method):
+                    continue
+                try:
+                    signature = inspect.signature(method)
+                    supported = {
+                        key: value
+                        for key, value in kwargs.items()
+                        if key in signature.parameters
+                    }
+                    mask = method(**supported)
+                except (TypeError, ValueError):
+                    continue
+                if mask is not None:
+                    return self._resolve_trigger_mask(
+                        prompt, token_ids, mask, text_activator=None
+                    )
+        return None
+
+    def get_prompt_embeds(
+        self,
+        prompt,
+        trigger_mask=None,
+        text_activator=None,
+        runtime_mode: Optional[str] = None,
+        return_taps: bool = False,
+        **kwargs,
+    ) -> AdvancedPromptEmbeds:
         if isinstance(prompt, str):
             prompt = [prompt]
 
         if self.text_encoder.device == torch.device("cpu"):
             self.text_encoder.to(self.device_torch)
         device = self.text_encoder.device
+        activator = self.text_activator if text_activator is None else text_activator
+        mode = self.text_activator_runtime_mode if runtime_mode is None else runtime_mode
+        requested_masks = trigger_mask
+        if requested_masks is not None and not isinstance(requested_masks, (list, tuple)):
+            requested_masks = [requested_masks]
+        if requested_masks is not None and len(requested_masks) != len(prompt):
+            if len(prompt) == 1:
+                requested_masks = [trigger_mask]
+            else:
+                raise ValueError("trigger_mask batch length must match prompt batch length")
 
-        # Encode each caption at its natural length (no cross-sample padding) and
-        # store one feature tensor per batch item. Padding to a common length is
-        # deferred to the model call, so caching a prompt only stores its real
-        # length -- important for the long structured (JSON) captions.
         features_list = []
-        for p in prompt:
-            # Digest the prompt: migrate any old-format Ideogram caption into the
-            # current schema and serialize it compact (the form the renderer wants).
-            # Plain-text prompts pass straight through unchanged.
+        trigger_masks = []
+        taps_list = []
+        for prompt_index, p in enumerate(prompt):
             p = digest_caption_string(p)
             messages = [{"role": "user", "content": [{"type": "text", "text": p}]}]
             text = self.tokenizer.apply_chat_template(
@@ -536,19 +659,63 @@ class Ideogram4Model(BaseModel):
             token_ids = torch.tensor([ids], dtype=torch.long, device=device)
             attention_mask = torch.ones_like(token_ids)
             pos_2d = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0).to(torch.long)
+            explicit_mask = (
+                requested_masks[prompt_index] if requested_masks is not None else None
+            )
+            resolved_mask = self._resolve_trigger_mask(
+                p, token_ids, explicit_mask, activator
+            )
 
-            features = get_qwen3_vl_features(
-                self.text_encoder, token_ids, attention_mask, pos_2d
-            )  # (1, Lt, D)
+            result = get_qwen3_vl_features(
+                self.text_encoder,
+                token_ids,
+                attention_mask,
+                pos_2d,
+                trigger_mask=resolved_mask,
+                text_activator=activator,
+                runtime_mode=mode,
+                return_taps=return_taps,
+            )
+            if return_taps:
+                features, taps = result
+                taps_list.append(torch.stack([tap[0] for tap in taps], dim=0))
+            else:
+                features = result
             features_list.append(features[0].to(self.torch_dtype))
+            if resolved_mask is not None:
+                trigger_masks.append(resolved_mask[0])
+            elif activator is not None or trigger_mask is not None:
+                trigger_masks.append(torch.zeros_like(token_ids[0], dtype=torch.bool))
 
-        return AdvancedPromptEmbeds(text_embeds=features_list)
+        embeds_kwargs = {"text_embeds": features_list}
+        if trigger_masks:
+            embeds_kwargs["trigger_masks"] = trigger_masks
+        if return_taps:
+            embeds_kwargs["text_taps"] = taps_list
+            tap_layers = torch.tensor(
+                QWEN3_VL_ACTIVATION_LAYERS, dtype=torch.long, device=device
+            )
+            embeds_kwargs["tap_layers"] = [tap_layers for _ in prompt]
+        embeds = AdvancedPromptEmbeds(**embeds_kwargs)
+        embeds.frozen_dtype_keys = [
+            key for key in ("trigger_masks", "tap_layers") if key in embeds
+        ]
+        return embeds
 
     def get_model_has_grad(self):
         return False
 
     def get_te_has_grad(self):
-        return False
+        activator = self.text_activator
+        if activator is None:
+            return False
+        has_trainable = getattr(activator, "has_trainable_parameters", None)
+        if callable(has_trainable):
+            return bool(has_trainable())
+        parameters = getattr(activator, "parameters", None)
+        if callable(parameters):
+            return any(parameter.requires_grad for parameter in parameters())
+        return True
 
     # ------------------------------------------------------------------
     # VAE

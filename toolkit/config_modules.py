@@ -476,6 +476,377 @@ class TriggerSelectiveTrainingConfig:
         self.logging = TriggerSelectiveLoggingConfig(**kwargs.get('logging', {}))
 
 
+class TriggerBindingEmbeddingConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', True)
+        self.tokens: int = int(kwargs.get('tokens', 1))
+        self.init_mode: str = kwargs.get('init_mode', 'semantic')
+        self.init_words: str = kwargs.get('init_words', 'illustration')
+        self.checkpoint_path: Optional[str] = kwargs.get('checkpoint_path', None)
+        self.dtype: str = kwargs.get('dtype', 'bf16')
+        self.filename: str = kwargs.get('filename', 'trigger_embedding.safetensors')
+
+
+class TriggerBindingTEAdapterConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.type: str = kwargs.get('type', 'lora')
+        self.rank: int = int(kwargs.get('rank', 1))
+        self.alpha: float = float(kwargs.get('alpha', self.rank))
+        self.dropout: float = float(kwargs.get('dropout', 0.0))
+        self.parent_modules: List[str] = kwargs.get('parent_modules', ['Qwen3VLTextMLP'])
+        self.child_modules: List[str] = kwargs.get('child_modules', ['down_proj'])
+        self.layers = kwargs.get('layers', 'all')
+        self.token_mask_mode: str = kwargs.get('token_mask_mode', 'trigger_span')
+        self.filename: str = kwargs.get('filename', 'te_adapter.safetensors')
+
+
+class TriggerBindingTapAdapterConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.type: str = kwargs.get('type', 'lora')
+        self.rank: int = int(kwargs.get('rank', 1))
+        self.alpha: float = float(kwargs.get('alpha', self.rank))
+        self.dropout: float = float(kwargs.get('dropout', 0.0))
+        self.tap_layers: List[int] = [int(layer) for layer in kwargs.get(
+            'tap_layers', [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 35]
+        )]
+        self.share_weights: bool = kwargs.get('share_weights', False)
+        self.token_mask_mode: str = kwargs.get('token_mask_mode', 'trigger_span')
+        self.learnable_scale: bool = kwargs.get('learnable_scale', False)
+        self.scale_init: float = float(kwargs.get('scale_init', 1.0))
+        self.per_tap: Dict = kwargs.get('per_tap', {})
+        self.filename: str = kwargs.get('filename', 'tap_adapters.safetensors')
+
+
+class TriggerBindingTextActivatorConfig:
+    def __init__(self, **kwargs):
+        self.embedding = TriggerBindingEmbeddingConfig(**kwargs.get('embedding', {}))
+        self.te_adapter = TriggerBindingTEAdapterConfig(**kwargs.get('te_adapter', {}))
+        self.tap_adapters = TriggerBindingTapAdapterConfig(**kwargs.get('tap_adapters', {}))
+
+
+class TriggerBindingContextConsistencyConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.weight: float = float(kwargs.get('weight', 0.0))
+        self.loss_type: str = kwargs.get('loss_type', kwargs.get('type', 'cosine'))
+        self.magnitude_weight: float = float(kwargs.get('magnitude_weight', 0.0))
+        self.warmup_steps: int = int(kwargs.get('warmup_steps', 0))
+        self.min_delta_norm: float = float(kwargs.get('min_delta_norm', 1.0e-6))
+        self.tap_layers: Optional[List[int]] = kwargs.get('tap_layers', None)
+
+
+class TriggerBindingScheduledFloorConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.weight: float = float(kwargs.get('weight', 1.0))
+        self.schedule = TriggerSelectiveScheduleConfig(**kwargs.get('schedule', {}))
+
+
+class TriggerBindingPhaseSourceConfig:
+    def __init__(self, **kwargs):
+        self.phase: Optional[str] = kwargs.get('phase', None)
+        self.step = kwargs.get('step', 'final')
+        self.path: Optional[str] = kwargs.get('path', None)
+
+
+class TriggerBindingResumeConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.checkpoint: Optional[str] = kwargs.get('checkpoint', None)
+
+
+class TriggerBindingPhaseConfig:
+    def __init__(self, phase_name: str, **kwargs):
+        self.phase_name = phase_name
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.steps: int = int(kwargs.get('steps', 0))
+        self.optimizer: str = kwargs.get('optimizer', 'adamw')
+        self.optimizer_params: Dict = kwargs.get('optimizer_params', {})
+        self.learning_rates: Dict[str, float] = {
+            key: float(value) for key, value in kwargs.get('learning_rates', {}).items()
+        }
+        self.train: Dict[str, bool] = kwargs.get('train', {})
+        self.caption_sources: Dict = kwargs.get('caption_sources', {})
+        self.losses: Dict = kwargs.get('losses', {})
+        self.save_steps: List[int] = [int(step) for step in kwargs.get('save_steps', [])]
+        self.resume = TriggerBindingResumeConfig(**kwargs.get('resume', {}))
+        self.text_activator_source = TriggerBindingPhaseSourceConfig(
+            **kwargs.get('text_activator_source', kwargs.get('text_activator_init', {}))
+        )
+        self.diffusion_lora_source = TriggerBindingPhaseSourceConfig(
+            **kwargs.get('diffusion_lora_source', {})
+        )
+        self.context_consistency = TriggerBindingContextConsistencyConfig(
+            **kwargs.get('losses', {}).get('context_consistency', {})
+        )
+        floor_key = 'activator_gain_floor' if phase_name == 'a2' else 'trigger_gain_floor'
+        floor_kwargs = kwargs.get('losses', {}).get(floor_key, {})
+        if not floor_kwargs and phase_name != 'a2':
+            floor_kwargs = kwargs.get('losses', {}).get('activator_gain_floor', {})
+        self.activator_gain_floor = TriggerBindingScheduledFloorConfig(**floor_kwargs)
+
+
+class TriggerBindingPhaseArtifactConfig:
+    def __init__(self, **kwargs):
+        self.metrics_file: str = kwargs.get('metrics_file', 'metrics.jsonl')
+        self.console_log: str = kwargs.get('console_log', 'console.log')
+        self.checkpoint_dir: str = kwargs.get('checkpoint_dir', 'checkpoints')
+        self.final_dir: str = kwargs.get('final_dir', 'final')
+        self.embedding_filename: str = kwargs.get('embedding_filename', 'trigger_embedding.safetensors')
+        self.te_adapter_filename: str = kwargs.get('te_adapter_filename', 'te_adapter.safetensors')
+        self.tap_adapter_filename: str = kwargs.get('tap_adapter_filename', 'tap_adapters.safetensors')
+        self.diffusion_lora_filename: str = kwargs.get('diffusion_lora_filename', 'diffusion_lora.safetensors')
+
+
+class TriggerBindingArtifactConfig:
+    def __init__(self, **kwargs):
+        self.output_root: Optional[str] = kwargs.get('output_root', None)
+        self.phase_a1 = TriggerBindingPhaseArtifactConfig(**kwargs.get('phase_a1', {}))
+        self.phase_b = TriggerBindingPhaseArtifactConfig(**kwargs.get('phase_b', {}))
+        self.phase_a2 = TriggerBindingPhaseArtifactConfig(**kwargs.get('phase_a2', {}))
+
+
+class ThreePhaseTriggerTrainingConfig:
+    PHASE_NAMES = ('a1', 'b', 'a2')
+
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        trigger = kwargs.get('trigger', {})
+        self.placeholder: str = trigger.get('placeholder', '[trigger]')
+        self.literal: Optional[str] = trigger.get('literal', None)
+        self.span_detection: str = trigger.get('span_detection', 'offsets')
+        self.mask_all_occurrences: bool = trigger.get('mask_all_occurrences', True)
+        self.occurrence_mode: str = trigger.get('occurrence_mode', 'additive')
+        self.text_activator = TriggerBindingTextActivatorConfig(**kwargs.get('text_activator', {}))
+        self.reachability_probe: Dict = kwargs.get('reachability_probe', {'enabled': True})
+        self.phase_a1 = TriggerBindingPhaseConfig('a1', **kwargs.get('phase_a1', {}))
+        self.phase_b = TriggerBindingPhaseConfig('b', **kwargs.get('phase_b', {}))
+        self.phase_a2 = TriggerBindingPhaseConfig('a2', **kwargs.get('phase_a2', {}))
+        self.artifacts = TriggerBindingArtifactConfig(**kwargs.get('artifacts', {}))
+        runtime = kwargs.get('runtime', {})
+        self.active_phase: Optional[str] = runtime.get('active_phase', None)
+        self.orchestrated: bool = runtime.get('orchestrated', False)
+        self.run_root: Optional[str] = runtime.get('run_root', None)
+        self.config_snapshot: Optional[str] = runtime.get('config_snapshot', None)
+        self.completion_contract: Optional[str] = runtime.get('completion_contract', None)
+
+    def get_phase(self, phase_name: str) -> TriggerBindingPhaseConfig:
+        if phase_name not in self.PHASE_NAMES:
+            raise ValueError(f'Unknown three-phase trigger phase: {phase_name}')
+        return getattr(self, f'phase_{phase_name}')
+
+
+def _validate_non_empty_string(value, field_name: str):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'{field_name} must be a non-empty string')
+
+
+def _validate_trigger_binding_source(
+    source: TriggerBindingPhaseSourceConfig,
+    field_name: str,
+    enabled_phases: Dict[str, bool],
+):
+    if source.phase is not None and source.path is not None:
+        raise ValueError(f'{field_name} must specify either phase or path, not both')
+    if source.phase is not None:
+        if source.phase not in ThreePhaseTriggerTrainingConfig.PHASE_NAMES:
+            raise ValueError(f'{field_name}.phase must be one of a1, b or a2')
+        if not enabled_phases[source.phase]:
+            raise ValueError(f'{field_name} references disabled phase {source.phase}')
+    if source.path is not None:
+        _validate_non_empty_string(source.path, f'{field_name}.path')
+    if source.step != 'final':
+        try:
+            if int(source.step) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError(f'{field_name}.step must be final or a non-negative integer')
+
+
+def validate_three_phase_trigger_training_config(
+    config: Optional[ThreePhaseTriggerTrainingConfig],
+    trigger_word: Optional[str] = None,
+):
+    if config is None or not config.enabled:
+        return
+
+    _validate_non_empty_string(config.placeholder, 'three_phase_trigger_training.trigger.placeholder')
+    if config.placeholder != '[trigger]':
+        raise ValueError('three_phase_trigger_training must use the native [trigger] placeholder')
+    literal = config.literal if config.literal is not None else trigger_word
+    _validate_non_empty_string(literal, 'three_phase_trigger_training.trigger.literal')
+    if trigger_word is not None and literal != trigger_word:
+        raise ValueError('three_phase_trigger_training.trigger.literal must match trigger_word')
+    config.literal = literal
+
+    if config.span_detection != 'offsets':
+        raise ValueError('three_phase_trigger_training.trigger.span_detection must be offsets')
+    if not config.mask_all_occurrences:
+        raise ValueError('three_phase_trigger_training requires mask_all_occurrences=true')
+    if config.occurrence_mode != 'additive':
+        raise ValueError('three_phase_trigger_training.trigger.occurrence_mode must be additive')
+
+    embedding = config.text_activator.embedding
+    if embedding.enabled:
+        if embedding.tokens <= 0:
+            raise ValueError('three_phase_trigger_training.text_activator.embedding.tokens must be positive')
+        if embedding.init_mode not in ('semantic', 'random', 'checkpoint'):
+            raise ValueError('embedding.init_mode must be semantic, random or checkpoint')
+        if embedding.init_mode == 'semantic':
+            _validate_non_empty_string(embedding.init_words, 'embedding.init_words')
+        if embedding.init_mode == 'checkpoint':
+            _validate_non_empty_string(embedding.checkpoint_path, 'embedding.checkpoint_path')
+        if embedding.dtype not in ('bf16', 'bfloat16', 'fp16', 'float16', 'fp32', 'float32'):
+            raise ValueError('embedding.dtype must be a supported floating-point dtype')
+        _validate_non_empty_string(embedding.filename, 'embedding.filename')
+
+    te_adapter = config.text_activator.te_adapter
+    if te_adapter.enabled:
+        if te_adapter.type != 'lora':
+            raise ValueError('text_activator.te_adapter.type must be lora')
+        if te_adapter.rank <= 0 or te_adapter.alpha <= 0:
+            raise ValueError('text_activator.te_adapter rank and alpha must be positive')
+        if not 0.0 <= te_adapter.dropout < 1.0:
+            raise ValueError('text_activator.te_adapter.dropout must be in [0, 1)')
+        if te_adapter.token_mask_mode != 'trigger_span':
+            raise ValueError('text_activator.te_adapter.token_mask_mode must be trigger_span')
+        if not te_adapter.parent_modules or not te_adapter.child_modules:
+            raise ValueError('text_activator.te_adapter module filters cannot be empty')
+
+    tap_adapters = config.text_activator.tap_adapters
+    if tap_adapters.enabled:
+        if tap_adapters.type != 'lora':
+            raise ValueError('text_activator.tap_adapters.type must be lora')
+        if tap_adapters.rank <= 0 or tap_adapters.alpha <= 0:
+            raise ValueError('text_activator.tap_adapters rank and alpha must be positive')
+        if not 0.0 <= tap_adapters.dropout < 1.0:
+            raise ValueError('text_activator.tap_adapters.dropout must be in [0, 1)')
+        if tap_adapters.token_mask_mode != 'trigger_span':
+            raise ValueError('text_activator.tap_adapters.token_mask_mode must be trigger_span')
+        expected_tap_layers = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 35]
+        if tap_adapters.tap_layers != expected_tap_layers:
+            raise ValueError(
+                'text_activator.tap_adapters.tap_layers must exactly match Ideogram4 taps '
+                '0,3,6,9,12,15,18,21,24,27,30,33,35'
+            )
+        unknown_per_tap = set(str(key) for key in tap_adapters.per_tap) - set(str(layer) for layer in tap_adapters.tap_layers)
+        if unknown_per_tap:
+            raise ValueError(f'text_activator.tap_adapters.per_tap contains unknown layers: {sorted(unknown_per_tap)}')
+
+    if not any((embedding.enabled, te_adapter.enabled, tap_adapters.enabled)):
+        raise ValueError('three_phase_trigger_training requires at least one text activator')
+
+    if not isinstance(config.reachability_probe, dict):
+        raise ValueError('three_phase_trigger_training.reachability_probe must be a mapping')
+    if config.reachability_probe.get('enabled', True) is not True:
+        raise ValueError('three_phase_trigger_training requires reachability_probe.enabled=true')
+
+    phases = {name: config.get_phase(name) for name in config.PHASE_NAMES}
+    enabled_phases = {name: phase.enabled for name, phase in phases.items()}
+    if not all(enabled_phases.values()):
+        raise ValueError('three_phase_trigger_training requires phase_a1, phase_b and phase_a2 to be enabled')
+
+    for phase_name, phase in phases.items():
+        prefix = f'three_phase_trigger_training.phase_{phase_name}'
+        if phase.steps <= 0:
+            raise ValueError(f'{prefix}.steps must be positive')
+        _validate_non_empty_string(phase.optimizer, f'{prefix}.optimizer')
+        if not isinstance(phase.optimizer_params, dict):
+            raise ValueError(f'{prefix}.optimizer_params must be a mapping')
+        if not phase.learning_rates or any(value < 0 for value in phase.learning_rates.values()):
+            raise ValueError(f'{prefix}.learning_rates must contain non-negative values')
+        if not phase.train or not any(bool(value) for value in phase.train.values()):
+            raise ValueError(f'{prefix}.train must enable at least one trainable component')
+        aliases = {
+            'embedding': ('embedding', 'train_embedding', 'trigger_embedding'),
+            'te_adapter': ('te_adapter', 'internal', 'train_internal', 'text_encoder_adapter'),
+            'tap_adapters': ('tap_adapters', 'tap', 'train_tap'),
+            'diffusion_lora': ('diffusion_lora', 'train_unet', 'unet'),
+        }
+        for component, keys in aliases.items():
+            train_enabled = any(bool(phase.train.get(key, False)) for key in keys)
+            lr = next((phase.learning_rates[key] for key in keys if key in phase.learning_rates), 0.0)
+            if train_enabled and lr <= 0:
+                raise ValueError(f'{prefix} enables {component} training but its learning rate is not positive')
+            if not train_enabled and lr > 0:
+                raise ValueError(f'{prefix} configures a positive {component} learning rate while training is disabled')
+        if any(step <= 0 or step > phase.steps for step in phase.save_steps):
+            raise ValueError(f'{prefix}.save_steps must be within 1..steps')
+        if len(set(phase.save_steps)) != len(phase.save_steps):
+            raise ValueError(f'{prefix}.save_steps must be unique')
+        if phase.resume.enabled:
+            _validate_non_empty_string(phase.resume.checkpoint, f'{prefix}.resume.checkpoint')
+
+        _validate_trigger_binding_source(
+            phase.text_activator_source,
+            f'{prefix}.text_activator_source',
+            enabled_phases,
+        )
+        _validate_trigger_binding_source(
+            phase.diffusion_lora_source,
+            f'{prefix}.diffusion_lora_source',
+            enabled_phases,
+        )
+
+        consistency = phase.context_consistency
+        if consistency.enabled:
+            if consistency.weight < 0:
+                raise ValueError(f'{prefix}.losses.context_consistency.weight must be non-negative')
+            if consistency.loss_type not in ('cosine', 'mse'):
+                raise ValueError(f'{prefix}.losses.context_consistency.loss_type must be cosine or mse')
+            if consistency.warmup_steps < 0 or consistency.warmup_steps > phase.steps:
+                raise ValueError(f'{prefix}.losses.context_consistency.warmup_steps must be within phase steps')
+            if consistency.min_delta_norm <= 0:
+                raise ValueError(f'{prefix}.losses.context_consistency.min_delta_norm must be positive')
+
+        floor = phase.activator_gain_floor
+        if floor.enabled:
+            if floor.weight < 0:
+                raise ValueError(f'{prefix}.losses gain floor weight must be non-negative')
+            keyframes = floor.schedule.keyframes
+            if not keyframes:
+                raise ValueError(f'{prefix}.losses gain floor schedule requires keyframes')
+            previous_step = -1
+            for keyframe in keyframes:
+                step = int(keyframe.get('step', -1))
+                if step <= previous_step or step > phase.steps:
+                    raise ValueError(f'{prefix}.losses gain floor keyframe steps must increase within phase steps')
+                if float(keyframe.get('value', -1.0)) < 0:
+                    raise ValueError(f'{prefix}.losses gain floor values must be non-negative')
+                previous_step = step
+
+    if phases['a1'].text_activator_source.phase is not None:
+        raise ValueError('phase_a1 cannot source a text activator from another phase')
+    if phases['a1'].diffusion_lora_source.phase is not None:
+        raise ValueError('phase_a1 cannot source a diffusion LoRA from another phase')
+    if phases['b'].text_activator_source.phase not in (None, 'a1'):
+        raise ValueError('phase_b.text_activator_source may only reference phase a1')
+    if not any(bool(phases['b'].train.get(key, False)) for key in ('diffusion_lora', 'train_unet', 'unet')):
+        raise ValueError('phase_b must train the diffusion LoRA')
+    if phases['a2'].text_activator_source.phase not in (None, 'a1'):
+        raise ValueError('phase_a2.text_activator_source may only reference phase a1')
+    if phases['a2'].diffusion_lora_source.phase not in (None, 'b'):
+        raise ValueError('phase_a2.diffusion_lora_source may only reference phase b')
+
+    artifacts = config.artifacts
+    if artifacts.output_root is not None:
+        _validate_non_empty_string(artifacts.output_root, 'three_phase_trigger_training.artifacts.output_root')
+    for phase_name in config.PHASE_NAMES:
+        phase_artifacts = getattr(artifacts, f'phase_{phase_name}')
+        for field_name, value in vars(phase_artifacts).items():
+            _validate_non_empty_string(value, f'artifacts.phase_{phase_name}.{field_name}')
+
+    if config.active_phase is not None:
+        if config.active_phase not in config.PHASE_NAMES:
+            raise ValueError('three_phase_trigger_training.runtime.active_phase must be a1, b or a2')
+        if not config.orchestrated:
+            raise ValueError('three_phase_trigger_training.runtime.active_phase requires orchestrated=true')
+        for field_name in ('run_root', 'config_snapshot', 'completion_contract'):
+            _validate_non_empty_string(getattr(config, field_name), f'three_phase_trigger_training.runtime.{field_name}')
+
+
 class TrainConfig:
     def __init__(self, **kwargs):
         self.noise_scheduler = kwargs.get('noise_scheduler', 'ddpm')
@@ -1581,6 +1952,7 @@ def validate_configs(
     trigger_selective_training: Optional[TriggerSelectiveTrainingConfig] = None,
     trigger_word: Optional[str] = None,
     network_config: Optional[NetworkConfig] = None,
+    three_phase_trigger_training: Optional[ThreePhaseTriggerTrainingConfig] = None,
 ):
     if model_config.is_flux:
         if save_config.save_format != 'diffusers':
@@ -1637,6 +2009,26 @@ def validate_configs(
             raise ValueError('trigger_selective_training v1 does not support single_item_batching')
         from toolkit.trigger_selective_training import validate_trigger_selective_config
         validate_trigger_selective_config(trigger_selective_training, trigger_word)
+
+    validate_three_phase_trigger_training_config(
+        three_phase_trigger_training,
+        trigger_word,
+    )
+    if three_phase_trigger_training is not None and three_phase_trigger_training.enabled:
+        if model_config.arch != 'ideogram4':
+            raise ValueError('three_phase_trigger_training is restricted to model.arch: ideogram4')
+        active_phase = three_phase_trigger_training.active_phase
+        text_side_phase = active_phase in (None, 'a1', 'a2')
+        if text_side_phase:
+            if train_config.cache_text_embeddings or any(dataset.cache_text_embeddings for dataset in dataset_configs):
+                raise ValueError('three_phase_trigger_training A1/A2 require dynamic text encoding; disable caches')
+            if train_config.unload_text_encoder:
+                raise ValueError('three_phase_trigger_training A1/A2 require the text encoder to remain loaded')
+        if active_phase == 'b':
+            if network_config is None or network_config.type != 'lora':
+                raise ValueError('three_phase_trigger_training Phase B requires network.type: lora')
+            if not train_config.train_unet:
+                raise ValueError('three_phase_trigger_training Phase B must train the diffusion LoRA')
 
     if train_config.batch_size > 1 and any(dataset_config.auto_frame_count for dataset_config in dataset_configs):
         raise ValueError("Cannot use batch size greater than 1 with auto_frame_count. Please set batch_size to 1 or auto_frame_count to False.")
