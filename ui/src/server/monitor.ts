@@ -31,6 +31,8 @@ const NV_WATCHDOG_MS = 15_000;
 // lines of one iteration arrive together; iterations are MONITOR_TICK_MS
 // apart, so this can never bleed into the next batch).
 const NV_BATCH_FLUSH_MS = 100;
+// Temperature refresh is decoupled from the tick (see refreshCpuTemp)
+const CPU_TEMP_REFRESH_MS = 5000;
 
 function parseGpuLine(line: string): GpuInfo | null {
   const [
@@ -78,7 +80,8 @@ function parseGpuLine(line: string): GpuInfo | null {
   };
 }
 
-type Subscriber = (sample: MonitorSample) => void;
+// Serialized once per tick and shared, so N subscribers don't stringify N times
+type Subscriber = (sample: MonitorSample, serialized: string) => void;
 
 class SystemMonitor {
   private isMac = os.platform() === 'darwin';
@@ -100,6 +103,8 @@ class SystemMonitor {
   private tickInFlight = false;
   private lastCpuTemp = 0;
   private cpuTempInFlight = false;
+  private lastCpuTempAt = 0;
+  private cpuStatic: { name: string; cores: number } | null = null;
 
   start(): void {
     if (this.isMac) {
@@ -172,9 +177,10 @@ class SystemMonitor {
     if (this.history.length > MONITOR_HISTORY_LENGTH) {
       this.history.splice(0, this.history.length - MONITOR_HISTORY_LENGTH);
     }
+    const serialized = JSON.stringify(sample);
     for (const subscriber of this.subscribers) {
       try {
-        subscriber(sample);
+        subscriber(sample, serialized);
       } catch (error) {
         console.error('Monitor: subscriber failed:', error);
       }
@@ -185,7 +191,14 @@ class SystemMonitor {
   // CPU (mirrors /api/cpu exactly)
   // -------------------------------------------------------------------------
   private async sampleCpu(): Promise<CpuInfo> {
-    const cpuInfoRaw = await si.cpu(); // static info, cached by systeminformation
+    // si.cpu() shells out to lscpu/dmidecode on every call — at tick cadence
+    // that alone was eating a measurable slice of a core. Name and core count
+    // never change, so resolve them exactly once.
+    if (!this.cpuStatic) {
+      const cpuInfoRaw = await si.cpu();
+      this.cpuStatic = { name: `${cpuInfoRaw.manufacturer} ${cpuInfoRaw.brand}`, cores: cpuInfoRaw.cores };
+    }
+    const cpuStatic = this.cpuStatic;
 
     if (this.isMac) {
       try {
@@ -194,8 +207,8 @@ class SystemMonitor {
         const ramData = ms.getRAMUsageSync();
         const cpuData = ms.getCpuDataSync();
         return {
-          name: `${cpuInfoRaw.manufacturer} ${cpuInfoRaw.brand}`,
-          cores: cpuInfoRaw.cores,
+          name: cpuStatic.name,
+          cores: cpuStatic.cores,
           temperature: cpuData.temperature || 0,
           totalMemory: ramData.total / (1024 * 1024),
           availableMemory: ramData.free / (1024 * 1024),
@@ -213,8 +226,8 @@ class SystemMonitor {
     this.refreshCpuTemp();
     const [memoryData, load] = await Promise.all([si.mem(), si.currentLoad()]);
     return {
-      name: `${cpuInfoRaw.manufacturer} ${cpuInfoRaw.brand}`,
-      cores: cpuInfoRaw.cores,
+      name: cpuStatic.name,
+      cores: cpuStatic.cores,
       temperature: this.lastCpuTemp,
       totalMemory: memoryData.total / (1024 * 1024),
       availableMemory: memoryData.available / (1024 * 1024),
@@ -224,7 +237,11 @@ class SystemMonitor {
   }
 
   private refreshCpuTemp(): void {
-    if (this.cpuTempInFlight) return;
+    // si.cpuTemperature() execs `sensors`, which can take ~1s of slow SMBus
+    // polling — refreshed back-to-back it becomes a permanently resident
+    // child. Every few seconds is plenty for a temperature.
+    if (this.cpuTempInFlight || Date.now() - this.lastCpuTempAt < CPU_TEMP_REFRESH_MS) return;
+    this.lastCpuTempAt = Date.now();
     this.cpuTempInFlight = true;
     si.cpuTemperature()
       .then(t => {
@@ -464,7 +481,11 @@ export function startMonitor(): SystemMonitor {
   const g = globalThis as unknown as { __aiToolkitSystemMonitor?: SystemMonitor };
   if (!g.__aiToolkitSystemMonitor) {
     g.__aiToolkitSystemMonitor = new SystemMonitor();
-    g.__aiToolkitSystemMonitor.start();
+    // Escape hatch: with AI_TOOLKIT_DISABLE_MONITOR=1 the monitor object
+    // exists (the SSE route stays functional) but never samples anything.
+    if (process.env.AI_TOOLKIT_DISABLE_MONITOR !== '1') {
+      g.__aiToolkitSystemMonitor.start();
+    }
   }
   return g.__aiToolkitSystemMonitor;
 }

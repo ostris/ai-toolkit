@@ -32,9 +32,17 @@ export async function GET(request: Request) {
         cleanup();
         return;
       }
-      unsubscribe = monitor.subscribe((sample: MonitorSample) => {
+      unsubscribe = monitor.subscribe((sample: MonitorSample, serialized: string) => {
+        // desiredSize goes ever more negative when the consumer stopped
+        // reading. If the abort for a vanished client never propagates (dev
+        // HMR reloads, proxy quirks), this is the backstop that keeps dead
+        // subscribers from accumulating and eating CPU forever.
+        if (controller.desiredSize !== null && controller.desiredSize < -120) {
+          cleanup();
+          return;
+        }
         try {
-          send('sample', sample);
+          controller.enqueue(encoder.encode(`event: sample\ndata: ${serialized}\n\n`));
         } catch {
           // Client is gone but abort hasn't fired yet
           cleanup();
