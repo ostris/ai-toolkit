@@ -178,6 +178,129 @@ def _prepare_context_mask(
     return selected
 
 
+def _prepare_source_trigger_mask(
+    trigger_mask: torch.Tensor,
+    valid_mask: Optional[torch.Tensor],
+    reference: torch.Tensor,
+    name: str,
+) -> torch.Tensor:
+    selected = _prepare_context_mask(valid_mask, trigger_mask, 'trigger', reference)
+    counts = selected.sum(dim=2)
+    if torch.any(counts == 0):
+        empty = torch.nonzero(counts == 0, as_tuple=False)[0].tolist()
+        raise ValueError(
+            f'{name} trigger mask selects no valid tokens for batch {empty[0]}, tap {empty[1]}'
+        )
+    return selected
+
+
+def _masked_pool_residual(
+    active_taps: TapTensors,
+    bypass_taps: TapTensors,
+    trigger_mask: torch.Tensor,
+    valid_mask: Optional[torch.Tensor],
+    *,
+    name: str,
+    pooling: str,
+    expected_taps: int,
+) -> torch.Tensor:
+    active = _stack_taps(active_taps, f'{name}_active_taps').float()
+    bypass = _stack_taps(bypass_taps, f'{name}_bypass_taps').float()
+    if active.shape != bypass.shape:
+        raise ValueError(f'{name} active and bypass tap collections must have matching shapes')
+    if active.shape[1] != expected_taps:
+        raise ValueError(f'expected {expected_taps} context taps, got {active.shape[1]} for {name}')
+    if pooling not in {'mean', 'sum'}:
+        raise ValueError("pooling must be 'mean' or 'sum'")
+
+    residual = (active - bypass.detach()).flatten(start_dim=3)
+    selected = _prepare_source_trigger_mask(trigger_mask, valid_mask, residual, name)
+    selected_float = selected.to(residual.dtype).unsqueeze(-1)
+    pooled = (residual * selected_float).sum(dim=2)
+    if pooling == 'mean':
+        pooled = pooled / selected_float.sum(dim=2)
+    return pooled
+
+
+def pooled_trigger_residual_consistency(
+    source_active_taps: TapTensors,
+    source_bypass_taps: TapTensors,
+    reference_active_taps: TapTensors,
+    reference_bypass_taps: TapTensors,
+    *,
+    source_trigger_mask: torch.Tensor,
+    reference_trigger_mask: torch.Tensor,
+    source_valid_mask: Optional[torch.Tensor] = None,
+    reference_valid_mask: Optional[torch.Tensor] = None,
+    pooling: str = 'mean',
+    detach_reference: bool = False,
+    cosine_weight: float = 1.0,
+    magnitude_weight: float = 0.0,
+    min_delta_norm: float = 1.0e-6,
+    step: int = 0,
+    warmup_steps: int = 0,
+    expected_taps: int = 13,
+    epsilon: float = 1.0e-8,
+) -> ContextConsistencyResult:
+    if cosine_weight < 0 or magnitude_weight < 0:
+        raise ValueError('context consistency weights must be non-negative')
+    if not isinstance(detach_reference, bool):
+        raise ValueError('detach_reference must be boolean')
+    if min_delta_norm < 0 or epsilon <= 0:
+        raise ValueError('norm thresholds must be non-negative and epsilon must be positive')
+    if warmup_steps < 0:
+        raise ValueError('warmup_steps must be non-negative')
+
+    source_delta = _masked_pool_residual(
+        source_active_taps,
+        source_bypass_taps,
+        source_trigger_mask,
+        source_valid_mask,
+        name='source',
+        pooling=pooling,
+        expected_taps=expected_taps,
+    )
+    reference_delta = _masked_pool_residual(
+        reference_active_taps,
+        reference_bypass_taps,
+        reference_trigger_mask,
+        reference_valid_mask,
+        name='reference',
+        pooling=pooling,
+        expected_taps=expected_taps,
+    )
+    if source_delta.shape[:2] != reference_delta.shape[:2]:
+        raise ValueError('source and reference must have matching batch and tap dimensions')
+    if source_delta.shape[2:] != reference_delta.shape[2:]:
+        raise ValueError('source and reference tap feature dimensions must match after pooling')
+    if detach_reference:
+        reference_delta = reference_delta.detach()
+
+    source_norm = torch.linalg.vector_norm(source_delta, dim=-1)
+    reference_norm = torch.linalg.vector_norm(reference_delta, dim=-1)
+    cosine_loss = 1.0 - F.cosine_similarity(source_delta, reference_delta, dim=-1, eps=epsilon)
+    magnitude_scale = 0.5 * (source_norm.detach() + reference_norm.detach())
+    magnitude_loss = torch.abs(source_norm - reference_norm) / (magnitude_scale + epsilon)
+    valid = (source_norm.detach() >= min_delta_norm) & (reference_norm.detach() >= min_delta_norm)
+    valid_float = valid.to(source_delta.dtype)
+    counts = valid_float.sum(dim=1)
+    denominator = counts.clamp_min(1.0)
+    cosine_per_item = (cosine_loss * valid_float).sum(dim=1) / denominator
+    magnitude_per_item = (magnitude_loss * valid_float).sum(dim=1) / denominator
+
+    warmup_scale = 1.0 if warmup_steps == 0 else min(max(float(step) / warmup_steps, 0.0), 1.0)
+    per_item = warmup_scale * (
+        float(cosine_weight) * cosine_per_item + float(magnitude_weight) * magnitude_per_item
+    )
+    return ContextConsistencyResult(
+        per_item=per_item,
+        cosine_per_item=cosine_per_item,
+        magnitude_per_item=magnitude_per_item,
+        valid_taps_per_item=counts,
+        warmup_scale=warmup_scale,
+    )
+
+
 def delta_context_consistency(
     on_taps: TapTensors,
     bypass_taps: TapTensors,

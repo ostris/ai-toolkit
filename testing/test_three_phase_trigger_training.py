@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -40,6 +41,17 @@ def _three_phase_block(enabled=True):
             'optimizer': 'adamw',
             'learning_rates': {'embedding': 0.001},
             'train': {'train_embedding': True},
+            'caption_sources': {
+                'enabled': True,
+                'sources': [
+                    {
+                        'name': 'json',
+                        'use_main_dataset': True,
+                        'caption_ext': '.json',
+                        'format': 'json',
+                    },
+                ],
+            },
             'save_steps': [5, 10],
         },
         'phase_b': {
@@ -50,6 +62,17 @@ def _three_phase_block(enabled=True):
             'learning_rates': {'diffusion_lora': 0.00008},
             'train': {'train_unet': True, 'train_text_encoder': False},
             'text_activator_source': {'phase': 'a1', 'step': 'final'},
+            'caption_sources': {
+                'enabled': True,
+                'sources': [
+                    {
+                        'name': 'phase_b_json',
+                        'use_main_dataset': True,
+                        'caption_ext': '.json',
+                        'format': 'json',
+                    },
+                ],
+            },
             'save_steps': [10, 20],
         },
         'phase_a2': {
@@ -60,11 +83,26 @@ def _three_phase_block(enabled=True):
             'train': {'train_embedding': True},
             'text_activator_source': {'phase': 'a1', 'step': 'final'},
             'diffusion_lora_source': {'phase': 'b', 'step': 'final'},
+            'caption_sources': {
+                'enabled': True,
+                'sources': [
+                    {
+                        'name': 'json',
+                        'use_main_dataset': True,
+                        'caption_ext': '.json',
+                        'format': 'json',
+                    },
+                ],
+            },
             'save_steps': [4, 8],
             'losses': {
                 'context_consistency': {
                     'enabled': True,
                     'weight': 0.05,
+                    'alignment': 'trigger_pooled',
+                    'mask': 'trigger',
+                    'pooling': 'mean',
+                    'detach_reference': False,
                     'loss_type': 'cosine',
                     'warmup_steps': 2,
                     'min_delta_norm': 1.0e-6,
@@ -110,6 +148,64 @@ class ThreePhaseTriggerTrainingConfigTest(unittest.TestCase):
         validate_three_phase_trigger_training_config(config, '<r1X1dOn9mA2>')
         self.assertEqual(config.get_phase('b').steps, 20)
         self.assertEqual(config.literal, '<r1X1dOn9mA2>')
+
+    def test_context_consistency_defaults_to_trigger_pooled_cosine(self):
+        raw = _three_phase_block()
+        raw['phase_a2']['losses']['context_consistency'] = {'enabled': True, 'weight': 0.05}
+        config = ThreePhaseTriggerTrainingConfig(**raw)
+        validate_three_phase_trigger_training_config(config, '<r1X1dOn9mA2>')
+        consistency = config.phase_a2.context_consistency
+        self.assertEqual(consistency.alignment, 'trigger_pooled')
+        self.assertEqual(consistency.mask, 'trigger')
+        self.assertEqual(consistency.pooling, 'mean')
+        self.assertEqual(consistency.loss_type, 'cosine')
+        self.assertFalse(consistency.detach_reference)
+
+    def test_context_consistency_rejects_invalid_pooled_mask(self):
+        raw = _three_phase_block()
+        raw['phase_a2']['losses']['context_consistency']['mask'] = 'nontrigger'
+        with self.assertRaisesRegex(ValueError, 'mask is invalid'):
+            validate_three_phase_trigger_training_config(
+                ThreePhaseTriggerTrainingConfig(**raw),
+                '<r1X1dOn9mA2>',
+            )
+
+    def test_context_consistency_rejects_non_boolean_detach_reference(self):
+        raw = _three_phase_block()
+        raw['phase_a2']['losses']['context_consistency']['detach_reference'] = 'false'
+        with self.assertRaisesRegex(ValueError, 'detach_reference must be boolean'):
+            validate_three_phase_trigger_training_config(
+                ThreePhaseTriggerTrainingConfig(**raw),
+                '<r1X1dOn9mA2>',
+            )
+
+    def test_phase_runtime_is_parsed_into_explicit_fields(self):
+        raw = _three_phase_block()
+        raw['runtime'] = {
+            'active_phase': 'b',
+            'orchestrated': True,
+            'run_root': '/tmp/run',
+            'config_snapshot': '/tmp/phase_b.yaml',
+            'completion_contract': '/tmp/phase_b.json',
+        }
+        raw['phase_runtime'] = {
+            'caption_sources': raw['phase_b']['caption_sources'],
+            'losses': {'tst_v3': {'enabled': True}},
+            'save_steps': [10, 20],
+            'resume': {'enabled': True, 'checkpoint': '/tmp/resume.json'},
+            'sources': {
+                'embedding': '/tmp/embedding.safetensors',
+                'diffusion_lora': '/tmp/lora.safetensors',
+            },
+        }
+        config = ThreePhaseTriggerTrainingConfig(**raw)
+        validate_three_phase_trigger_training_config(config, '<r1X1dOn9mA2>')
+        self.assertEqual(config.phase_runtime.caption_sources['sources'][0]['name'], 'phase_b_json')
+        self.assertTrue(config.phase_runtime.losses['tst_v3']['enabled'])
+        self.assertEqual(config.phase_runtime.save_steps, [10, 20])
+        self.assertEqual(config.phase_runtime.resume.checkpoint, '/tmp/resume.json')
+        self.assertEqual(config.phase_runtime.sources.embedding, '/tmp/embedding.safetensors')
+        self.assertEqual(config.phase_runtime.sources.diffusion_lora, '/tmp/lora.safetensors')
 
     def test_enabled_config_requires_native_placeholder(self):
         raw = _three_phase_block()
@@ -180,7 +276,8 @@ class ThreePhaseTriggerTrainerTest(unittest.TestCase):
             runtime = child['three_phase_trigger_training']['runtime']
             self.assertEqual(runtime['active_phase'], 'a2')
             self.assertTrue(runtime['orchestrated'])
-            sources = child['three_phase_trigger_training']['phase_runtime']['sources']
+            phase_runtime = child['three_phase_trigger_training']['phase_runtime']
+            sources = phase_runtime['sources']
             self.assertEqual(
                 sources['embedding'],
                 os.path.join(process.run_root, 'phase_a1', 'final', 'trigger_embedding.safetensors'),
@@ -188,6 +285,88 @@ class ThreePhaseTriggerTrainerTest(unittest.TestCase):
             self.assertEqual(
                 sources['diffusion_lora'],
                 os.path.join(process.run_root, 'phase_b', 'final', 'diffusion_lora.safetensors'),
+            )
+            self.assertEqual(phase_runtime['caption_sources']['sources'][0]['name'], 'json')
+            self.assertEqual(
+                child['trigger_selective_training']['caption_sources'],
+                phase_runtime['caption_sources'],
+            )
+            self.assertIsNone(
+                child['three_phase_trigger_training']['phase_a2']['text_activator_source']['path']
+            )
+            self.assertEqual(child['network']['pretrained_lora_path'], sources['diffusion_lora'])
+
+    def test_a1_paired_caption_source_names_resolve_parent_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            process.raw_process_config['trigger_selective_training'] = {
+                'enabled': True,
+                'caption_sources': {
+                    'enabled': True,
+                    'sources': [
+                        {'name': 'json', 'use_main_dataset': True, 'caption_ext': '.json', 'format': 'json'},
+                        {'name': 'natural', 'path': '/mirror', 'caption_ext': '.txt', 'format': 'text'},
+                    ],
+                },
+            }
+            process.three_phase_config.phase_a1.caption_sources = {
+                'enabled': True,
+                'paired': ['json', 'natural'],
+                'weights': {'json': 0.5, 'natural': 0.5},
+            }
+            child = process.build_child_job_config('a1')['config']['process'][0]
+            caption_sources = child['trigger_selective_training']['caption_sources']
+            self.assertEqual([source['name'] for source in caption_sources['sources']], ['json', 'natural'])
+            self.assertEqual(caption_sources['schedule']['keyframes'][0]['json'], 0.5)
+
+    def test_local_phase_sources_take_precedence_when_paired_is_true(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            process.raw_process_config['trigger_selective_training'] = {
+                'enabled': True,
+                'caption_sources': {
+                    'enabled': True,
+                    'sources': [
+                        {'name': 'json', 'use_main_dataset': True},
+                        {'name': 'natural', 'path': '/mirror'},
+                    ],
+                },
+            }
+            process.three_phase_config.phase_a1.caption_sources = {
+                'enabled': True,
+                'paired': True,
+                'sources': [
+                    {'name': 'structured', 'use_main_dataset': True},
+                    {'name': 'natural', 'path': '/structured-mirror'},
+                ],
+                'weights': {'structured': 0.5, 'natural': 0.5},
+            }
+            child = process.build_child_job_config('a1')['config']['process'][0]
+            caption_sources = child['trigger_selective_training']['caption_sources']
+            self.assertEqual(
+                [source['name'] for source in caption_sources['sources']],
+                ['structured', 'natural'],
+            )
+            self.assertEqual(caption_sources['schedule']['keyframes'][0]['structured'], 0.5)
+
+    def test_phase_b_caption_sources_override_parent_and_json_only_is_scheduled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            process.raw_process_config['trigger_selective_training'] = {
+                'enabled': True,
+                'caption_sources': {
+                    'enabled': True,
+                    'sources': [
+                        {'name': 'parent', 'use_main_dataset': True, 'caption_ext': '.txt', 'format': 'text'},
+                    ],
+                },
+            }
+            child = process.build_child_job_config('b')['config']['process'][0]
+            caption_sources = child['trigger_selective_training']['caption_sources']
+            self.assertEqual([source['name'] for source in caption_sources['sources']], ['phase_b_json'])
+            self.assertEqual(
+                caption_sources['schedule']['keyframes'],
+                [{'step': 0, 'phase_b_json': 1.0}],
             )
 
     def test_snapshot_and_completion_contract_are_written(self):
@@ -206,6 +385,43 @@ class ThreePhaseTriggerTrainerTest(unittest.TestCase):
             self.assertEqual(contract['return_code'], 0)
             self.assertEqual(contract['phase'], 'a1')
             self.assertTrue(contract['artifacts']['embedding'].endswith('trigger_embedding.safetensors'))
+
+    def test_completion_contract_hashes_existing_inputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            input_path = os.path.join(temp_dir, 'embedding.safetensors')
+            with open(input_path, 'wb') as handle:
+                handle.write(b'phase-input')
+            process.three_phase_config.phase_b.text_activator_source.phase = None
+            process.three_phase_config.phase_b.text_activator_source.path = input_path
+            process.write_phase_snapshot('b')
+            contract = process.completion_contract('b', 'running')
+            self.assertEqual(contract['inputs']['embedding']['path'], input_path)
+            self.assertEqual(
+                contract['inputs']['embedding']['sha256'],
+                hashlib.sha256(b'phase-input').hexdigest(),
+            )
+
+    def test_phase_input_verification_fails_fast(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            with self.assertRaisesRegex(FileNotFoundError, 'missing required input artifact'):
+                process._verify_phase_inputs('b')
+
+    def test_verified_contract_rejects_changed_input_hash(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            input_path = os.path.join(temp_dir, 'embedding.safetensors')
+            with open(input_path, 'wb') as handle:
+                handle.write(b'original')
+            process.three_phase_config.phase_b.text_activator_source.phase = None
+            process.three_phase_config.phase_b.text_activator_source.path = input_path
+            process.write_phase_snapshot('b')
+            process.write_completion_contract('b', 'completed', 0)
+            self.assertTrue(process._contract_is_verified('b'))
+            with open(input_path, 'wb') as handle:
+                handle.write(b'changed')
+            self.assertFalse(process._contract_is_verified('b'))
 
 
 if __name__ == '__main__':

@@ -417,6 +417,10 @@ class TriggerSelectiveCaptionSourcesConfig:
         ]
         schedule_kwargs = dict(kwargs.get('schedule', {}))
         schedule_kwargs.setdefault('normalize_weights', True)
+        if self.enabled and len(self.sources) == 1 and not schedule_kwargs.get('keyframes'):
+            schedule_kwargs['keyframes'] = [
+                {'step': 0, self.sources[0].name: 1.0}
+            ]
         self.schedule = TriggerSelectiveScheduleConfig(**schedule_kwargs)
 
 
@@ -530,6 +534,10 @@ class TriggerBindingContextConsistencyConfig:
     def __init__(self, **kwargs):
         self.enabled: bool = kwargs.get('enabled', False)
         self.weight: float = float(kwargs.get('weight', 0.0))
+        self.alignment: str = kwargs.get('alignment', 'trigger_pooled')
+        self.mask: str = kwargs.get('mask', kwargs.get('mask_mode', 'trigger'))
+        self.pooling: str = kwargs.get('pooling', 'mean')
+        self.detach_reference: bool = kwargs.get('detach_reference', False)
         self.loss_type: str = kwargs.get('loss_type', kwargs.get('type', 'cosine'))
         self.magnitude_weight: float = float(kwargs.get('magnitude_weight', 0.0))
         self.warmup_steps: int = int(kwargs.get('warmup_steps', 0))
@@ -608,6 +616,54 @@ class TriggerBindingArtifactConfig:
         self.phase_a2 = TriggerBindingPhaseArtifactConfig(**kwargs.get('phase_a2', {}))
 
 
+class TriggerBindingResolvedSourcesConfig:
+    def __init__(self, **kwargs):
+        self.embedding: Optional[str] = kwargs.get('embedding', None)
+        self.te_adapter: Optional[str] = kwargs.get('te_adapter', None)
+        self.tap_adapters: Optional[str] = kwargs.get('tap_adapters', None)
+        self.diffusion_lora: Optional[str] = kwargs.get('diffusion_lora', None)
+
+    def as_dict(self) -> Dict[str, Optional[str]]:
+        return {
+            'embedding': self.embedding,
+            'te_adapter': self.te_adapter,
+            'tap_adapters': self.tap_adapters,
+            'diffusion_lora': self.diffusion_lora,
+        }
+
+
+class TriggerBindingPhaseRuntimeConfig:
+    def __init__(self, **kwargs):
+        self.caption_sources: Dict = kwargs.get('caption_sources', {})
+        self.losses: Dict = kwargs.get('losses', {})
+        self.save_steps: List[int] = [int(step) for step in kwargs.get('save_steps', [])]
+        self.resume = TriggerBindingResumeConfig(**kwargs.get('resume', {}))
+        self.sources = TriggerBindingResolvedSourcesConfig(**kwargs.get('sources', {}))
+
+
+class TriggerValidationConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.every: int = int(kwargs.get('every', 0))
+        self.seed: int = int(kwargs.get('seed', 0))
+        self.fixed_timesteps: List[int] = [int(value) for value in kwargs.get('fixed_timesteps', [])]
+        self.fixed_sigmas: List[float] = [float(value) for value in kwargs.get('fixed_sigmas', [])]
+        self.train_probe_manifest: Optional[str] = kwargs.get('train_probe_manifest', None)
+        self.heldout_manifest: Optional[str] = kwargs.get('heldout_manifest', None)
+        self.caption_sources: List[str] = list(kwargs.get('caption_sources', []))
+        self.negative_phrases: List[str] = list(kwargs.get('negative_phrases', []))
+        self.train_probe_output_filename: str = kwargs.get(
+            'train_probe_output_filename', 'train_probe_validation.jsonl'
+        )
+        self.heldout_output_filename: str = kwargs.get(
+            'heldout_output_filename', 'heldout_validation.jsonl'
+        )
+        self.aggregate_output_filename: str = kwargs.get(
+            'aggregate_output_filename', 'trigger_validation_aggregate.jsonl'
+        )
+        self.gain_epsilon: float = float(kwargs.get('gain_epsilon', 1.0e-6))
+
+
 class ThreePhaseTriggerTrainingConfig:
     PHASE_NAMES = ('a1', 'b', 'a2')
 
@@ -621,6 +677,7 @@ class ThreePhaseTriggerTrainingConfig:
         self.occurrence_mode: str = trigger.get('occurrence_mode', 'additive')
         self.text_activator = TriggerBindingTextActivatorConfig(**kwargs.get('text_activator', {}))
         self.reachability_probe: Dict = kwargs.get('reachability_probe', {'enabled': True})
+        self.validation = TriggerValidationConfig(**kwargs.get('validation', {}))
         self.phase_a1 = TriggerBindingPhaseConfig('a1', **kwargs.get('phase_a1', {}))
         self.phase_b = TriggerBindingPhaseConfig('b', **kwargs.get('phase_b', {}))
         self.phase_a2 = TriggerBindingPhaseConfig('a2', **kwargs.get('phase_a2', {}))
@@ -631,6 +688,7 @@ class ThreePhaseTriggerTrainingConfig:
         self.run_root: Optional[str] = runtime.get('run_root', None)
         self.config_snapshot: Optional[str] = runtime.get('config_snapshot', None)
         self.completion_contract: Optional[str] = runtime.get('completion_contract', None)
+        self.phase_runtime = TriggerBindingPhaseRuntimeConfig(**kwargs.get('phase_runtime', {}))
 
     def get_phase(self, phase_name: str) -> TriggerBindingPhaseConfig:
         if phase_name not in self.PHASE_NAMES:
@@ -743,6 +801,9 @@ def validate_three_phase_trigger_training_config(
     if config.reachability_probe.get('enabled', True) is not True:
         raise ValueError('three_phase_trigger_training requires reachability_probe.enabled=true')
 
+    from toolkit.trigger_validation import validate_trigger_validation_config
+    validate_trigger_validation_config(config.validation)
+
     phases = {name: config.get_phase(name) for name in config.PHASE_NAMES}
     enabled_phases = {name: phase.enabled for name, phase in phases.items()}
     if not all(enabled_phases.values()):
@@ -794,8 +855,23 @@ def validate_three_phase_trigger_training_config(
         if consistency.enabled:
             if consistency.weight < 0:
                 raise ValueError(f'{prefix}.losses.context_consistency.weight must be non-negative')
+            if consistency.alignment not in ('trigger_pooled', 'token_aligned'):
+                raise ValueError(
+                    f'{prefix}.losses.context_consistency.alignment must be trigger_pooled or token_aligned'
+                )
+            valid_masks = ('trigger',) if consistency.alignment == 'trigger_pooled' else ('all', 'trigger', 'nontrigger')
+            if consistency.mask not in valid_masks:
+                raise ValueError(
+                    f'{prefix}.losses.context_consistency.mask is invalid for alignment={consistency.alignment}'
+                )
+            if consistency.pooling not in ('mean', 'sum'):
+                raise ValueError(f'{prefix}.losses.context_consistency.pooling must be mean or sum')
+            if not isinstance(consistency.detach_reference, bool):
+                raise ValueError(f'{prefix}.losses.context_consistency.detach_reference must be boolean')
             if consistency.loss_type not in ('cosine', 'mse'):
                 raise ValueError(f'{prefix}.losses.context_consistency.loss_type must be cosine or mse')
+            if consistency.magnitude_weight < 0:
+                raise ValueError(f'{prefix}.losses.context_consistency.magnitude_weight must be non-negative')
             if consistency.warmup_steps < 0 or consistency.warmup_steps > phase.steps:
                 raise ValueError(f'{prefix}.losses.context_consistency.warmup_steps must be within phase steps')
             if consistency.min_delta_norm <= 0:
@@ -845,6 +921,24 @@ def validate_three_phase_trigger_training_config(
             raise ValueError('three_phase_trigger_training.runtime.active_phase requires orchestrated=true')
         for field_name in ('run_root', 'config_snapshot', 'completion_contract'):
             _validate_non_empty_string(getattr(config, field_name), f'three_phase_trigger_training.runtime.{field_name}')
+        phase_runtime = config.phase_runtime
+        if not isinstance(phase_runtime.caption_sources, dict):
+            raise ValueError('three_phase_trigger_training.phase_runtime.caption_sources must be a mapping')
+        if not isinstance(phase_runtime.losses, dict):
+            raise ValueError('three_phase_trigger_training.phase_runtime.losses must be a mapping')
+        if any(step <= 0 for step in phase_runtime.save_steps):
+            raise ValueError('three_phase_trigger_training.phase_runtime.save_steps must be positive')
+        if phase_runtime.resume.enabled:
+            _validate_non_empty_string(
+                phase_runtime.resume.checkpoint,
+                'three_phase_trigger_training.phase_runtime.resume.checkpoint',
+            )
+        for field_name, value in phase_runtime.sources.as_dict().items():
+            if value is not None:
+                _validate_non_empty_string(
+                    value,
+                    f'three_phase_trigger_training.phase_runtime.sources.{field_name}',
+                )
 
 
 class TrainConfig:

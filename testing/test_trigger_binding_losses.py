@@ -10,6 +10,7 @@ from toolkit.trigger_binding_losses import (
     delta_context_consistency,
     normalized_activator_gain,
     per_item_diffusion_mse,
+    pooled_trigger_residual_consistency,
     scheduled_gain_floor,
 )
 
@@ -101,6 +102,97 @@ class TriggerBindingLossesTest(unittest.TestCase):
         taps = torch.zeros(1, 12, 2, 3)
         with self.assertRaisesRegex(ValueError, 'expected 13'):
             delta_context_consistency(taps, taps, taps, taps)
+
+    def test_pooled_trigger_residual_supports_different_token_lengths(self):
+        source_active = torch.zeros(1, 13, 3, 2)
+        reference_active = torch.zeros(1, 13, 5, 2)
+        source_active[:, :, 0] = torch.tensor([2.0, 0.0])
+        source_active[:, :, 2] = torch.tensor([4.0, 0.0])
+        reference_active[:, :, 1] = torch.tensor([0.0, 3.0])
+        reference_active[:, :, 3] = torch.tensor([0.0, 3.0])
+        result = pooled_trigger_residual_consistency(
+            source_active,
+            torch.zeros_like(source_active),
+            reference_active,
+            torch.zeros_like(reference_active),
+            source_trigger_mask=torch.tensor([[True, False, True]]),
+            reference_trigger_mask=torch.tensor([[False, True, False, True, False]]),
+            source_valid_mask=torch.tensor([[True, True, True]]),
+            reference_valid_mask=torch.tensor([[True, True, True, True, False]]),
+        )
+        torch.testing.assert_close(result.cosine_per_item, torch.ones(1))
+        torch.testing.assert_close(result.magnitude_per_item, torch.zeros(1))
+        self.assertEqual(result.valid_taps_per_item.item(), 13.0)
+
+    def test_pooled_trigger_residual_applies_magnitude_and_warmup(self):
+        source = torch.zeros(1, 13, 2, 2)
+        reference = torch.zeros(1, 13, 3, 2)
+        source[:, :, 0, 0] = 2.0
+        reference[:, :, 1, 0] = 1.0
+        result = pooled_trigger_residual_consistency(
+            source,
+            torch.zeros_like(source),
+            reference,
+            torch.zeros_like(reference),
+            source_trigger_mask=torch.tensor([[True, False]]),
+            reference_trigger_mask=torch.tensor([[False, True, False]]),
+            magnitude_weight=0.5,
+            step=5,
+            warmup_steps=10,
+        )
+        self.assertAlmostEqual(result.cosine_per_item.item(), 0.0, places=6)
+        self.assertAlmostEqual(result.magnitude_per_item.item(), 2.0 / 3.0, places=6)
+        self.assertAlmostEqual(result.per_item.item(), 1.0 / 6.0, places=6)
+
+    def test_pooled_trigger_residual_is_symmetric_by_default(self):
+        source_active = torch.zeros(1, 13, 2, 2, requires_grad=True)
+        reference_active = torch.zeros(1, 13, 3, 2, requires_grad=True)
+        with torch.no_grad():
+            source_active[:, :, 0] = torch.tensor([1.0, 0.0])
+            reference_active[:, :, 1] = torch.tensor([0.0, 1.0])
+        result = pooled_trigger_residual_consistency(
+            source_active,
+            torch.zeros_like(source_active),
+            reference_active,
+            torch.zeros_like(reference_active),
+            source_trigger_mask=torch.tensor([[True, False]]),
+            reference_trigger_mask=torch.tensor([[False, True, False]]),
+        )
+        result.loss.backward()
+        self.assertGreater(source_active.grad.abs().sum().item(), 0.0)
+        self.assertGreater(reference_active.grad.abs().sum().item(), 0.0)
+
+    def test_pooled_trigger_residual_can_detach_reference(self):
+        source_active = torch.zeros(1, 13, 2, 2, requires_grad=True)
+        reference_active = torch.zeros(1, 13, 3, 2, requires_grad=True)
+        with torch.no_grad():
+            source_active[:, :, 0] = torch.tensor([1.0, 0.0])
+            reference_active[:, :, 1] = torch.tensor([0.0, 1.0])
+        result = pooled_trigger_residual_consistency(
+            source_active,
+            torch.zeros_like(source_active),
+            reference_active,
+            torch.zeros_like(reference_active),
+            source_trigger_mask=torch.tensor([[True, False]]),
+            reference_trigger_mask=torch.tensor([[False, True, False]]),
+            detach_reference=True,
+        )
+        result.loss.backward()
+        self.assertGreater(source_active.grad.abs().sum().item(), 0.0)
+        self.assertIsNone(reference_active.grad)
+
+    def test_pooled_trigger_residual_rejects_empty_trigger_mask(self):
+        source = torch.ones(1, 13, 2, 2)
+        reference = torch.ones(1, 13, 3, 2)
+        with self.assertRaisesRegex(ValueError, 'selects no valid tokens'):
+            pooled_trigger_residual_consistency(
+                source,
+                torch.zeros_like(source),
+                reference,
+                torch.zeros_like(reference),
+                source_trigger_mask=torch.tensor([[True, False]]),
+                reference_trigger_mask=torch.tensor([[False, False, False]]),
+            )
 
     def test_paired_source_aggregation(self):
         aggregate, weighted, weights = aggregate_paired_source_losses(

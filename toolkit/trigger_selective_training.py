@@ -135,8 +135,8 @@ def validate_trigger_selective_config(
         )
 
     if config.caption_sources.enabled:
-        if len(config.caption_sources.sources) < 2:
-            raise ValueError('trigger_selective_training caption_sources requires at least two sources')
+        if not config.caption_sources.sources:
+            raise ValueError('trigger_selective_training caption_sources requires at least one source')
         source_names = [source.name for source in config.caption_sources.sources]
         if any(not name or not name.strip() for name in source_names):
             raise ValueError('trigger_selective_training caption source names must be non-empty')
@@ -145,6 +145,12 @@ def validate_trigger_selective_config(
         main_sources = [source for source in config.caption_sources.sources if source.use_main_dataset]
         if len(main_sources) != 1:
             raise ValueError('trigger_selective_training caption_sources requires exactly one use_main_dataset source')
+        if len(config.caption_sources.sources) == 1:
+            source = config.caption_sources.sources[0]
+            if not source.use_main_dataset or source.caption_ext.lower() != '.json':
+                raise ValueError(
+                    'trigger_selective_training single caption source must be a JSON use_main_dataset source'
+                )
         for source in config.caption_sources.sources:
             if source.format not in {'text', 'json'}:
                 raise ValueError(f'unsupported caption source format for {source.name}: {source.format}')

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -97,6 +98,97 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             ),
         }
 
+    @staticmethod
+    def _sha256_file(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, 'rb') as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _source_records(self, phase_name: str) -> Dict[str, Dict[str, Optional[str]]]:
+        records = {}
+        for name, path in self._resolve_phase_sources(phase_name).items():
+            records[name] = {
+                'path': path,
+                'sha256': self._sha256_file(path) if path is not None and os.path.isfile(path) else None,
+            }
+        return records
+
+    def _required_phase_sources(self, phase_name: str) -> Dict[str, str]:
+        phase = self.three_phase_config.get_phase(phase_name)
+        sources = self._resolve_phase_sources(phase_name)
+        required = {}
+        if phase.text_activator_source.phase is not None or phase.text_activator_source.path is not None:
+            enabled_components = {
+                'embedding': self.three_phase_config.text_activator.embedding.enabled,
+                'te_adapter': self.three_phase_config.text_activator.te_adapter.enabled,
+                'tap_adapters': self.three_phase_config.text_activator.tap_adapters.enabled,
+            }
+            required.update({name: sources[name] for name, enabled in enabled_components.items() if enabled})
+        if phase.diffusion_lora_source.phase is not None or phase.diffusion_lora_source.path is not None:
+            required['diffusion_lora'] = sources['diffusion_lora']
+        return required
+
+    def _verify_phase_inputs(self, phase_name: str):
+        missing = [
+            f'{name}: {path}'
+            for name, path in self._required_phase_sources(phase_name).items()
+            if path is None or not os.path.isfile(path)
+        ]
+        if missing:
+            raise FileNotFoundError(
+                f'Three-phase trigger phase {phase_name} is missing required input artifact(s): '
+                + '; '.join(missing)
+            )
+
+    @staticmethod
+    def _phase_caption_sources(phase, parent_caption_sources: Dict) -> Dict:
+        caption_sources = copy.deepcopy(phase.caption_sources)
+        if not caption_sources:
+            return caption_sources
+        paired = caption_sources.pop('paired', None)
+        phase_sources = caption_sources.get('sources', [])
+        if isinstance(paired, bool):
+            if paired and phase_sources:
+                paired = [source.get('name') for source in phase_sources]
+            else:
+                paired = (
+                    [source.get('name') for source in parent_caption_sources.get('sources', [])]
+                    if paired else None
+                )
+        if isinstance(paired, list):
+            available_sources = phase_sources or parent_caption_sources.get('sources', [])
+            paired_names = set(paired)
+            caption_sources.setdefault('enabled', True)
+            caption_sources['sources'] = [
+                copy.deepcopy(source)
+                for source in available_sources
+                if source.get('name') in paired_names
+            ]
+            missing = paired_names - {source.get('name') for source in caption_sources['sources']}
+            if missing:
+                raise ValueError(
+                    f'phase {phase.phase_name} caption_sources.paired references unknown source(s): '
+                    + ', '.join(sorted(missing))
+                )
+        weights = caption_sources.pop('weights', None)
+        sources = caption_sources.get('sources', [])
+        if sources and not caption_sources.get('schedule'):
+            if weights is None:
+                weights = {source['name']: 1.0 for source in sources}
+            caption_sources['schedule'] = {
+                'interpolation': 'smoothstep',
+                'normalize_weights': True,
+                'keyframes': [
+                    {'step': 0, **{source['name']: float(weights.get(source['name'], 0.0)) for source in sources}}
+                ],
+            }
+        return caption_sources
+
     def _build_child_process_config(self, phase_name: str) -> OrderedDict:
         phase = self.three_phase_config.get_phase(phase_name)
         child = copy.deepcopy(OrderedDict(self.raw_process_config))
@@ -142,8 +234,15 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             ),
         })
         sources = self._resolve_phase_sources(phase_name)
+        parent_tst = child.get('trigger_selective_training', {})
+        caption_sources = self._phase_caption_sources(
+            phase,
+            parent_tst.get('caption_sources', {}),
+        )
+        if not caption_sources and phase_name in ('a1', 'a2'):
+            caption_sources = copy.deepcopy(parent_tst.get('caption_sources', {}))
         child['three_phase_trigger_training']['phase_runtime'] = {
-            'caption_sources': copy.deepcopy(phase.caption_sources),
+            'caption_sources': caption_sources,
             'losses': copy.deepcopy(phase.losses),
             'save_steps': list(phase.save_steps),
             'resume': {
@@ -152,13 +251,29 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             },
             'sources': sources,
         }
+        child_phase = child['three_phase_trigger_training'][f'phase_{phase_name}']
+        text_source_paths = [
+            sources[name]
+            for name in ('embedding', 'te_adapter', 'tap_adapters')
+            if sources[name] is not None
+        ]
+        child_phase['text_activator_source'] = {
+            'path': text_source_paths[0] if len(set(text_source_paths)) == 1 else None,
+            'step': 'final',
+        }
+        child_phase['diffusion_lora_source'] = {
+            'path': sources['diffusion_lora'],
+            'step': 'final',
+        }
+        child['trigger_selective_training'] = copy.deepcopy(child.get('trigger_selective_training', {}))
+        child['trigger_selective_training']['caption_sources'] = copy.deepcopy(caption_sources)
         if phase_name == 'a2' and sources['diffusion_lora'] is not None:
             child['network'] = copy.deepcopy(child.get('network', {}))
             child['network']['pretrained_lora_path'] = sources['diffusion_lora']
         if phase_name == 'b':
             child['trigger_selective_training'] = copy.deepcopy(child.get('trigger_selective_training', {}))
             child['trigger_selective_training']['phase_local_step'] = True
-            child['trigger_selective_training']['source_artifact_hashes'] = sources
+            child['trigger_selective_training']['source_artifacts'] = self._source_records(phase_name)
         return child
 
     def build_child_job_config(self, phase_name: str) -> OrderedDict:
@@ -205,7 +320,7 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             'config_snapshot': self.phase_snapshots[phase_name],
             'phase_root': phase_root,
             'steps': phase.steps,
-            'inputs': self._resolve_phase_sources(phase_name),
+            'inputs': self._source_records(phase_name),
             'artifacts': {
                 'metrics_file': os.path.join(phase_root, phase_artifacts.metrics_file),
                 'console_log': os.path.join(phase_root, phase_artifacts.console_log),
@@ -233,6 +348,7 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
         return contract_path
 
     def run_phase(self, phase_name: str):
+        self._verify_phase_inputs(phase_name)
         self.active_phase = phase_name
         snapshot_path = self.write_phase_snapshot(phase_name)
         self.write_completion_contract(phase_name, 'running')
@@ -254,7 +370,24 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
                 contract = json.load(handle)
         except (OSError, json.JSONDecodeError):
             return False
-        return contract.get('phase') == phase_name and contract.get('status') == 'completed' and contract.get('return_code') == 0
+        if not (
+            contract.get('phase') == phase_name
+            and contract.get('status') == 'completed'
+            and contract.get('return_code') == 0
+        ):
+            return False
+        for record in contract.get('inputs', {}).values():
+            if not isinstance(record, dict):
+                return False
+            source_path = record.get('path')
+            expected_hash = record.get('sha256')
+            if source_path is None:
+                continue
+            if not os.path.isfile(source_path):
+                return False
+            if expected_hash is not None and self._sha256_file(source_path) != expected_hash:
+                return False
+        return True
 
     def run(self):
         super().run()

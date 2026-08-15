@@ -120,6 +120,9 @@ class SDTrainer(BaseSDTrainProcess):
         self._trigger_binding_prompt_encoder = None
         self._trigger_binding_last_metrics = {}
         self._trigger_binding_last_metrics_written_step = None
+        self._trigger_gradient_reachability_checked = False
+        self._trigger_optimizer_isolation_checked = False
+        self._trigger_gradient_reachability_checked = False
 
         self.dfe: Optional[DiffusionFeatureExtractor] = None
         self.unconditional_embeds = None
@@ -324,6 +327,39 @@ class SDTrainer(BaseSDTrainProcess):
 
     def _load_activator_source(self, modules):
         source = self._phase_config().text_activator_source
+        runtime_sources = self.three_phase_trigger_training.phase_runtime.sources
+        component_paths = {
+            'embedding': runtime_sources.embedding,
+            'te_adapter': runtime_sources.te_adapter,
+            'tap_adapters': runtime_sources.tap_adapters,
+        }
+        configured_paths = [path for path in component_paths.values() if path is not None]
+        if configured_paths:
+            component_modules = {
+                'embedding': self.text_activator.embedding,
+                'te_adapter': self.text_activator.te_adapter,
+                'tap_adapters': self.text_activator.tap_adapters,
+            }
+            for name, checkpoint in component_paths.items():
+                component = component_modules[name]
+                if checkpoint is None or component is None:
+                    continue
+                state = load_file(checkpoint)
+                try:
+                    component.load_state_dict(state, strict=True)
+                except RuntimeError:
+                    prefixes = (f'{name}.', f'text_activator.{name}.', f'trigger_binding.{name}.')
+                    stripped = {
+                        key[len(prefix):]: value
+                        for key, value in state.items()
+                        for prefix in prefixes
+                        if key.startswith(prefix)
+                    }
+                    if not stripped:
+                        raise
+                    component.load_state_dict(stripped, strict=True)
+            return
+
         checkpoint = source.path or self.three_phase_trigger_training.text_activator.embedding.checkpoint_path
         if checkpoint is None:
             return
@@ -388,25 +424,23 @@ class SDTrainer(BaseSDTrainProcess):
         original = self.sd.get_prompt_embeds
         self._trigger_binding_prompt_encoder = original
 
-        def encode_with_binding(sd_model, prompt):
-            runtime_mode = getattr(sd_model, 'text_activator_runtime_mode', None)
-            if (
-                not self.three_phase_enabled
-                or self.runtime_phase == 'b'
-                or runtime_mode == 'activator_bypass'
-            ):
-                return original(prompt, runtime_mode=runtime_mode)
+        def encode_with_binding(sd_model, prompt, **kwargs):
+            runtime_mode = kwargs.pop('runtime_mode', None) or getattr(sd_model, 'text_activator_runtime_mode', None)
+            if not self.three_phase_enabled or self.runtime_phase == 'b':
+                return original(prompt, runtime_mode=runtime_mode, **kwargs)
             prompts = [prompt] if isinstance(prompt, str) else list(prompt)
             placeholder = self.three_phase_trigger_training.placeholder
             literal = self.three_phase_trigger_training.literal
             placeholder_presence = [placeholder in text for text in prompts]
+            if runtime_mode == 'activator_bypass' and not any(placeholder_presence):
+                return original(prompt, runtime_mode=runtime_mode, **kwargs)
             if not any(placeholder_presence) and all(literal in text for text in prompts):
                 # The standard ai-toolkit caption path has already replaced the
                 # placeholder with the literal. A1/A2 recompute their real
                 # active/bypass pair from caption_template later, so this
                 # otherwise-unused compatibility encode must not activate the
                 # learned trigger a second time.
-                return original(prompt, runtime_mode='activator_bypass')
+                return original(prompt, runtime_mode='activator_bypass', **kwargs)
             if not all(placeholder_presence):
                 raise ValueError(
                     'three-phase trigger prompt batch mixes bound and unbound captions; '
@@ -427,19 +461,40 @@ class SDTrainer(BaseSDTrainProcess):
             pipeline = importlib.import_module(
                 'extensions_built_in.diffusion_models.ideogram4.src.pipeline'
             )
-            features = pipeline.get_qwen3_vl_features(
+            return_taps = bool(kwargs.pop('return_taps', False))
+            features_result = pipeline.get_qwen3_vl_features(
                 sd_model.text_encoder,
                 batch.input_ids,
                 batch.attention_mask,
                 (batch.attention_mask.cumsum(dim=-1) - 1).clamp(min=0).long(),
                 trigger_mask=batch.trigger_mask,
                 text_activator=self.text_activator,
-                runtime_mode='full',
+                runtime_mode=runtime_mode or 'full',
+                return_taps=return_taps,
             )
+            if return_taps:
+                features, taps = features_result
+            else:
+                features = features_result
             from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
-            return AdvancedPromptEmbeds(
-                text_embeds=[features[index].to(sd_model.torch_dtype) for index in range(features.shape[0])]
-            )
+            embeds_kwargs = {
+                'text_embeds': [features[index].to(sd_model.torch_dtype) for index in range(features.shape[0])],
+                'trigger_masks': [
+                    batch.trigger_mask[index, :int(batch.attention_mask[index].sum().item())]
+                    for index in range(batch.trigger_mask.shape[0])
+                ],
+            }
+            if return_taps:
+                embeds_kwargs['text_taps'] = [
+                    torch.stack([
+                        tap[index, :int(batch.attention_mask[index].sum().item())]
+                        for tap in taps
+                    ], dim=0)
+                    for index in range(features.shape[0])
+                ]
+            embeds = AdvancedPromptEmbeds(**embeds_kwargs)
+            embeds.frozen_dtype_keys = ['trigger_masks']
+            return embeds
 
         self.sd.get_prompt_embeds = MethodType(encode_with_binding, self.sd)
 
@@ -632,31 +687,16 @@ class SDTrainer(BaseSDTrainProcess):
         if self.three_phase_enabled:
             probe_config = self.three_phase_trigger_training.reachability_probe
             if probe_config.get('enabled', True):
-                modules = self._load_trigger_binding_modules()
-                probe = self._first_callable(
-                    modules['runtime'],
-                    ('run_reachability_probe', 'probe_reachability', 'validate_reachability'),
-                ) or self._first_callable(
-                    modules['losses'],
-                    ('run_reachability_probe', 'probe_reachability', 'validate_reachability'),
+                reachability = importlib.import_module('toolkit.trigger_reachability')
+                reachability.check_optimizer_isolation(
+                    self.text_activator,
+                    self.network,
+                    self.runtime_phase,
+                    optimizer=getattr(self, 'optimizer', None),
+                    params=getattr(self, 'params', None),
+                    raise_on_error=True,
                 )
-                if probe is not None:
-                    result = self._call_supported(
-                        probe,
-                        trainer=self,
-                        sd=self.sd,
-                        activator=self.text_activator,
-                        text_activator=self.text_activator,
-                        phase=self.runtime_phase,
-                        config=probe_config,
-                        phase_config=self._phase_config(),
-                    )
-                    if result is False or (isinstance(result, dict) and not result.get('reachable', result.get('ok', True))):
-                        raise RuntimeError(f'trigger activator reachability probe failed: {result}')
-                else:
-                    diagnostics = self.text_activator.probe_diagnostics()
-                    if not diagnostics.active or diagnostics.total_parameters == 0:
-                        raise RuntimeError(f'trigger activator reachability probe failed: {diagnostics}')
+                self._trigger_optimizer_isolation_checked = True
         if self.is_caching_text_embeddings:
             # make sure model is on cpu for this part so we don't oom.
             self.sd.unet.to('cpu')
@@ -1785,6 +1825,79 @@ class SDTrainer(BaseSDTrainProcess):
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + '\n')
         self._trigger_binding_last_metrics_written_step = self.step_num
 
+    def _phase_caption_source_weights(self):
+        caption_sources = self.three_phase_trigger_training.phase_runtime.caption_sources or {}
+        if not caption_sources.get('enabled', False):
+            return {}
+        names = [source['name'] for source in caption_sources.get('sources', [])]
+        if not names:
+            return {}
+        schedule = caption_sources.get('schedule', {})
+        keyframes = schedule.get('keyframes', [])
+        if not keyframes:
+            return {name: 1.0 / len(names) for name in names}
+        if self.step_num <= int(keyframes[0]['step']):
+            weights = {name: float(keyframes[0].get(name, 0.0)) for name in names}
+        elif self.step_num >= int(keyframes[-1]['step']):
+            weights = {name: float(keyframes[-1].get(name, 0.0)) for name in names}
+        else:
+            weights = None
+            for left, right in zip(keyframes, keyframes[1:]):
+                left_step, right_step = int(left['step']), int(right['step'])
+                if left_step <= self.step_num <= right_step:
+                    fraction = (self.step_num - left_step) / (right_step - left_step)
+                    if schedule.get('interpolation', 'smoothstep') == 'smoothstep':
+                        fraction = fraction * fraction * (3.0 - 2.0 * fraction)
+                    weights = {
+                        name: float(left.get(name, 0.0))
+                        + fraction * (float(right.get(name, 0.0)) - float(left.get(name, 0.0)))
+                        for name in names
+                    }
+                    break
+            if weights is None:
+                raise RuntimeError('could not resolve phase caption source schedule')
+        if schedule.get('normalize_weights', True):
+            total = sum(weights.values())
+            if total <= 0:
+                raise ValueError('phase caption source weights must not sum to zero')
+            weights = {name: value / total for name, value in weights.items()}
+        return weights
+
+    @staticmethod
+    def _prompt_tap_batch(embeds):
+        if 'text_taps' not in embeds or 'trigger_masks' not in embeds:
+            raise RuntimeError('context consistency requires prompt text_taps and trigger_masks')
+        taps = embeds.text_taps
+        masks = embeds.trigger_masks
+        max_tokens = max(tap.shape[1] for tap in taps)
+        padded_taps = []
+        padded_masks = []
+        valid_masks = []
+        for tap, mask in zip(taps, masks):
+            token_count = tap.shape[1]
+            padded_taps.append(F.pad(tap, (0, 0, 0, max_tokens - token_count)))
+            padded_masks.append(F.pad(mask.bool(), (0, max_tokens - token_count)))
+            valid_masks.append(F.pad(torch.ones(token_count, device=mask.device, dtype=torch.bool), (0, max_tokens - token_count)))
+        return torch.stack(padded_taps), torch.stack(padded_masks), torch.stack(valid_masks)
+
+    def _check_first_trigger_gradient(self, loss, active_pred, bypass_pred):
+        if getattr(self, '_trigger_gradient_reachability_checked', False):
+            return
+        reachability = importlib.import_module('toolkit.trigger_reachability')
+        reachability.check_gradient_reachability(
+            self.text_activator,
+            self.network,
+            self.runtime_phase,
+            optimizer=getattr(self, 'optimizer', None),
+            params=getattr(self, 'params', None),
+            loss=loss,
+            active_output=active_pred,
+            bypass_output=bypass_pred,
+            require_output_difference=self.runtime_phase != 'b',
+            raise_on_error=True,
+        )
+        self._trigger_gradient_reachability_checked = True
+
     def _calculate_trigger_binding_loss(
         self,
         noisy_latents,
@@ -1795,113 +1908,143 @@ class SDTrainer(BaseSDTrainProcess):
         mask_multiplier,
         dtype,
     ):
-        raw_prompts = [
-            getattr(item, 'caption_template', None) or item.raw_caption
-            for item in batch.file_items
-        ]
-        with self._activator_mode('full'):
-            active_embeds = self.sd.encode_prompt(raw_prompts, long_prompts=self.do_long_prompts)
-            active_pred = self.predict_noise(
-                noisy_latents=noisy_latents,
-                timesteps=timesteps,
-                conditional_embeds=active_embeds.to(self.device_torch, dtype=dtype),
-                unconditional_embeds=None,
-                batch=batch,
-                is_primary_pred=True,
-                **pred_kwargs,
-            )
-        with self._activator_mode('activator_bypass'):
-            with torch.no_grad():
-                bypass_embeds = self.sd.encode_prompt(
-                    raw_prompts,
+        phase_config = self._phase_config()
+        context_config = phase_config.context_consistency
+        source_weights = self._phase_caption_source_weights()
+        paired_enabled = len(source_weights) > 1
+        if source_weights:
+            source_prompts = {
+                name: batch.get_caption_source_templates([name] * len(batch.file_items))
+                for name in source_weights
+            }
+        else:
+            source_prompts = {'primary': [
+                getattr(item, 'caption_template', None) or item.raw_caption
+                for item in batch.file_items
+            ]}
+            source_weights = {'primary': 1.0}
+        if context_config.enabled and not paired_enabled:
+            raise ValueError('context consistency requires at least two enabled paired caption sources')
+
+        predictions = {}
+        encoded = {}
+        for source_name, prompts in source_prompts.items():
+            with self._activator_mode('full'):
+                active_embeds = self.sd.encode_prompt(
+                    prompts,
                     long_prompts=self.do_long_prompts,
-                ).detach()
-                bypass_pred = self.predict_noise(
+                    return_taps=context_config.enabled,
+                )
+                active_pred = self.predict_noise(
                     noisy_latents=noisy_latents,
                     timesteps=timesteps,
-                    conditional_embeds=bypass_embeds.to(self.device_torch, dtype=dtype),
+                    conditional_embeds=active_embeds.to(self.device_torch, dtype=dtype),
                     unconditional_embeds=None,
                     batch=batch,
+                    is_primary_pred=source_name == next(iter(source_prompts)),
                     **pred_kwargs,
-                ).detach()
+                )
+            with self._activator_mode('activator_bypass'):
+                with torch.no_grad():
+                    bypass_embeds = self.sd.encode_prompt(
+                        prompts,
+                        long_prompts=self.do_long_prompts,
+                        return_taps=context_config.enabled,
+                    ).detach()
+                    bypass_pred = self.predict_noise(
+                        noisy_latents=noisy_latents,
+                        timesteps=timesteps,
+                        conditional_embeds=bypass_embeds.to(self.device_torch, dtype=dtype),
+                        unconditional_embeds=None,
+                        batch=batch,
+                        **pred_kwargs,
+                    ).detach()
+            predictions[source_name] = (active_pred, bypass_pred)
+            encoded[source_name] = (active_embeds, bypass_embeds)
+
         target = shared_loss_target(self, noise, batch, timesteps)
         loss_module = self._load_trigger_binding_modules()['losses']
-        loss_fn = self._first_callable(
-            loss_module,
-            ('calculate_trigger_binding_losses', 'trigger_binding_losses', 'compute_trigger_binding_losses'),
-        )
-        if loss_fn is not None:
-            result = self._call_supported(
-                loss_fn,
-                trainer=self,
-                phase=self.runtime_phase,
-                phase_config=self._phase_config(),
-                config=self.three_phase_trigger_training,
-                active_prediction=active_pred,
-                activator_prediction=active_pred,
-                bypass_prediction=bypass_pred,
-                baseline_prediction=bypass_pred,
-                target=target,
-                noise=noise,
-                noisy_latents=noisy_latents,
-                timesteps=timesteps,
-                batch=batch,
-                mask_multiplier=mask_multiplier,
-                active_embeddings=active_embeds,
-                bypass_embeddings=bypass_embeds,
+        floor_config = phase_config.activator_gain_floor
+        floor = 0.0
+        if floor_config.enabled and floor_config.schedule.keyframes:
+            floor = loss_module.scheduled_gain_floor(
+                self.step_num,
+                floor_config.schedule.keyframes,
+                floor_config.schedule.interpolation,
             )
-        elif self.runtime_phase == 'a1' and callable(getattr(loss_module, 'compute_a1_loss', None)):
-            floor_config = self._phase_config().activator_gain_floor
-            floor = 0.0
-            if floor_config.enabled and floor_config.schedule.keyframes:
-                floor = loss_module.scheduled_gain_floor(
-                    self.step_num,
-                    floor_config.schedule.keyframes,
-                    floor_config.schedule.interpolation,
-                )
-            result = loss_module.compute_a1_loss(
-                active_pred,
-                target,
-                bypass_prediction=bypass_pred,
-                gain_floor=floor,
-                gain_floor_weight=floor_config.weight if floor_config.enabled else 0.0,
-            )
-        elif self.runtime_phase == 'a2' and callable(getattr(loss_module, 'compute_a2_loss', None)):
-            floor_config = self._phase_config().activator_gain_floor
-            floor = 0.0
-            if floor_config.enabled and floor_config.schedule.keyframes:
-                floor = loss_module.scheduled_gain_floor(
-                    self.step_num,
-                    floor_config.schedule.keyframes,
-                    floor_config.schedule.interpolation,
-                )
-            result = loss_module.compute_a2_loss(
-                active_pred,
-                bypass_pred,
-                target,
-                gain_floor=floor,
-                gain_floor_weight=floor_config.weight if floor_config.enabled else 0.0,
-            )
-        else:
-            raise RuntimeError('toolkit.trigger_binding_losses has no supported loss entry point')
+        diffusion_config = phase_config.losses.get('diffusion_mse', {})
+        diffusion_weight = float(diffusion_config.get('weight', 1.0)) if diffusion_config.get('enabled', True) else 0.0
+        gain_weight = floor_config.weight if floor_config.enabled else 0.0
+        source_objectives = {}
         metrics = {}
-        if torch.is_tensor(result):
-            loss = result
-        elif isinstance(result, tuple):
-            loss, metrics = result[0], result[1] if len(result) > 1 else {}
-        elif isinstance(result, dict):
-            loss = result.get('loss', result.get('total_loss'))
-            metrics = result.get('metrics', result.get('logs', {}))
+        for source_name, (active_pred, bypass_pred) in predictions.items():
+            diffusion = loss_module.per_item_diffusion_mse(active_pred, target)
+            bypass_diffusion = loss_module.per_item_diffusion_mse(bypass_pred, target)
+            gain = loss_module.normalized_activator_gain(diffusion, bypass_diffusion)
+            floor_loss = loss_module.activator_gain_floor_hinge(gain, floor)
+            source_objectives[source_name] = diffusion_weight * diffusion + gain_weight * floor_loss
+            prefix = f'{self.runtime_phase}/source/{source_name}'
+            metrics[f'{prefix}/diffusion_mse'] = float(diffusion.detach().mean().item())
+            metrics[f'{prefix}/bypass_diffusion_mse'] = float(bypass_diffusion.detach().mean().item())
+            metrics[f'{prefix}/activator_gain'] = float(gain.detach().mean().item())
+            metrics[f'{prefix}/gain_floor_loss'] = float(floor_loss.detach().mean().item())
+            metrics[f'{prefix}/gain_floor'] = float(floor)
+
+        aggregate_per_item, _, effective_weights = loss_module.aggregate_paired_source_losses(
+            source_objectives, source_weights
+        )
+        context = None
+        context_per_item = torch.zeros_like(aggregate_per_item)
+        if context_config.enabled:
+            source_name = 'structured' if 'structured' in encoded else next(iter(encoded))
+            reference_name = 'natural' if 'natural' in encoded else next(
+                name for name in encoded if name != source_name
+            )
+            source_active, source_bypass = encoded[source_name]
+            reference_active, reference_bypass = encoded[reference_name]
+            source_active_taps, source_trigger_mask, source_valid_mask = self._prompt_tap_batch(source_active)
+            source_bypass_taps, _, _ = self._prompt_tap_batch(source_bypass)
+            reference_active_taps, reference_trigger_mask, reference_valid_mask = self._prompt_tap_batch(reference_active)
+            reference_bypass_taps, _, _ = self._prompt_tap_batch(reference_bypass)
+            context = loss_module.pooled_trigger_residual_consistency(
+                source_active_taps,
+                source_bypass_taps,
+                reference_active_taps,
+                reference_bypass_taps,
+                source_trigger_mask=source_trigger_mask,
+                reference_trigger_mask=reference_trigger_mask,
+                source_valid_mask=source_valid_mask,
+                reference_valid_mask=reference_valid_mask,
+                pooling=context_config.pooling,
+                detach_reference=context_config.detach_reference,
+                cosine_weight=1.0,
+                magnitude_weight=context_config.magnitude_weight,
+                min_delta_norm=context_config.min_delta_norm,
+                step=self.step_num,
+                warmup_steps=context_config.warmup_steps,
+                expected_taps=len(context_config.tap_layers) if context_config.tap_layers else 13,
+            )
+            context_per_item = context_config.weight * context.per_item
+            metrics[f'{self.runtime_phase}/context'] = float(context.per_item.detach().mean().item())
+            metrics[f'{self.runtime_phase}/context_weighted'] = float(context_per_item.detach().mean().item())
+            metrics[f'{self.runtime_phase}/context_cosine'] = float(context.cosine_per_item.detach().mean().item())
+            metrics[f'{self.runtime_phase}/context_valid_taps'] = float(context.valid_taps_per_item.detach().mean().item())
         else:
-            loss = getattr(result, 'loss', getattr(result, 'total_loss', None))
-            metrics = getattr(result, 'metrics', {})
-        if loss is None:
-            raise RuntimeError('trigger binding loss entry point did not return a loss tensor')
-        self._trigger_binding_last_metrics = dict(metrics or {})
+            metrics[f'{self.runtime_phase}/context'] = 0.0
+            metrics[f'{self.runtime_phase}/context_weighted'] = 0.0
+
+        per_item = aggregate_per_item + context_per_item
+        loss = per_item.mean()
+        metrics[f'{self.runtime_phase}/aggregate_source_objective'] = float(aggregate_per_item.detach().mean().item())
+        metrics[f'{self.runtime_phase}/aggregate_loss'] = float(loss.detach().item())
+        for name, weight in effective_weights.items():
+            metrics[f'{self.runtime_phase}/source_weight/{name}'] = float(weight)
+        first_source = next(iter(predictions))
+        self._check_first_trigger_gradient(loss, *predictions[first_source])
+        self._trigger_binding_last_metrics = metrics
         self.additional_logs['runtime_phase'] = self.runtime_phase
-        for key, value in self._trigger_binding_last_metrics.items():
-            if isinstance(value, (int, float)):
-                self.additional_logs[f'phase/{self.runtime_phase}/{key}'] = float(value)
+        for key, value in metrics.items():
+            self.additional_logs[f'phase/{self.runtime_phase}/{key}'] = float(value)
         self.additional_logs[f'phase/{self.runtime_phase}/loss'] = float(loss.detach().item())
         self._write_trigger_binding_metrics(loss)
         return loss
@@ -2078,6 +2221,8 @@ class SDTrainer(BaseSDTrainProcess):
         weighted_path2 = weights['path2'] * path2
         weighted_path3 = weights['path3'] * path3
         loss = weighted_path1 + weighted_path2 + weighted_path3
+        if self.three_phase_enabled and self.runtime_phase == 'b':
+            self._check_first_trigger_gradient(loss, student_trigger, base_trigger)
 
         gradient_logs = {}
         logging_config = self.trigger_selective_training.logging

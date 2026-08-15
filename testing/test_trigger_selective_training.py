@@ -257,6 +257,36 @@ class TriggerSelectiveTrainingTest(unittest.TestCase):
             self.assertEqual(item['item_id'], os.path.join('nested', 'item.png'))
             self.assertEqual(item['sources']['natural']['caption'], 'natural [trigger] caption')
 
+    def test_json_only_main_caption_source_is_supported(self):
+        config = TriggerSelectiveTrainingConfig(
+            enabled=True,
+            caption_sources={
+                'enabled': True,
+                'sources': [
+                    {
+                        'name': 'json',
+                        'use_main_dataset': True,
+                        'caption_ext': '.json',
+                        'format': 'json',
+                    },
+                ],
+            },
+            negative_styles={
+                'categories': [{'name': 'neutral', 'probability': 1.0, 'phrases': ['']}],
+            },
+            path3={
+                'margin_schedule': {'keyframes': [{'step': 0, 'value': 0.1}]},
+            },
+            loss_schedule={
+                'keyframes': [{'step': 0, 'path1': 1.0, 'path2': 0.0, 'path3': 0.0}],
+            },
+        )
+        validate_trigger_selective_config(config, '<trigger>')
+        self.assertEqual(config.caption_sources.schedule.keyframes, [{'step': 0, 'json': 1.0}])
+        selected, probabilities = sample_caption_sources(config, 0, 3, random.Random(1))
+        self.assertEqual(selected, ['json', 'json', 'json'])
+        self.assertEqual(probabilities, {'json': 1.0})
+
     def test_disabled_config_does_not_require_tst_fields(self):
         validate_trigger_selective_config(TriggerSelectiveTrainingConfig(enabled=False), None)
 
