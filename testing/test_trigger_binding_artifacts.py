@@ -26,6 +26,7 @@ from toolkit.trigger_binding_artifacts import (
     sha256_bytes,
     tensor_sha256,
     source_fingerprint,
+    V8_METADATA_SCHEMA,
 )
 
 
@@ -73,6 +74,67 @@ class TriggerBindingArtifactsTest(unittest.TestCase):
                             len(loaded_manifest["tensors"][key]["sha256"]),
                             64,
                         )
+
+    def test_optional_v8_metadata_round_trip_and_v7_manifest_compatibility(self):
+        v8_metadata = {
+            "schema": V8_METADATA_SCHEMA,
+            "objective": "conditional_response",
+            "architecture": "ideogram4_trigger_binding",
+            "virtual_token_count": 4,
+            "adapter": {
+                "mode": "module_lora",
+                "targets": ["down_proj", "o_proj"],
+                "ranks": {"te": 4, "tap": 2},
+            },
+            "tap_layout": {"layers": [8, 16, 24], "mode": "per_tap"},
+            "gamma": 1.25,
+            "split_manifest_sha256": "a" * 64,
+            "base_model": {"name_or_path": "ideogram-4", "revision": "abc123"},
+            "tokenizer": {"name_or_path": "ideogram-4", "revision": "def456"},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            v7_path, v7_manifest = self._save(temp_dir, "embedding")
+            self.assertNotIn("v8_metadata", v7_manifest)
+            _, loaded_v7 = load_artifact(v7_path)
+            self.assertEqual(loaded_v7, v7_manifest)
+
+            v8_path = Path(temp_dir) / "embedding_v8.safetensors"
+            v8_manifest = save_artifact(
+                v8_path,
+                "embedding",
+                self.tensors,
+                phase=self.phase,
+                source=self.source,
+                config=self.config,
+                v8_metadata=v8_metadata,
+            )
+            _, loaded_v8 = load_artifact(v8_path)
+            self.assertEqual(loaded_v8["v8_metadata"], v8_metadata)
+            self.assertEqual(v8_manifest, loaded_v8)
+
+    def test_v8_metadata_rejects_incomplete_or_invalid_identity(self):
+        metadata = {
+            "schema": V8_METADATA_SCHEMA,
+            "objective": "conditional_response",
+            "architecture": "module_lora",
+            "virtual_token_count": 1,
+            "adapter": {"mode": "module_lora", "targets": ["down_proj"], "ranks": {"te": 4}},
+            "tap_layout": [],
+            "gamma": None,
+            "split_manifest_sha256": None,
+            "base_model": {},
+            "tokenizer": {"name_or_path": "tokenizer"},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, self.assertRaises(ArtifactValidationError):
+            save_artifact(
+                Path(temp_dir) / "bad.safetensors",
+                "embedding",
+                self.tensors,
+                phase=self.phase,
+                source=self.source,
+                config=self.config,
+                v8_metadata=metadata,
+            )
 
     def test_tensor_hash_supports_bfloat16_scalars_empty_and_noncontiguous_tensors(self):
         scalar = torch.tensor(1.25, dtype=torch.bfloat16)

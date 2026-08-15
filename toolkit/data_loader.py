@@ -521,6 +521,26 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]
 
         tst_dataset_root = self.dataset_path if os.path.isdir(self.dataset_path) else os.path.dirname(self.dataset_path)
+        split_manifest_path = getattr(self.dataset_config, 'trigger_data_split_manifest', None)
+        split_name = getattr(self.dataset_config, 'trigger_data_split_name', None)
+        if split_manifest_path is not None:
+            if split_name not in {'train', 'heldout'}:
+                raise ValueError('trigger_data_split_name must be train or heldout when a manifest is configured')
+            from toolkit.trigger_data_split import (
+                dataset_relative_item_id,
+                load_data_split_manifest,
+                split_allowlist,
+            )
+            item_ids = [dataset_relative_item_id(path, tst_dataset_root) for path in file_list]
+            split_manifest = load_data_split_manifest(split_manifest_path, item_ids=item_ids)
+            allowed_ids = set(split_allowlist(split_manifest, split_name))
+            file_list = [
+                path for path, item_id in zip(file_list, item_ids)
+                if item_id in allowed_ids
+            ]
+            if not file_list:
+                raise ValueError(f'trigger data split {split_name!r} selected no dataset images')
+
         tst_caption_source_map = discover_tst_caption_sources(
             tst_dataset_root,
             file_list,

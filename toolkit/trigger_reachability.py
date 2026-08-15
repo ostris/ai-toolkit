@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from fnmatch import fnmatchcase
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import torch
@@ -114,6 +115,86 @@ def _flatten_parameter_source(source: Any) -> Optional[List[torch.nn.Parameter]]
     return flattened
 
 
+def _resolve_component_parameters(
+    component_name: str,
+    selector: Any,
+    activator: Any,
+    network: Any,
+    all_named: Mapping[str, torch.nn.Parameter],
+) -> List[Tuple[str, torch.nn.Parameter]]:
+    if isinstance(selector, torch.nn.Parameter):
+        matches = [(name, parameter) for name, parameter in all_named.items() if parameter is selector]
+    elif isinstance(selector, str):
+        if any(character in selector for character in "*?["):
+            patterns = (selector, f"activator.{selector}", f"network.{selector}")
+            matches = [
+                (name, parameter)
+                for name, parameter in all_named.items()
+                if any(fnmatchcase(name, pattern) for pattern in patterns)
+            ]
+        else:
+            prefixes = (selector, f"activator.{selector}", f"network.{selector}")
+            matches = [
+                (name, parameter)
+                for name, parameter in all_named.items()
+                if any(name == prefix or name.startswith(f"{prefix}.") for prefix in prefixes)
+            ]
+    elif hasattr(selector, "named_parameters"):
+        matches = [
+            (name, parameter)
+            for name, parameter in all_named.items()
+            if any(parameter is selected for selected in selector.parameters())
+        ]
+    elif isinstance(selector, Iterable):
+        matches = []
+        for item in selector:
+            matches.extend(_resolve_component_parameters(component_name, item, activator, network, all_named))
+    else:
+        raise ReachabilityCheckError(f"named component {component_name!r} has an unsupported selector")
+    unique = {id(parameter): (name, parameter) for name, parameter in matches}
+    return sorted(unique.values(), key=lambda item: item[0])
+
+
+def _partition_named_components(
+    activator: Any,
+    network: Any,
+    phase: str,
+    named_components: Optional[Mapping[str, Any]],
+) -> Tuple[List[Tuple[str, torch.nn.Parameter]], List[Tuple[str, torch.nn.Parameter]], Dict[str, List[Tuple[str, torch.nn.Parameter]]], List[str]]:
+    target_name, target_module, frozen_name, frozen_module = _phase_modules(activator, network, phase)
+    target_module_parameters = _named_parameters(target_module, target_name)
+    phase_frozen_parameters = _named_parameters(frozen_module, frozen_name)
+    if named_components is None:
+        target_parameters = [(name, parameter) for name, parameter in target_module_parameters if parameter.requires_grad]
+        inactive = [(name, parameter) for name, parameter in target_module_parameters if not parameter.requires_grad]
+        return target_parameters, inactive + phase_frozen_parameters, {}, []
+    if not isinstance(named_components, Mapping) or not named_components:
+        raise ReachabilityCheckError("named_components must be a non-empty mapping")
+    all_named = dict(target_module_parameters + phase_frozen_parameters)
+    component_parameters: Dict[str, List[Tuple[str, torch.nn.Parameter]]] = {}
+    missing = []
+    expected_ids: set[int] = set()
+    for component_name, selector in named_components.items():
+        if not isinstance(component_name, str) or not component_name:
+            raise ReachabilityCheckError("named component names must be non-empty strings")
+        matches = _resolve_component_parameters(component_name, selector, activator, network, all_named)
+        if not matches:
+            missing.append(component_name)
+        component_parameters[component_name] = matches
+        expected_ids.update(id(parameter) for _, parameter in matches)
+    target_ids = {id(parameter) for _, parameter in target_module_parameters}
+    foreign = [name for name, entries in component_parameters.items() if any(id(parameter) not in target_ids for _, parameter in entries)]
+    if foreign:
+        raise ReachabilityCheckError(f"named components select phase-frozen parameters: {sorted(foreign)}")
+    target_parameters = [(name, parameter) for name, parameter in target_module_parameters if id(parameter) in expected_ids]
+    frozen_parameters = [
+        (name, parameter)
+        for name, parameter in target_module_parameters + phase_frozen_parameters
+        if id(parameter) not in expected_ids
+    ]
+    return target_parameters, frozen_parameters, component_parameters, missing
+
+
 def _parameter_diagnostics(
     named_parameters: Sequence[Tuple[str, torch.nn.Parameter]],
     optimizer_ids: set[int],
@@ -153,18 +234,15 @@ def check_optimizer_isolation(
     *,
     optimizer: Any = None,
     params: Any = None,
+    named_components: Optional[Mapping[str, Any]] = None,
     raise_on_error: bool = False,
 ) -> ReachabilityDiagnostics:
     """Validate phase trainability and optimizer membership without needing a batch."""
     normalized = _normalize_phase(phase)
-    target_name, target_module, frozen_name, frozen_module = _phase_modules(activator, network, normalized)
-    target_module_parameters = _named_parameters(target_module, target_name)
-    phase_frozen_parameters = _named_parameters(frozen_module, frozen_name)
-    target_parameters = [(name, parameter) for name, parameter in target_module_parameters if parameter.requires_grad]
-    inactive_target_parameters = [
-        (name, parameter) for name, parameter in target_module_parameters if not parameter.requires_grad
-    ]
-    frozen_parameters = inactive_target_parameters + phase_frozen_parameters
+    target_name, _, frozen_name, _ = _phase_modules(activator, network, normalized)
+    target_parameters, frozen_parameters, component_parameters, missing_components = _partition_named_components(
+        activator, network, normalized, named_components
+    )
     parameter_source = optimizer if optimizer is not None else params
     optimizer_parameters = _flatten_parameter_source(parameter_source)
     optimizer_ids = {id(parameter) for parameter in optimizer_parameters or []}
@@ -178,15 +256,26 @@ def check_optimizer_isolation(
     frozen_out_optimizer = optimizer_available and all(
         id(parameter) not in optimizer_ids for _, parameter in frozen_parameters
     )
+    components_present = not missing_components
+    components_require_grad = all(
+        entries and all(parameter.requires_grad for _, parameter in entries)
+        for entries in component_parameters.values()
+    ) if named_components is not None else True
     checks = {
         "target_parameters_present": bool(target_parameters),
         "target_requires_grad": target_trainable,
+        "named_components_present": components_present,
+        "named_components_require_grad": components_require_grad,
         "frozen_requires_grad_false": frozen_frozen,
         "optimizer_available": optimizer_available,
         "target_in_optimizer": target_in_optimizer,
         "frozen_out_of_optimizer": frozen_out_optimizer,
     }
     messages = []
+    if missing_components:
+        messages.append(f"named components have no matching parameters: {sorted(missing_components)}")
+    if not components_require_grad:
+        messages.append("some named component parameters do not require gradients")
     if not target_parameters:
         messages.append(f"{target_name} has no parameters")
     if not target_trainable:
@@ -211,6 +300,10 @@ def check_optimizer_isolation(
         parameters={
             "target": _parameter_diagnostics(target_parameters, optimizer_ids),
             "frozen": _parameter_diagnostics(frozen_parameters, optimizer_ids),
+            **{
+                f"component:{name}": _parameter_diagnostics(entries, optimizer_ids)
+                for name, entries in component_parameters.items()
+            },
         },
         messages=messages,
     )
@@ -271,20 +364,17 @@ def check_gradient_reachability(
     bypass_output: Any = None,
     optimizer: Any = None,
     params: Any = None,
+    named_components: Optional[Mapping[str, Any]] = None,
     difference_atol: float = 0.0,
     require_output_difference: bool = True,
     raise_on_error: bool = False,
 ) -> ReachabilityDiagnostics:
     """Probe the first real graph without mutating ``parameter.grad`` or consuming it."""
     normalized = _normalize_phase(phase)
-    target_name, target_module, frozen_name, frozen_module = _phase_modules(activator, network, normalized)
-    target_module_parameters = _named_parameters(target_module, target_name)
-    phase_frozen_parameters = _named_parameters(frozen_module, frozen_name)
-    target_parameters = [(name, parameter) for name, parameter in target_module_parameters if parameter.requires_grad]
-    inactive_target_parameters = [
-        (name, parameter) for name, parameter in target_module_parameters if not parameter.requires_grad
-    ]
-    frozen_parameters = inactive_target_parameters + phase_frozen_parameters
+    target_name, _, frozen_name, _ = _phase_modules(activator, network, normalized)
+    target_parameters, frozen_parameters, component_parameters, missing_components = _partition_named_components(
+        activator, network, normalized, named_components
+    )
 
     if forward_callback is not None:
         active_result = forward_callback("active")
@@ -298,27 +388,46 @@ def check_gradient_reachability(
     if not isinstance(loss, torch.Tensor) or loss.numel() != 1:
         raise ReachabilityCheckError("loss must be a scalar torch.Tensor")
 
-    grad_targets = [parameter for _, parameter in target_parameters if parameter.requires_grad]
+    probed_parameters = []
+    seen_parameter_ids: set[int] = set()
+    for _, parameter in target_parameters + frozen_parameters:
+        if parameter.requires_grad and id(parameter) not in seen_parameter_ids:
+            probed_parameters.append(parameter)
+            seen_parameter_ids.add(id(parameter))
     probe_gradients = torch.autograd.grad(
         loss,
-        grad_targets,
+        probed_parameters,
         retain_graph=True,
         allow_unused=True,
-    ) if grad_targets and loss.requires_grad else tuple(None for _ in grad_targets)
+    ) if probed_parameters and loss.requires_grad else tuple(None for _ in probed_parameters)
     gradients: Dict[int, Optional[torch.Tensor]] = {
-        id(parameter): gradient for parameter, gradient in zip(grad_targets, probe_gradients)
+        id(parameter): gradient for parameter, gradient in zip(probed_parameters, probe_gradients)
     }
     for _, parameter in frozen_parameters:
-        gradients[id(parameter)] = parameter.grad
+        if not parameter.requires_grad:
+            gradients[id(parameter)] = parameter.grad
 
     optimizer_parameters = _flatten_parameter_source(optimizer if optimizer is not None else params)
     optimizer_ids = {id(parameter) for parameter in optimizer_parameters or []}
     target_details = _parameter_diagnostics(target_parameters, optimizer_ids, gradients)
     frozen_details = _parameter_diagnostics(frozen_parameters, optimizer_ids, gradients)
+    component_details = {
+        name: _parameter_diagnostics(entries, optimizer_ids, gradients)
+        for name, entries in component_parameters.items()
+    }
     target_gradients_reachable = bool(target_details) and all(
         item.grad_state in {"zero", "nonzero"} for item in target_details
     )
     target_has_nonzero_gradient = any(item.grad_state == "nonzero" for item in target_details)
+    components_present = not missing_components
+    components_have_gradients = all(
+        details and all(item.grad_state in {"zero", "nonzero"} for item in details)
+        for details in component_details.values()
+    ) if named_components is not None else True
+    components_have_nonzero_gradients = all(
+        any(item.grad_state == "nonzero" for item in details)
+        for details in component_details.values()
+    ) if named_components is not None else True
     frozen_gradients_absent = all(item.grad_state == "none" for item in frozen_details)
     difference = _output_difference(active_output, bypass_output)
     outputs_available = difference is not None
@@ -326,11 +435,20 @@ def check_gradient_reachability(
     checks = {
         "target_gradients_reachable_and_finite": target_gradients_reachable,
         "target_has_nonzero_gradient": target_has_nonzero_gradient,
+        "named_components_present": components_present,
+        "named_components_gradients_reachable_and_finite": components_have_gradients,
+        "named_components_have_nonzero_gradient": components_have_nonzero_gradients,
         "frozen_grad_absent": frozen_gradients_absent,
         "active_bypass_outputs_available": outputs_available,
         "active_bypass_outputs_differ": outputs_differ or not require_output_difference,
     }
     messages = []
+    if missing_components:
+        messages.append(f"named components have no matching parameters: {sorted(missing_components)}")
+    if not components_have_gradients:
+        messages.append("some named components have missing or non-finite gradients")
+    if not components_have_nonzero_gradients:
+        messages.append("some named components have zero gradients")
     if not target_gradients_reachable:
         messages.append(f"some {target_name} parameters have missing or non-finite gradients")
     if not target_has_nonzero_gradient:
@@ -350,7 +468,11 @@ def check_gradient_reachability(
         target=target_name,
         frozen=frozen_name,
         checks=checks,
-        parameters={"target": target_details, "frozen": frozen_details},
+        parameters={
+            "target": target_details,
+            "frozen": frozen_details,
+            **{f"component:{name}": details for name, details in component_details.items()},
+        },
         output_difference=difference,
         messages=messages,
     )
@@ -366,6 +488,7 @@ def validate_reachability_and_isolation(
     *,
     optimizer: Any = None,
     params: Any = None,
+    named_components: Optional[Mapping[str, Any]] = None,
     loss: Optional[torch.Tensor] = None,
     forward_callback: Optional[Callable[[str], Any]] = None,
     active_output: Any = None,
@@ -381,6 +504,7 @@ def validate_reachability_and_isolation(
         phase,
         optimizer=optimizer,
         params=params,
+        named_components=named_components,
         raise_on_error=False,
     )
     gradient = None
@@ -395,6 +519,7 @@ def validate_reachability_and_isolation(
             bypass_output=bypass_output,
             optimizer=optimizer,
             params=params,
+            named_components=named_components,
             difference_atol=difference_atol,
             require_output_difference=require_output_difference,
             raise_on_error=False,

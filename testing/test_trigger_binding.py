@@ -1,3 +1,4 @@
+import json
 import unittest
 
 import torch
@@ -163,12 +164,45 @@ class TriggerBindingTest(unittest.TestCase):
         )
         self.assertEqual(batch.input_ids.shape, batch.attention_mask.shape)
         self.assertEqual(batch.input_ids.shape, batch.trigger_mask.shape)
+        self.assertEqual(batch.input_ids.shape, batch.token_indices.shape)
         self.assertEqual(batch.input_ids.dtype, torch.long)
         self.assertEqual(batch.trigger_mask.dtype, torch.bool)
         self.assertEqual(batch.trigger_mask.sum(dim=1).tolist(), [1, 2])
         self.assertEqual(batch.metadata["batch_size"], 2)
-        self.assertEqual(batch.metadata["occurrence_counts"], (1, 2))
+        self.assertEqual(batch.metadata["occurrence_counts"], [1, 2])
         self.assertEqual(batch.metadata["phase"], "a1")
+
+    def test_virtual_tokens_expand_each_occurrence_and_keep_additive_mask(self):
+        binding = bind_trigger_prompt(
+            self.tokenizer,
+            "[trigger] then [trigger]",
+            self.literal,
+            require_atomic=True,
+            virtual_tokens=4,
+        )
+        self.assertEqual(binding.virtual_tokens, 4)
+        self.assertEqual(len(binding.token_indices), 8)
+        self.assertEqual(sum(binding.trigger_mask), 8)
+        self.assertEqual(
+            [binding.virtual_token_indices[index] for index in binding.token_indices],
+            [0, 1, 2, 3, 0, 1, 2, 3],
+        )
+        self.assertEqual(
+            [binding.occurrence_indices[index] for index in binding.token_indices],
+            [0, 0, 0, 0, 1, 1, 1, 1],
+        )
+
+    def test_runtime_metadata_is_json_serializable(self):
+        batch = bind_trigger_batch(
+            self.tokenizer,
+            ["[trigger]", "[trigger] and [trigger]"],
+            self.literal,
+            require_atomic=True,
+            virtual_tokens=2,
+        )
+        encoded = json.dumps(batch.runtime_metadata())
+        self.assertIn('"architecture_version": 8', encoded)
+        self.assertEqual(batch.trigger_mask.sum(dim=1).tolist(), [2, 4])
 
     def test_all_runtime_modes_expose_expected_flags(self):
         full = get_activator_runtime_state("full")

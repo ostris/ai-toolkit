@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 
 if TYPE_CHECKING:
-    from toolkit.config_modules import TriggerValidationConfig
+    from toolkit.config_modules import TriggerDataSplitConfig, TriggerValidationConfig
 
 
 PredictionOrLoss = Union[torch.Tensor, float, int]
@@ -48,10 +48,35 @@ def _validate_manifest_path(value: Optional[str], field_name: str, require_exist
         raise ValueError(f'{field_name} does not exist or is not a file: {value}')
 
 
+def validate_trigger_data_split_config(
+    config: 'TriggerDataSplitConfig',
+    *,
+    require_manifest_file: bool = False,
+):
+    if not isinstance(config.enabled, bool):
+        raise ValueError('three_phase_trigger_training.data_split.enabled must be boolean')
+    if not config.enabled:
+        return
+    if config.seed < 0:
+        raise ValueError('three_phase_trigger_training.data_split.seed must be non-negative')
+    if not math.isfinite(config.heldout_fraction) or not 0.0 < config.heldout_fraction < 1.0:
+        raise ValueError(
+            'three_phase_trigger_training.data_split.heldout_fraction must be strictly between 0 and 1'
+        )
+    if not isinstance(config.reuse_existing, bool):
+        raise ValueError('three_phase_trigger_training.data_split.reuse_existing must be boolean')
+    _validate_manifest_path(
+        config.manifest_path,
+        'three_phase_trigger_training.data_split.manifest_path',
+        require_manifest_file,
+    )
+
+
 def validate_trigger_validation_config(
     config: 'TriggerValidationConfig',
     *,
     require_manifest_files: bool = True,
+    data_split_config: Optional['TriggerDataSplitConfig'] = None,
 ):
     if not isinstance(config.enabled, bool):
         raise ValueError('three_phase_trigger_training.validation.enabled must be boolean')
@@ -72,20 +97,44 @@ def validate_trigger_validation_config(
     if len(set(config.fixed_sigmas)) != len(config.fixed_sigmas):
         raise ValueError('validation.fixed_sigmas must be unique')
 
-    _validate_manifest_path(
-        config.train_probe_manifest,
-        'validation.train_probe_manifest',
-        require_manifest_files,
-    )
-    _validate_manifest_path(
-        config.heldout_manifest,
-        'validation.heldout_manifest',
-        require_manifest_files,
-    )
-    if os.path.abspath(os.path.expanduser(config.train_probe_manifest)) == os.path.abspath(
-        os.path.expanduser(config.heldout_manifest)
-    ):
-        raise ValueError('validation train-probe and held-out manifests must be different files')
+    split_manifest = getattr(config, 'data_split_manifest', None)
+    managed_split_enabled = data_split_config is not None and data_split_config.enabled
+    if managed_split_enabled:
+        configured_manifest = split_manifest or data_split_config.manifest_path
+        _validate_manifest_path(
+            configured_manifest,
+            'three_phase_trigger_training.data_split.manifest_path',
+            False,
+        )
+        if config.train_probe_manifest is not None or config.heldout_manifest is not None:
+            raise ValueError(
+                'managed data_split cannot be combined with legacy train-probe/held-out manifests'
+            )
+    elif split_manifest is not None:
+        _validate_manifest_path(
+            split_manifest,
+            'validation.data_split_manifest',
+            require_manifest_files,
+        )
+        if config.train_probe_manifest is not None or config.heldout_manifest is not None:
+            raise ValueError(
+                'validation.data_split_manifest cannot be combined with legacy train-probe/held-out manifests'
+            )
+    else:
+        _validate_manifest_path(
+            config.train_probe_manifest,
+            'validation.train_probe_manifest',
+            require_manifest_files,
+        )
+        _validate_manifest_path(
+            config.heldout_manifest,
+            'validation.heldout_manifest',
+            require_manifest_files,
+        )
+        if os.path.abspath(os.path.expanduser(config.train_probe_manifest)) == os.path.abspath(
+            os.path.expanduser(config.heldout_manifest)
+        ):
+            raise ValueError('validation train-probe and held-out manifests must be different files')
 
     if not config.caption_sources or any(
         not isinstance(source, str) or not source.strip() for source in config.caption_sources

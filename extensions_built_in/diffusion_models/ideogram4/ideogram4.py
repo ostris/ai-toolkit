@@ -616,6 +616,8 @@ class Ideogram4Model(BaseModel):
         self,
         prompt,
         trigger_mask=None,
+        token_indices=None,
+        trigger_runtime_metadata=None,
         text_activator=None,
         runtime_mode: Optional[str] = None,
         return_taps: bool = False,
@@ -637,6 +639,14 @@ class Ideogram4Model(BaseModel):
                 requested_masks = [trigger_mask]
             else:
                 raise ValueError("trigger_mask batch length must match prompt batch length")
+        requested_indices = token_indices
+        if requested_indices is not None and not isinstance(requested_indices, (list, tuple)):
+            requested_indices = [requested_indices]
+        if requested_indices is not None and len(requested_indices) != len(prompt):
+            if len(prompt) == 1:
+                requested_indices = [token_indices]
+            else:
+                raise ValueError("token_indices batch length must match prompt batch length")
 
         features_list = []
         trigger_masks = []
@@ -665,6 +675,17 @@ class Ideogram4Model(BaseModel):
             resolved_mask = self._resolve_trigger_mask(
                 p, token_ids, explicit_mask, activator
             )
+            resolved_indices = (
+                requested_indices[prompt_index] if requested_indices is not None else None
+            )
+            if resolved_indices is not None:
+                resolved_indices = torch.as_tensor(
+                    resolved_indices, device=token_ids.device, dtype=torch.long
+                )
+                if resolved_indices.dim() == 1:
+                    resolved_indices = resolved_indices.unsqueeze(0)
+                if resolved_indices.shape != token_ids.shape:
+                    raise ValueError("token_indices shape must match token ids")
 
             result = get_qwen3_vl_features(
                 self.text_encoder,
@@ -672,8 +693,10 @@ class Ideogram4Model(BaseModel):
                 attention_mask,
                 pos_2d,
                 trigger_mask=resolved_mask,
+                token_indices=resolved_indices,
                 text_activator=activator,
                 runtime_mode=mode,
+                runtime_metadata=trigger_runtime_metadata,
                 return_taps=return_taps,
             )
             if return_taps:
@@ -697,6 +720,8 @@ class Ideogram4Model(BaseModel):
             )
             embeds_kwargs["tap_layers"] = [tap_layers for _ in prompt]
         embeds = AdvancedPromptEmbeds(**embeds_kwargs)
+        if trigger_runtime_metadata is not None:
+            embeds.trigger_runtime_metadata = trigger_runtime_metadata
         embeds.frozen_dtype_keys = [
             key for key in ("trigger_masks", "tap_layers") if key in embeds
         ]

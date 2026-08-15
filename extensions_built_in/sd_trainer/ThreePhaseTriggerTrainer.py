@@ -49,9 +49,56 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
         self.contract_root = os.path.join(self.run_root, 'contracts')
         os.makedirs(self.snapshot_root, exist_ok=True)
         os.makedirs(self.contract_root, exist_ok=True)
+        self._prepare_v8_data_split()
+
+    def _prepare_v8_data_split(self):
+        config = self.three_phase_config
+        if config.schema_version != 8 or not config.data_split.enabled:
+            return
+        datasets = [
+            dataset for dataset in self.raw_process_config.get('datasets', [])
+            if not dataset.get('is_reg', False)
+        ]
+        if len(datasets) != 1:
+            raise ValueError('v8 data split currently requires exactly one non-regular image dataset')
+        dataset = datasets[0]
+        dataset_path = get_path(dataset.get('dataset_path') or dataset.get('folder_path'))
+        if not os.path.isdir(dataset_path):
+            raise ValueError('v8 data split requires a folder-based image dataset')
+        extensions = ('.jpg', '.jpeg', '.png', '.webp')
+        image_paths = []
+        for root, directories, filenames in os.walk(dataset_path):
+            directories[:] = [name for name in directories if not name.startswith('.')]
+            image_paths.extend(
+                os.path.join(root, name)
+                for name in filenames
+                if name.lower().endswith(extensions) and not name.startswith('.')
+            )
+        split_module = __import__('toolkit.trigger_data_split', fromlist=['trigger_data_split'])
+        item_ids = [split_module.dataset_relative_item_id(path, dataset_path) for path in image_paths]
+        manifest_path = config.data_split.manifest_path
+        if manifest_path is None:
+            manifest_path = os.path.join(self.run_root, 'data_split_manifest.json')
+        else:
+            manifest_path = get_path(manifest_path)
+        manifest = split_module.get_or_create_data_split_manifest(
+            item_ids,
+            manifest_path,
+            seed=config.data_split.seed,
+            heldout_fraction=config.data_split.heldout_fraction,
+            reuse_existing=config.data_split.reuse_existing,
+        )
+        config.data_split.manifest_path = manifest_path
+        config.validation.data_split_manifest = manifest_path
+        self.data_split_manifest = manifest
 
     def _phase_root(self, phase_name: str) -> str:
         return os.path.join(self.run_root, f'phase_{phase_name}')
+
+    def execution_phase_names(self):
+        if self.three_phase_config.schema_version == 8:
+            return self.three_phase_config.execution_phase_names()
+        return self.PHASE_NAMES
 
     def _phase_artifacts(self, phase_name: str):
         return getattr(self.three_phase_config.artifacts, f'phase_{phase_name}')
@@ -225,6 +272,12 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             'active_phase': phase_name,
             'orchestrated': True,
             'run_root': self.run_root,
+            'schema_version': self.three_phase_config.schema_version,
+            'objective_mode': self.three_phase_config.objective_mode,
+            'execution': {
+                'start_phase': self.three_phase_config.execution.start_phase,
+                'stop_after_phase': self.three_phase_config.execution.stop_after_phase,
+            },
             'config_snapshot': self.phase_snapshots.get(
                 phase_name,
                 os.path.join(self.snapshot_root, f'phase_{phase_name}.yaml'),
@@ -312,8 +365,19 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
         phase = self.three_phase_config.get_phase(phase_name)
         phase_artifacts = self._phase_artifacts(phase_name)
         phase_root = self._phase_root(phase_name)
+        split_manifest = getattr(self, 'data_split_manifest', None)
         return {
-            'schema_version': 1,
+            'schema_version': 2 if self.three_phase_config.schema_version == 8 else 1,
+            'training_schema_version': self.three_phase_config.schema_version,
+            'objective_mode': self.three_phase_config.objective_mode,
+            'architecture_mode': self.three_phase_config.text_activator.architecture_mode,
+            'split_manifest_path': self.three_phase_config.data_split.manifest_path,
+            'split_manifest_hash': getattr(split_manifest, 'split_hash', None),
+            'dataset_fingerprint': getattr(split_manifest, 'dataset_fingerprint', None),
+            'phase_config_sha256': self._sha256_file(self.phase_snapshots[phase_name]),
+            'source_artifact_fingerprint': hashlib.sha256(
+                json.dumps(self._source_records(phase_name), sort_keys=True).encode('utf-8')
+            ).hexdigest(),
             'phase': phase_name,
             'status': status,
             'return_code': return_code,
@@ -390,6 +454,36 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             if published is None:
                 status = 'failed'
                 result = subprocess.CompletedProcess(result.args, 1)
+        if result.returncode == 0 and self.three_phase_config.schema_version == 8:
+            phase_artifacts = self._phase_artifacts(phase_name)
+            phase_root = self._phase_root(phase_name)
+            required_outputs = []
+            if phase_name in ('a1', 'a2'):
+                enabled_components = {
+                    'embedding': self.three_phase_config.text_activator.embedding.enabled,
+                    'te_adapter': self.three_phase_config.text_activator.te_adapter.enabled,
+                    'tap_adapters': self.three_phase_config.text_activator.tap_adapters.enabled,
+                }
+                output_names = {
+                    'embedding': phase_artifacts.embedding_filename,
+                    'te_adapter': phase_artifacts.te_adapter_filename,
+                    'tap_adapters': phase_artifacts.tap_adapter_filename,
+                }
+                required_outputs.extend(
+                    os.path.join(phase_root, phase_artifacts.final_dir, output_names[name])
+                    for name, enabled in enabled_components.items() if enabled
+                )
+            if phase_name == 'b':
+                required_outputs.append(os.path.join(
+                    phase_root,
+                    phase_artifacts.final_dir,
+                    phase_artifacts.diffusion_lora_filename,
+                ))
+            required_outputs.append(os.path.join(phase_root, phase_artifacts.metrics_file))
+            missing_outputs = [path for path in required_outputs if not os.path.isfile(path)]
+            if missing_outputs:
+                status = 'failed'
+                result = subprocess.CompletedProcess(result.args, 1)
         self.write_completion_contract(phase_name, status, result.returncode)
         if result.returncode != 0:
             raise RuntimeError(
@@ -413,6 +507,28 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
             and contract.get('return_code') == 0
         ):
             return False
+        if self.three_phase_config.schema_version == 8:
+            if contract.get('training_schema_version') != 8:
+                return False
+            if contract.get('objective_mode') != self.three_phase_config.objective_mode:
+                return False
+            if contract.get('architecture_mode') != self.three_phase_config.text_activator.architecture_mode:
+                return False
+            split_manifest = getattr(self, 'data_split_manifest', None)
+            if contract.get('split_manifest_hash') != getattr(split_manifest, 'split_hash', None):
+                return False
+            if contract.get('dataset_fingerprint') != getattr(split_manifest, 'dataset_fingerprint', None):
+                return False
+            snapshot_path = contract.get('config_snapshot')
+            if not snapshot_path or not os.path.isfile(snapshot_path):
+                return False
+            if contract.get('phase_config_sha256') != self._sha256_file(snapshot_path):
+                return False
+            current_source_fingerprint = hashlib.sha256(
+                json.dumps(self._source_records(phase_name), sort_keys=True).encode('utf-8')
+            ).hexdigest()
+            if contract.get('source_artifact_fingerprint') != current_source_fingerprint:
+                return False
         for record in contract.get('inputs', {}).values():
             if not isinstance(record, dict):
                 return False
@@ -424,13 +540,35 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
                 return False
             if expected_hash is not None and self._sha256_file(source_path) != expected_hash:
                 return False
+        if self.three_phase_config.schema_version == 8:
+            artifacts = contract.get('artifacts', {})
+            final_dir = artifacts.get('final_dir')
+            if not final_dir or not os.path.isdir(final_dir):
+                return False
+            required_outputs = []
+            if phase_name in ('a1', 'a2'):
+                enabled_components = {
+                    'embedding': self.three_phase_config.text_activator.embedding.enabled,
+                    'te_adapter': self.three_phase_config.text_activator.te_adapter.enabled,
+                    'tap_adapters': self.three_phase_config.text_activator.tap_adapters.enabled,
+                }
+                required_outputs.extend(
+                    artifacts.get(name) for name, enabled in enabled_components.items() if enabled
+                )
+            if phase_name == 'b':
+                required_outputs.append(artifacts.get('diffusion_lora'))
+            if any(path is None or not os.path.isfile(path) for path in required_outputs):
+                return False
+            metrics_file = artifacts.get('metrics_file')
+            if metrics_file is None or not os.path.isfile(metrics_file):
+                return False
         return True
 
     def run(self):
         super().run()
         if not self.three_phase_config.enabled:
             return
-        for phase_name in self.PHASE_NAMES:
+        for phase_name in self.execution_phase_names():
             if self._contract_is_verified(phase_name):
                 continue
             self.run_phase(phase_name)

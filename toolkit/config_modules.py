@@ -494,15 +494,26 @@ class TriggerBindingEmbeddingConfig:
 class TriggerBindingTEAdapterConfig:
     def __init__(self, **kwargs):
         self.enabled: bool = kwargs.get('enabled', False)
+        self.mode: str = kwargs.get('mode', kwargs.get('architecture_mode', 'shared_post_layer'))
         self.type: str = kwargs.get('type', 'lora')
         self.rank: int = int(kwargs.get('rank', 1))
         self.alpha: float = float(kwargs.get('alpha', self.rank))
         self.dropout: float = float(kwargs.get('dropout', 0.0))
         self.parent_modules: List[str] = kwargs.get('parent_modules', ['Qwen3VLTextMLP'])
         self.child_modules: List[str] = kwargs.get('child_modules', ['down_proj'])
+        self.target_modules: List[str] = kwargs.get('target_modules', self.child_modules)
         self.layers = kwargs.get('layers', 'all')
         self.token_mask_mode: str = kwargs.get('token_mask_mode', 'trigger_span')
         self.filename: str = kwargs.get('filename', 'te_adapter.safetensors')
+
+
+class TriggerBindingGammaConfig:
+    def __init__(self, **kwargs):
+        self.initial: float = float(kwargs.get('initial', 1.0))
+        self.minimum: float = float(kwargs.get('minimum', 0.0))
+        self.maximum: float = float(kwargs.get('maximum', 1.0))
+        self.trainable: bool = bool(kwargs.get('trainable', False))
+        self.components: Dict = kwargs.get('components', {})
 
 
 class TriggerBindingTapAdapterConfig:
@@ -523,11 +534,26 @@ class TriggerBindingTapAdapterConfig:
         self.filename: str = kwargs.get('filename', 'tap_adapters.safetensors')
 
 
+class TriggerBindingAmplificationConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.trainable: bool = kwargs.get('trainable', False)
+        self.initial: float = float(kwargs.get('initial', 1.0))
+        self.minimum: float = float(kwargs.get('minimum', 0.25))
+        self.maximum: float = float(kwargs.get('maximum', 4.0))
+        self.per_component: bool = kwargs.get('per_component', False)
+        self.regularization_weight: float = float(kwargs.get('regularization_weight', 0.01))
+
+
 class TriggerBindingTextActivatorConfig:
     def __init__(self, **kwargs):
+        self.architecture_mode: str = kwargs.get('architecture_mode', 'shared_post_layer')
         self.embedding = TriggerBindingEmbeddingConfig(**kwargs.get('embedding', {}))
         self.te_adapter = TriggerBindingTEAdapterConfig(**kwargs.get('te_adapter', {}))
         self.tap_adapters = TriggerBindingTapAdapterConfig(**kwargs.get('tap_adapters', {}))
+        amplification_raw = kwargs.get('amplification', kwargs.get('gamma', {}))
+        self.amplification = TriggerBindingAmplificationConfig(**amplification_raw)
+        self.gamma = TriggerBindingGammaConfig(**amplification_raw)
 
 
 class TriggerBindingContextConsistencyConfig:
@@ -641,6 +667,23 @@ class TriggerBindingPhaseRuntimeConfig:
         self.sources = TriggerBindingResolvedSourcesConfig(**kwargs.get('sources', {}))
 
 
+class TriggerBindingExecutionConfig:
+    def __init__(self, **kwargs):
+        self.start_phase: str = kwargs.get('start_phase', 'a1')
+        self.stop_after_phase: str = kwargs.get('stop_after_phase', 'a2')
+
+
+class TriggerDataSplitConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.heldout_fraction: float = float(kwargs.get('heldout_fraction', 0.1))
+        self.seed: int = int(kwargs.get('seed', 0))
+        self.manifest_path: Optional[str] = kwargs.get(
+            'manifest_path', kwargs.get('split_manifest', None)
+        )
+        self.reuse_existing: bool = kwargs.get('reuse_existing', True)
+
+
 class TriggerValidationConfig:
     def __init__(self, **kwargs):
         self.enabled: bool = kwargs.get('enabled', False)
@@ -650,6 +693,9 @@ class TriggerValidationConfig:
         self.fixed_sigmas: List[float] = [float(value) for value in kwargs.get('fixed_sigmas', [])]
         self.train_probe_manifest: Optional[str] = kwargs.get('train_probe_manifest', None)
         self.heldout_manifest: Optional[str] = kwargs.get('heldout_manifest', None)
+        self.data_split_manifest: Optional[str] = kwargs.get(
+            'data_split_manifest', kwargs.get('split_manifest', None)
+        )
         self.caption_sources: List[str] = list(kwargs.get('caption_sources', []))
         self.negative_phrases: List[str] = list(kwargs.get('negative_phrases', []))
         self.train_probe_output_filename: str = kwargs.get(
@@ -669,6 +715,9 @@ class ThreePhaseTriggerTrainingConfig:
 
     def __init__(self, **kwargs):
         self.enabled: bool = kwargs.get('enabled', False)
+        self.schema_version: int = int(kwargs.get('schema_version', 7))
+        self.objective_mode: Optional[str] = kwargs.get('objective_mode', None)
+        self.execution = TriggerBindingExecutionConfig(**kwargs.get('execution', {}))
         trigger = kwargs.get('trigger', {})
         self.placeholder: str = trigger.get('placeholder', '[trigger]')
         self.literal: Optional[str] = trigger.get('literal', None)
@@ -677,6 +726,7 @@ class ThreePhaseTriggerTrainingConfig:
         self.occurrence_mode: str = trigger.get('occurrence_mode', 'additive')
         self.text_activator = TriggerBindingTextActivatorConfig(**kwargs.get('text_activator', {}))
         self.reachability_probe: Dict = kwargs.get('reachability_probe', {'enabled': True})
+        self.data_split = TriggerDataSplitConfig(**kwargs.get('data_split', {}))
         self.validation = TriggerValidationConfig(**kwargs.get('validation', {}))
         self.phase_a1 = TriggerBindingPhaseConfig('a1', **kwargs.get('phase_a1', {}))
         self.phase_b = TriggerBindingPhaseConfig('b', **kwargs.get('phase_b', {}))
@@ -694,6 +744,11 @@ class ThreePhaseTriggerTrainingConfig:
         if phase_name not in self.PHASE_NAMES:
             raise ValueError(f'Unknown three-phase trigger phase: {phase_name}')
         return getattr(self, f'phase_{phase_name}')
+
+    def execution_phase_names(self) -> Tuple[str, ...]:
+        start_index = self.PHASE_NAMES.index(self.execution.start_phase)
+        stop_index = self.PHASE_NAMES.index(self.execution.stop_after_phase)
+        return self.PHASE_NAMES[start_index:stop_index + 1]
 
 
 def _validate_non_empty_string(value, field_name: str):
@@ -730,6 +785,23 @@ def validate_three_phase_trigger_training_config(
     if config is None or not config.enabled:
         return
 
+    if config.schema_version not in (7, 8):
+        raise ValueError('three_phase_trigger_training.schema_version must be 7 or 8')
+    is_v8 = config.schema_version == 8
+    if is_v8:
+        if config.objective_mode != 'conditional_response_v8':
+            raise ValueError(
+                'three_phase_trigger_training.objective_mode must be conditional_response_v8 for schema_version=8'
+            )
+        if config.execution.start_phase not in config.PHASE_NAMES:
+            raise ValueError('three_phase_trigger_training.execution.start_phase must be a1, b or a2')
+        if config.execution.stop_after_phase not in config.PHASE_NAMES:
+            raise ValueError('three_phase_trigger_training.execution.stop_after_phase must be a1, b or a2')
+        if config.PHASE_NAMES.index(config.execution.start_phase) > config.PHASE_NAMES.index(config.execution.stop_after_phase):
+            raise ValueError('three_phase_trigger_training.execution start_phase must not follow stop_after_phase')
+    elif config.objective_mode is not None:
+        raise ValueError('three_phase_trigger_training.objective_mode requires schema_version=8')
+
     _validate_non_empty_string(config.placeholder, 'three_phase_trigger_training.trigger.placeholder')
     if config.placeholder != '[trigger]':
         raise ValueError('three_phase_trigger_training must use the native [trigger] placeholder')
@@ -746,10 +818,15 @@ def validate_three_phase_trigger_training_config(
     if config.occurrence_mode != 'additive':
         raise ValueError('three_phase_trigger_training.trigger.occurrence_mode must be additive')
 
+    if config.text_activator.architecture_mode not in ('shared_post_layer', 'module_lora'):
+        raise ValueError('text_activator.architecture_mode must be shared_post_layer or module_lora')
+    if config.text_activator.te_adapter.enabled:
+        config.text_activator.te_adapter.mode = config.text_activator.architecture_mode
+
     embedding = config.text_activator.embedding
     if embedding.enabled:
-        if embedding.tokens <= 0:
-            raise ValueError('three_phase_trigger_training.text_activator.embedding.tokens must be positive')
+        if embedding.tokens not in (1, 2, 4):
+            raise ValueError('three_phase_trigger_training.text_activator.embedding.tokens must be 1, 2 or 4')
         if embedding.init_mode not in ('semantic', 'random', 'checkpoint'):
             raise ValueError('embedding.init_mode must be semantic, random or checkpoint')
         if embedding.init_mode == 'semantic':
@@ -764,14 +841,31 @@ def validate_three_phase_trigger_training_config(
     if te_adapter.enabled:
         if te_adapter.type != 'lora':
             raise ValueError('text_activator.te_adapter.type must be lora')
+        if te_adapter.mode not in ('shared_post_layer', 'module_lora'):
+            raise ValueError('text_activator.te_adapter.mode must be shared_post_layer or module_lora')
         if te_adapter.rank <= 0 or te_adapter.alpha <= 0:
             raise ValueError('text_activator.te_adapter rank and alpha must be positive')
         if not 0.0 <= te_adapter.dropout < 1.0:
             raise ValueError('text_activator.te_adapter.dropout must be in [0, 1)')
         if te_adapter.token_mask_mode != 'trigger_span':
             raise ValueError('text_activator.te_adapter.token_mask_mode must be trigger_span')
-        if not te_adapter.parent_modules or not te_adapter.child_modules:
+        if te_adapter.mode == 'shared_post_layer' and (
+            not te_adapter.parent_modules or not te_adapter.child_modules
+        ):
             raise ValueError('text_activator.te_adapter module filters cannot be empty')
+        if te_adapter.mode == 'module_lora' and not te_adapter.target_modules:
+            raise ValueError('text_activator.te_adapter.target_modules cannot be empty')
+
+    gamma = config.text_activator.gamma
+    if not gamma.minimum < gamma.maximum:
+        raise ValueError('text_activator.gamma.minimum must be less than maximum')
+    if not gamma.minimum <= gamma.initial <= gamma.maximum:
+        raise ValueError('text_activator.gamma.initial must lie inside its bounds')
+    unknown_gamma_components = set(gamma.components) - {'embedding', 'te_adapter', 'tap_adapters'}
+    if unknown_gamma_components:
+        raise ValueError(
+            f'text_activator.gamma.components contains unknown components: {sorted(unknown_gamma_components)}'
+        )
 
     tap_adapters = config.text_activator.tap_adapters
     if tap_adapters.enabled:
@@ -801,15 +895,31 @@ def validate_three_phase_trigger_training_config(
     if config.reachability_probe.get('enabled', True) is not True:
         raise ValueError('three_phase_trigger_training requires reachability_probe.enabled=true')
 
-    from toolkit.trigger_validation import validate_trigger_validation_config
-    validate_trigger_validation_config(config.validation)
+    from toolkit.trigger_validation import (
+        validate_trigger_data_split_config,
+        validate_trigger_validation_config,
+    )
+    validate_trigger_data_split_config(config.data_split)
+    validate_trigger_validation_config(
+        config.validation,
+        data_split_config=config.data_split,
+    )
 
     phases = {name: config.get_phase(name) for name in config.PHASE_NAMES}
     enabled_phases = {name: phase.enabled for name, phase in phases.items()}
-    if not all(enabled_phases.values()):
+    execution_phases = config.execution_phase_names() if is_v8 else config.PHASE_NAMES
+    if not is_v8 and not all(enabled_phases.values()):
         raise ValueError('three_phase_trigger_training requires phase_a1, phase_b and phase_a2 to be enabled')
+    if is_v8:
+        disabled_execution_phases = [name for name in execution_phases if not enabled_phases[name]]
+        if disabled_execution_phases:
+            raise ValueError(
+                'three_phase_trigger_training execution range contains disabled phase(s): '
+                + ', '.join(disabled_execution_phases)
+            )
 
-    for phase_name, phase in phases.items():
+    for phase_name in execution_phases:
+        phase = phases[phase_name]
         prefix = f'three_phase_trigger_training.phase_{phase_name}'
         if phase.steps <= 0:
             raise ValueError(f'{prefix}.steps must be positive')
@@ -840,15 +950,19 @@ def validate_three_phase_trigger_training_config(
         if phase.resume.enabled:
             _validate_non_empty_string(phase.resume.checkpoint, f'{prefix}.resume.checkpoint')
 
+        source_phase_availability = (
+            {name: True for name in config.PHASE_NAMES}
+            if is_v8 else enabled_phases
+        )
         _validate_trigger_binding_source(
             phase.text_activator_source,
             f'{prefix}.text_activator_source',
-            enabled_phases,
+            source_phase_availability,
         )
         _validate_trigger_binding_source(
             phase.diffusion_lora_source,
             f'{prefix}.diffusion_lora_source',
-            enabled_phases,
+            source_phase_availability,
         )
 
         consistency = phase.context_consistency
@@ -893,18 +1007,31 @@ def validate_three_phase_trigger_training_config(
                     raise ValueError(f'{prefix}.losses gain floor values must be non-negative')
                 previous_step = step
 
-    if phases['a1'].text_activator_source.phase is not None:
-        raise ValueError('phase_a1 cannot source a text activator from another phase')
-    if phases['a1'].diffusion_lora_source.phase is not None:
-        raise ValueError('phase_a1 cannot source a diffusion LoRA from another phase')
-    if phases['b'].text_activator_source.phase not in (None, 'a1'):
-        raise ValueError('phase_b.text_activator_source may only reference phase a1')
-    if not any(bool(phases['b'].train.get(key, False)) for key in ('diffusion_lora', 'train_unet', 'unet')):
-        raise ValueError('phase_b must train the diffusion LoRA')
-    if phases['a2'].text_activator_source.phase not in (None, 'a1'):
-        raise ValueError('phase_a2.text_activator_source may only reference phase a1')
-    if phases['a2'].diffusion_lora_source.phase not in (None, 'b'):
-        raise ValueError('phase_a2.diffusion_lora_source may only reference phase b')
+    phases_to_check = set(execution_phases) if is_v8 else set(config.PHASE_NAMES)
+    if 'a1' in phases_to_check:
+        if phases['a1'].text_activator_source.phase is not None:
+            raise ValueError('phase_a1 cannot source a text activator from another phase')
+        if phases['a1'].diffusion_lora_source.phase is not None:
+            raise ValueError('phase_a1 cannot source a diffusion LoRA from another phase')
+    if 'b' in phases_to_check:
+        b_text_source = phases['b'].text_activator_source
+        if b_text_source.phase not in (None, 'a1'):
+            raise ValueError('phase_b.text_activator_source may only reference phase a1')
+        if is_v8 and b_text_source.phase is None and b_text_source.path is None:
+            raise ValueError('phase_b requires a text activator source from phase a1 or an external path')
+        if not any(bool(phases['b'].train.get(key, False)) for key in ('diffusion_lora', 'train_unet', 'unet')):
+            raise ValueError('phase_b must train the diffusion LoRA')
+    if 'a2' in phases_to_check:
+        a2_text_source = phases['a2'].text_activator_source
+        a2_lora_source = phases['a2'].diffusion_lora_source
+        if a2_text_source.phase not in (None, 'a1'):
+            raise ValueError('phase_a2.text_activator_source may only reference phase a1')
+        if a2_lora_source.phase not in (None, 'b'):
+            raise ValueError('phase_a2.diffusion_lora_source may only reference phase b')
+        if is_v8 and a2_text_source.phase is None and a2_text_source.path is None:
+            raise ValueError('phase_a2 requires a text activator source from phase a1 or an external path')
+        if is_v8 and a2_lora_source.phase is None and a2_lora_source.path is None:
+            raise ValueError('phase_a2 requires a diffusion LoRA source from phase b or an external path')
 
     artifacts = config.artifacts
     if artifacts.output_root is not None:
@@ -1508,6 +1635,8 @@ class DatasetConfig:
         self.random_triggers_max: int = kwargs.get('random_triggers_max', 1)
         self.caption_ext: str = kwargs.get('caption_ext', '.txt')
         self.trigger_selective_caption_sources = kwargs.get('trigger_selective_caption_sources', None)
+        self.trigger_data_split_manifest: Optional[str] = kwargs.get('trigger_data_split_manifest', None)
+        self.trigger_data_split_name: Optional[str] = kwargs.get('trigger_data_split_name', None)
         # if caption_ext doesnt start with a dot, add it
         if self.caption_ext and not self.caption_ext.startswith('.'):
             self.caption_ext = '.' + self.caption_ext

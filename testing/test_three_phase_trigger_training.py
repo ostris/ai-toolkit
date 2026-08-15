@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from collections import OrderedDict
+from unittest.mock import patch
 
 import yaml
 
@@ -122,6 +123,19 @@ def _three_phase_block(enabled=True):
     }
 
 
+def _v8_block(start_phase='a1', stop_after_phase='a2'):
+    raw = _three_phase_block()
+    raw.update({
+        'schema_version': 8,
+        'objective_mode': 'conditional_response_v8',
+        'execution': {
+            'start_phase': start_phase,
+            'stop_after_phase': stop_after_phase,
+        },
+    })
+    return raw
+
+
 class _Job:
     def __init__(self, process_config):
         self.name = 'parent_job'
@@ -234,6 +248,70 @@ class ThreePhaseTriggerTrainingConfigTest(unittest.TestCase):
                 '<r1X1dOn9mA2>',
             )
 
+    def test_v7_defaults_remain_full_three_phase(self):
+        config = ThreePhaseTriggerTrainingConfig(**_three_phase_block())
+        validate_three_phase_trigger_training_config(config, '<r1X1dOn9mA2>')
+        self.assertEqual(config.schema_version, 7)
+        self.assertEqual(config.execution_phase_names(), ('a1', 'b', 'a2'))
+
+    def test_v7_still_requires_all_three_phases_enabled(self):
+        raw = _three_phase_block()
+        raw['phase_a2']['enabled'] = False
+        with self.assertRaisesRegex(ValueError, 'phase_a1, phase_b and phase_a2'):
+            validate_three_phase_trigger_training_config(
+                ThreePhaseTriggerTrainingConfig(**raw), '<r1X1dOn9mA2>'
+            )
+
+    def test_v8_requires_matching_objective_mode(self):
+        raw = _v8_block()
+        raw['objective_mode'] = 'legacy'
+        with self.assertRaisesRegex(ValueError, 'conditional_response_v8'):
+            validate_three_phase_trigger_training_config(
+                ThreePhaseTriggerTrainingConfig(**raw), '<r1X1dOn9mA2>'
+            )
+
+    def test_v8_a1_only_validates_only_a1(self):
+        raw = _v8_block('a1', 'a1')
+        raw['phase_b']['enabled'] = False
+        raw['phase_b']['steps'] = 0
+        raw['phase_a2']['enabled'] = False
+        raw['phase_a2']['steps'] = 0
+        config = ThreePhaseTriggerTrainingConfig(**raw)
+        validate_three_phase_trigger_training_config(config, '<r1X1dOn9mA2>')
+        self.assertEqual(config.execution_phase_names(), ('a1',))
+
+    def test_v8_b_only_accepts_external_a1_artifact(self):
+        raw = _v8_block('b', 'b')
+        raw['phase_a1']['enabled'] = False
+        raw['phase_a2']['enabled'] = False
+        raw['phase_b']['text_activator_source'] = {'path': '/artifacts/a1/trigger_embedding.safetensors'}
+        validate_three_phase_trigger_training_config(
+            ThreePhaseTriggerTrainingConfig(**raw), '<r1X1dOn9mA2>'
+        )
+
+    def test_v8_b_only_accepts_existing_a1_phase_artifact_reference(self):
+        raw = _v8_block('b', 'b')
+        raw['phase_a1']['enabled'] = False
+        raw['phase_a2']['enabled'] = False
+        validate_three_phase_trigger_training_config(
+            ThreePhaseTriggerTrainingConfig(**raw), '<r1X1dOn9mA2>'
+        )
+
+    def test_v8_b_only_requires_a1_artifact_dependency(self):
+        raw = _v8_block('b', 'b')
+        raw['phase_b']['text_activator_source'] = {}
+        with self.assertRaisesRegex(ValueError, 'requires a text activator source'):
+            validate_three_phase_trigger_training_config(
+                ThreePhaseTriggerTrainingConfig(**raw), '<r1X1dOn9mA2>'
+            )
+
+    def test_v8_rejects_reversed_execution_range(self):
+        raw = _v8_block('b', 'a1')
+        with self.assertRaisesRegex(ValueError, 'must not follow'):
+            validate_three_phase_trigger_training_config(
+                ThreePhaseTriggerTrainingConfig(**raw), '<r1X1dOn9mA2>'
+            )
+
 
 class ThreePhaseTriggerTrainerTest(unittest.TestCase):
     def test_disabled_orchestrator_is_noop_compatible(self):
@@ -246,7 +324,7 @@ class ThreePhaseTriggerTrainerTest(unittest.TestCase):
         process.run()
         self.assertFalse(hasattr(process, 'run_root'))
 
-    def _make_process(self, temp_dir):
+    def _make_process(self, temp_dir, three_phase_block=None):
         process_config = OrderedDict({
             'type': 'three_phase_trigger_trainer',
             'name': 'binding_run',
@@ -258,9 +336,41 @@ class ThreePhaseTriggerTrainerTest(unittest.TestCase):
             'datasets': [{'folder_path': 'dataset'}],
             'save': {'save_every': 100},
             'sample': {'samples': []},
-            'three_phase_trigger_training': _three_phase_block(),
+            'three_phase_trigger_training': three_phase_block or _three_phase_block(),
         })
         return ThreePhaseTriggerTrainer(0, _Job(process_config), process_config)
+
+    def test_v8_child_runtime_propagates_versioned_execution_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir, _v8_block('b', 'b'))
+            child = process.build_child_job_config('b')['config']['process'][0]
+            tst = child['three_phase_trigger_training']
+            self.assertEqual(tst['schema_version'], 8)
+            self.assertEqual(tst['objective_mode'], 'conditional_response_v8')
+            self.assertEqual(tst['execution'], {'start_phase': 'b', 'stop_after_phase': 'b'})
+            self.assertEqual(tst['runtime']['schema_version'], 8)
+            self.assertEqual(tst['runtime']['objective_mode'], 'conditional_response_v8')
+            self.assertEqual(tst['runtime']['execution'], {'start_phase': 'b', 'stop_after_phase': 'b'})
+
+    def test_v8_run_executes_whole_selected_range_without_mid_phase_pause(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir, _v8_block('a1', 'b'))
+            phases = []
+            with patch.object(process, '_contract_is_verified', return_value=False), patch.object(
+                process, 'run_phase', side_effect=lambda phase: phases.append(phase)
+            ):
+                process.run()
+            self.assertEqual(phases, ['a1', 'b'])
+
+    def test_v8_stop_after_b_does_not_run_a2(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir, _v8_block('a1', 'b'))
+            self.assertEqual(process.execution_phase_names(), ('a1', 'b'))
+
+    def test_v8_full_run_keeps_all_phases(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir, _v8_block())
+            self.assertEqual(process.execution_phase_names(), ('a1', 'b', 'a2'))
 
     def test_build_child_config_maps_phase_and_sources(self):
         with tempfile.TemporaryDirectory() as temp_dir:

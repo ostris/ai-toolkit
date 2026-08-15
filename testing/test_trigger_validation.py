@@ -7,6 +7,17 @@ import unittest
 import numpy as np
 import torch
 
+from toolkit.trigger_data_split import (
+    assert_no_split_leakage,
+    create_data_split_manifest,
+    filter_items_for_split,
+    get_or_create_data_split_manifest,
+    heldout_item_count,
+    load_data_split_manifest,
+    normalize_dataset_relative_item_id,
+    paired_caption_item_id,
+    persist_data_split_manifest,
+)
 from toolkit.trigger_validation import (
     JSONLWriter,
     aggregate_results,
@@ -14,6 +25,7 @@ from toolkit.trigger_validation import (
     isolated_rng,
     make_python_rng,
     make_torch_generator,
+    validate_trigger_data_split_config,
     validate_trigger_validation_config,
 )
 
@@ -27,6 +39,7 @@ class _ValidationConfig:
         self.fixed_sigmas = kwargs.get('fixed_sigmas', [])
         self.train_probe_manifest = kwargs.get('train_probe_manifest')
         self.heldout_manifest = kwargs.get('heldout_manifest')
+        self.data_split_manifest = kwargs.get('data_split_manifest')
         self.caption_sources = kwargs.get('caption_sources', [])
         self.negative_phrases = kwargs.get('negative_phrases', [])
         self.train_probe_output_filename = kwargs.get(
@@ -39,6 +52,15 @@ class _ValidationConfig:
             'aggregate_output_filename', 'trigger_validation_aggregate.jsonl'
         )
         self.gain_epsilon = kwargs.get('gain_epsilon', 1.0e-6)
+
+
+class _DataSplitConfig:
+    def __init__(self, **kwargs):
+        self.enabled = kwargs.get('enabled', False)
+        self.heldout_fraction = kwargs.get('heldout_fraction', 0.1)
+        self.seed = kwargs.get('seed', 0)
+        self.manifest_path = kwargs.get('manifest_path')
+        self.reuse_existing = kwargs.get('reuse_existing', True)
 
 
 class TriggerValidationTest(unittest.TestCase):
@@ -166,6 +188,87 @@ class TriggerValidationTest(unittest.TestCase):
             )
             validate_trigger_validation_config(config)
 
+    def test_data_split_config_and_single_manifest_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            split_path = os.path.join(directory, 'split.json')
+            with open(split_path, 'w', encoding='utf-8') as handle:
+                handle.write('{}')
+            split_config = _DataSplitConfig(
+                enabled=True,
+                heldout_fraction=0.1,
+                seed=42,
+                manifest_path=split_path,
+            )
+            validate_trigger_data_split_config(split_config, require_manifest_file=True)
+            validation_config = _ValidationConfig(
+                enabled=True,
+                every=10,
+                fixed_timesteps=[10],
+                data_split_manifest=split_path,
+                caption_sources=['json'],
+                negative_phrases=['painting'],
+            )
+            validate_trigger_validation_config(validation_config)
+            managed_validation = _ValidationConfig(
+                enabled=True,
+                every=10,
+                fixed_timesteps=[10],
+                caption_sources=['json'],
+                negative_phrases=['painting'],
+            )
+            validate_trigger_validation_config(
+                managed_validation,
+                data_split_config=split_config,
+            )
+
+    def test_data_split_is_reproducible_and_keeps_both_sides_non_empty(self):
+        item_ids = ['z/image.png', 'a/image.png', 'nested\\other.jpg', 'third.webp']
+        first = create_data_split_manifest(item_ids, seed=123, heldout_fraction=0.1)
+        second = create_data_split_manifest(reversed(item_ids), seed=123, heldout_fraction=0.1)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first.heldout_item_ids), 1)
+        self.assertTrue(first.train_item_ids)
+        self.assertTrue(first.heldout_item_ids)
+        self.assertEqual(first.heldout_item_ids, tuple(sorted(first.heldout_item_ids)))
+        self.assertEqual(heldout_item_count(2, 0.99), 1)
+        self.assertEqual(heldout_item_count(15, 0.1), 2)
+        self.assertEqual(heldout_item_count(5, 0.1), 1)
+
+    def test_data_split_manifest_persists_and_fails_fast_on_fingerprint_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'split.json')
+            manifest = create_data_split_manifest(['a.png', 'b.png', 'c.png'], seed=7)
+            persist_data_split_manifest(manifest, path)
+            loaded = load_data_split_manifest(path, item_ids=['a.png', 'b.png', 'c.png'])
+            self.assertEqual(loaded, manifest)
+            with self.assertRaisesRegex(ValueError, 'fingerprint mismatch'):
+                load_data_split_manifest(path, item_ids=['a.png', 'b.png', 'changed.png'])
+            reused = get_or_create_data_split_manifest(
+                ['a.png', 'b.png', 'c.png'], path, seed=7, heldout_fraction=0.1
+            )
+            self.assertEqual(reused, manifest)
+
+    def test_data_split_allowlist_and_leakage_helpers(self):
+        manifest = create_data_split_manifest(['a.png', 'b.png', 'c.png', 'd.png'], seed=2)
+        items = [{'item_id': item_id} for item_id in manifest.train_item_ids + manifest.heldout_item_ids]
+        train = filter_items_for_split(items, manifest, 'train')
+        heldout = filter_items_for_split(items, manifest, 'heldout')
+        self.assertEqual({item['item_id'] for item in train}, set(manifest.train_item_ids))
+        self.assertEqual({item['item_id'] for item in heldout}, set(manifest.heldout_item_ids))
+        with self.assertRaisesRegex(ValueError, 'leakage'):
+            assert_no_split_leakage(['a.png'], ['a.png'])
+
+    def test_item_ids_normalize_and_pair_captions_by_image_id(self):
+        self.assertEqual(normalize_dataset_relative_item_id('nested\\image.png'), 'nested/image.png')
+        with tempfile.TemporaryDirectory() as directory:
+            image_root = os.path.join(directory, 'images')
+            os.makedirs(os.path.join(image_root, 'nested'))
+            caption = os.path.join(image_root, 'nested', 'image.json')
+            image_ids = ['nested/image.png', 'other.png']
+            with open(caption, 'w', encoding='utf-8') as handle:
+                handle.write('{}')
+            self.assertEqual(paired_caption_item_id(caption, image_root, image_ids), 'nested/image.png')
+
     def test_config_validation_rejects_invalid_paths_and_parameters(self):
         config = _ValidationConfig(
             enabled=True,
@@ -185,6 +288,11 @@ class TriggerValidationTest(unittest.TestCase):
             validate_trigger_validation_config(config, require_manifest_files=False)
 
         config.fixed_sigmas = []
+        config.data_split_manifest = 'split.json'
+        with self.assertRaisesRegex(ValueError, 'cannot be combined'):
+            validate_trigger_validation_config(config, require_manifest_files=False)
+
+        config.data_split_manifest = None
         config.train_probe_output_filename = '../escape.jsonl'
         with self.assertRaisesRegex(ValueError, 'filename, not a path'):
             validate_trigger_validation_config(config, require_manifest_files=False)

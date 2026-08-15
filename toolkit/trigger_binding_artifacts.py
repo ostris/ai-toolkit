@@ -25,6 +25,7 @@ from safetensors.torch import save_file
 
 ARTIFACT_SCHEMA = "ai-toolkit.trigger-binding-artifact"
 ARTIFACT_SCHEMA_VERSION = 1
+V8_METADATA_SCHEMA = "ai-toolkit.trigger-binding-metadata.v8"
 CHECKPOINT_SCHEMA = "ai-toolkit.trigger-binding-checkpoint"
 CHECKPOINT_SCHEMA_VERSION = 1
 ARTIFACT_TYPES = frozenset({"embedding", "te_adapter", "tap_adapter", "diffusion_lora"})
@@ -237,6 +238,66 @@ def _validate_tensor_mapping(tensors: Mapping[str, torch.Tensor]) -> Dict[str, t
     return normalized
 
 
+def _validate_v8_metadata(metadata: Mapping[str, Any]) -> Dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        raise ArtifactValidationError("v8 metadata must be a mapping")
+    required = {
+        "schema",
+        "objective",
+        "architecture",
+        "virtual_token_count",
+        "adapter",
+        "tap_layout",
+        "gamma",
+        "split_manifest_sha256",
+        "base_model",
+        "tokenizer",
+    }
+    if set(metadata) != required:
+        raise ArtifactValidationError("v8 metadata has missing or unknown keys")
+    normalized = to_json_compatible(dict(metadata))
+    if normalized["schema"] != V8_METADATA_SCHEMA:
+        raise ArtifactValidationError("v8 metadata schema mismatch")
+    for name in ("objective", "architecture"):
+        if not isinstance(normalized[name], str) or not normalized[name]:
+            raise ArtifactValidationError(f"v8 metadata {name} must be a non-empty string")
+    virtual_token_count = normalized["virtual_token_count"]
+    if not isinstance(virtual_token_count, int) or isinstance(virtual_token_count, bool) or virtual_token_count <= 0:
+        raise ArtifactValidationError("v8 metadata virtual_token_count must be a positive integer")
+    adapter = normalized["adapter"]
+    if not isinstance(adapter, dict) or set(adapter) != {"mode", "targets", "ranks"}:
+        raise ArtifactValidationError("v8 metadata adapter must contain mode, targets, and ranks")
+    if not isinstance(adapter["mode"], str) or not adapter["mode"]:
+        raise ArtifactValidationError("v8 metadata adapter mode must be a non-empty string")
+    if not isinstance(adapter["targets"], list) or not all(
+        isinstance(target, str) and target for target in adapter["targets"]
+    ):
+        raise ArtifactValidationError("v8 metadata adapter targets must be non-empty strings")
+    ranks = adapter["ranks"]
+    if not isinstance(ranks, dict) or not all(
+        isinstance(name, str)
+        and name
+        and isinstance(rank, int)
+        and not isinstance(rank, bool)
+        and rank > 0
+        for name, rank in ranks.items()
+    ):
+        raise ArtifactValidationError("v8 metadata adapter ranks must map names to positive integers")
+    if not isinstance(normalized["tap_layout"], (list, dict)):
+        raise ArtifactValidationError("v8 metadata tap_layout must be a list or mapping")
+    gamma = normalized["gamma"]
+    if gamma is not None and (not isinstance(gamma, (int, float)) or isinstance(gamma, bool)):
+        raise ArtifactValidationError("v8 metadata gamma must be numeric or null")
+    split_hash = normalized["split_manifest_sha256"]
+    if split_hash is not None and (not isinstance(split_hash, str) or len(split_hash) != 64):
+        raise ArtifactValidationError("v8 metadata split_manifest_sha256 must be a SHA-256 or null")
+    for name in ("base_model", "tokenizer"):
+        identity = normalized[name]
+        if not isinstance(identity, dict) or not identity:
+            raise ArtifactValidationError(f"v8 metadata {name} identity must be a non-empty mapping")
+    return normalized
+
+
 def build_artifact_manifest(
     artifact_type: str,
     tensors: Mapping[str, torch.Tensor],
@@ -245,6 +306,7 @@ def build_artifact_manifest(
     source: Any,
     config: Any,
     extra: Optional[Mapping[str, Any]] = None,
+    v8_metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     if artifact_type not in ARTIFACT_TYPES:
         raise ArtifactValidationError(f"Unsupported artifact type: {artifact_type!r}")
@@ -269,6 +331,8 @@ def build_artifact_manifest(
     }
     if extra is not None:
         manifest["extra"] = to_json_compatible(dict(extra))
+    if v8_metadata is not None:
+        manifest["v8_metadata"] = _validate_v8_metadata(v8_metadata)
     return manifest
 
 
@@ -312,6 +376,7 @@ def save_artifact(
     source: Any,
     config: Any,
     extra: Optional[Mapping[str, Any]] = None,
+    v8_metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Atomically save a typed safetensors artifact and return its manifest."""
     destination = Path(path)
@@ -326,6 +391,7 @@ def save_artifact(
         source=source,
         config=config,
         extra=extra,
+        v8_metadata=v8_metadata,
     )
     file_descriptor, temp_path = tempfile.mkstemp(
         prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent)
@@ -370,7 +436,7 @@ def _parse_artifact_manifest(metadata: Optional[Mapping[str, str]]) -> Dict[str,
         "config_fingerprint",
         "tensors",
     }
-    if set(manifest).difference(required | {"extra"}) or not required.issubset(manifest):
+    if set(manifest).difference(required | {"extra", "v8_metadata"}) or not required.issubset(manifest):
         raise ArtifactValidationError("Artifact manifest has missing or unknown top-level keys")
     if manifest["schema"] != ARTIFACT_SCHEMA or manifest["schema_version"] != ARTIFACT_SCHEMA_VERSION:
         raise ArtifactValidationError("Artifact manifest schema mismatch")
@@ -380,6 +446,8 @@ def _parse_artifact_manifest(metadata: Optional[Mapping[str, str]]) -> Dict[str,
         raise ArtifactValidationError("Artifact-specific manifest schema mismatch")
     if metadata[_METADATA_TYPE] != manifest["artifact_type"]:
         raise ArtifactValidationError("Artifact type metadata disagrees with manifest")
+    if "v8_metadata" in manifest:
+        manifest["v8_metadata"] = _validate_v8_metadata(manifest["v8_metadata"])
     for name in ("phase_fingerprint", "source_fingerprint", "config_fingerprint"):
         value = manifest[name]
         if not isinstance(value, str) or len(value) != 64:

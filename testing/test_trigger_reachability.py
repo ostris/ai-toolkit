@@ -197,6 +197,63 @@ class TriggerReachabilityTest(unittest.TestCase):
         self.assertTrue(complete.complete)
         self.assertTrue(complete.passed, complete.as_dict())
 
+    def test_named_components_check_each_component_and_unexpected_gradients(self):
+        activator, network, optimizer = self._modules_and_optimizer("a1")
+        activator.inactive_adapter.requires_grad_(True)
+        optimizer = torch.optim.SGD([activator.embedding, activator.inactive_adapter], lr=0.1)
+        static = check_optimizer_isolation(
+            activator,
+            network,
+            "a1",
+            optimizer=optimizer,
+            named_components={"virtual_embedding": "embedding"},
+        )
+        self.assertFalse(static.passed)
+        self.assertFalse(static.checks["frozen_requires_grad_false"])
+        activator.inactive_adapter.requires_grad_(False)
+        optimizer = torch.optim.SGD([activator.embedding], lr=0.1)
+        active = activator(torch.ones(2))
+        gradient = check_gradient_reachability(
+            activator,
+            network,
+            "a1",
+            optimizer=optimizer,
+            named_components={"virtual_embedding": "embedding"},
+            loss=active.sum(),
+            active_output=active,
+            bypass_output=torch.ones_like(active),
+        )
+        self.assertTrue(gradient.passed, gradient.as_dict())
+        self.assertTrue(gradient.checks["named_components_have_nonzero_gradient"])
+        self.assertIn("component:virtual_embedding", gradient.parameters)
+
+    def test_named_component_patterns_support_per_layer_lora_and_gamma(self):
+        activator = nn.Module()
+        activator.layer_0 = nn.Linear(2, 2, bias=False)
+        activator.layer_1 = nn.Linear(2, 2, bias=False)
+        activator.gamma = nn.Parameter(torch.tensor(1.0))
+        network = _Network()
+        activator.requires_grad_(True)
+        network.requires_grad_(False)
+        optimizer = torch.optim.SGD(activator.parameters(), lr=0.1)
+        active = activator.layer_0(torch.ones(2)) + activator.layer_1(torch.ones(2)) * activator.gamma
+        diagnostics = check_gradient_reachability(
+            activator,
+            network,
+            "a1",
+            optimizer=optimizer,
+            named_components={
+                "module_lora.layer_0": "layer_0.*",
+                "module_lora.layer_1": "layer_1.*",
+                "gamma": "gamma",
+            },
+            loss=active.sum(),
+            active_output=active,
+            bypass_output=torch.zeros_like(active),
+        )
+        self.assertTrue(diagnostics.passed, diagnostics.as_dict())
+        self.assertTrue(diagnostics.checks["named_components_present"])
+
     def test_invalid_phase_and_non_scalar_loss_are_rejected(self):
         activator, network, optimizer = self._modules_and_optimizer("a1")
         with self.assertRaises(ReachabilityCheckError):

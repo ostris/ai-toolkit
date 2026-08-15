@@ -151,6 +151,8 @@ def _activator_runtime_context(
     activator: Any,
     runtime_mode: Optional[str],
     trigger_mask: Optional[torch.Tensor],
+    token_indices: Optional[torch.Tensor] = None,
+    runtime_metadata: Optional[Any] = None,
 ):
     if activator is None:
         return contextlib.nullcontext()
@@ -176,7 +178,9 @@ def _activator_runtime_context(
                 {
                     "token_mask": trigger_mask,
                     "trigger_mask": trigger_mask,
+                    "token_indices": token_indices,
                     "runtime_mode": runtime_mode,
+                    "runtime_metadata": runtime_metadata,
                 }
             )
         )
@@ -238,8 +242,10 @@ def get_qwen3_vl_features(
     attention_mask: torch.Tensor,
     pos_2d: torch.Tensor,
     trigger_mask: Optional[torch.Tensor] = None,
+    token_indices: Optional[torch.Tensor] = None,
     text_activator: Any = None,
     runtime_mode: Optional[str] = None,
+    runtime_metadata: Optional[Any] = None,
     return_taps: bool = False,
 ):
     """Run Qwen3-VL and optionally apply trigger-selective text activation.
@@ -255,7 +261,23 @@ def get_qwen3_vl_features(
         "attention_mask": attention_mask,
     }
 
-    with _activator_runtime_context(text_activator, runtime_mode, trigger_mask):
+    if token_indices is not None and tuple(token_indices.shape) != tuple(token_ids.shape):
+        raise ValueError("token_indices shape must match token_ids")
+    if text_activator is not None:
+        installer = getattr(text_activator, "install_module_lora", None)
+        if callable(installer):
+            installer(language_model)
+
+    with _activator_runtime_context(
+        text_activator,
+        runtime_mode,
+        trigger_mask,
+        token_indices=token_indices,
+        runtime_metadata=runtime_metadata,
+    ):
+        setter = getattr(text_activator, "set_runtime_mode", None)
+        if callable(setter):
+            setter(runtime_mode)
         lookup_ids = token_ids
         atomic_token_id = getattr(text_activator, "atomic_token_id", None)
         lookup_token_id = getattr(text_activator, "lookup_token_id", None)
@@ -264,8 +286,9 @@ def get_qwen3_vl_features(
                 token_ids == int(atomic_token_id), int(lookup_token_id)
             )
         inputs_embeds = language_model.embed_tokens(lookup_ids)
-        if text_activator is not None and _runtime_component_enabled(
-            runtime_mode, "embedding"
+        if text_activator is not None and (
+            _runtime_component_enabled(runtime_mode, "embedding")
+            or runtime_mode == "activator_bypass"
         ):
             inputs_embeds = _call_activator(
                 text_activator,
@@ -277,6 +300,7 @@ def get_qwen3_vl_features(
                 ),
                 inputs_embeds,
                 token_mask=trigger_mask,
+                token_indices=token_indices,
                 **activator_kwargs,
             )
 

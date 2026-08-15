@@ -177,6 +177,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     dataset.trigger_word = self.trigger_word
                 if self.trigger_selective_training.caption_sources.enabled and not dataset.is_reg:
                     dataset.trigger_selective_caption_sources = self.trigger_selective_training.caption_sources
+                if (
+                    self.three_phase_trigger_training.enabled
+                    and self.three_phase_trigger_training.schema_version == 8
+                    and self.three_phase_trigger_training.data_split.enabled
+                    and not dataset.is_reg
+                ):
+                    manifest_path = self.three_phase_trigger_training.data_split.manifest_path
+                    if manifest_path is None:
+                        raise ValueError('v8 three-phase training requires data_split.manifest_path')
+                    dataset.trigger_data_split_manifest = manifest_path
+                    dataset.trigger_data_split_name = 'train'
                 is_caching = dataset.cache_latents or dataset.cache_latents_to_disk
                 if not is_caching:
                     self.is_latents_cached = False

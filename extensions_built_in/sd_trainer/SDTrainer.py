@@ -249,6 +249,17 @@ class SDTrainer(BaseSDTrainProcess):
                     module.requires_grad_(trainable and not phase_is_b)
         if phase_is_b:
             self.text_activator.requires_grad_(False)
+        text_activator_config = getattr(self.three_phase_trigger_training, 'text_activator', None)
+        amplification = getattr(text_activator_config, 'amplification', None)
+        gamma_trainable = bool(
+            self.runtime_phase == 'a2'
+            and amplification is not None
+            and amplification.enabled
+            and amplification.trainable
+        )
+        for name, parameter in self.text_activator.named_parameters():
+            if name.startswith('gamma.') or name.startswith('component_gammas.'):
+                parameter.requires_grad_(gamma_trainable)
         if self.network is not None:
             network_trainable = bool(self._phase_config().train.get('diffusion_lora', phase_is_b))
             self.network.requires_grad_(network_trainable)
@@ -297,8 +308,9 @@ class SDTrainer(BaseSDTrainProcess):
         with torch.no_grad():
             initializer = embedding_table(initializer_ids).float().mean(dim=0, keepdim=True)
         te_config = config.te_adapter
+        te_mode = getattr(te_config, 'mode', 'shared_post_layer')
         te_adapter = None
-        if te_config.enabled:
+        if te_config.enabled and te_mode == 'shared_post_layer':
             adapter_class = getattr(activator_module, 'MaskedLowRankAdapter')
             te_adapter = adapter_class(
                 hidden_size=hidden_size,
@@ -307,12 +319,30 @@ class SDTrainer(BaseSDTrainProcess):
                 dropout=te_config.dropout,
             )
         tap_config = config.tap_adapters
+        gamma_config = getattr(config, 'amplification', getattr(config, 'gamma', None))
+        component_gammas = None
+        if gamma_config is not None and getattr(gamma_config, 'per_component', False):
+            component_gammas = {
+                name: {
+                    'initial': gamma_config.initial,
+                    'minimum': gamma_config.minimum,
+                    'maximum': gamma_config.maximum,
+                    'trainable': gamma_config.trainable and self.runtime_phase == 'a2',
+                }
+                for name in ('embedding', 'te_adapter', 'tap_adapters')
+            }
         activator = TextActivator(
             embedding_dim=hidden_size,
             hidden_size=hidden_size,
             embedding_tokens=config.embedding.tokens,
             initializer=initializer,
             te_adapter=te_adapter,
+            te_adapter_mode=te_mode,
+            te_rank=te_config.rank,
+            te_alpha=te_config.alpha,
+            te_dropout=te_config.dropout,
+            te_target_modules=getattr(te_config, 'target_modules', te_config.child_modules),
+            te_layers=te_config.layers,
             tap_layers=tap_config.tap_layers,
             tap_rank=tap_config.rank,
             tap_alpha=tap_config.alpha,
@@ -320,9 +350,17 @@ class SDTrainer(BaseSDTrainProcess):
             tap_learnable_scale=tap_config.learnable_scale,
             tap_scale_init=tap_config.scale_init,
             per_tap=tap_config.per_tap,
+            gamma_init=float(getattr(gamma_config, 'initial', 1.0)),
+            gamma_min=float(getattr(gamma_config, 'minimum', 0.0)),
+            gamma_max=float(getattr(gamma_config, 'maximum', 1.0)),
+            gamma_trainable=bool(getattr(gamma_config, 'trainable', False)),
+            component_gammas=component_gammas,
         ).to(self.device_torch, dtype=get_torch_dtype(config.embedding.dtype))
         activator.atomic_token_id = atomic_token_id
         activator.lookup_token_id = int(safe_ids[0])
+        module_lora_installer = getattr(activator, 'install_module_lora', None)
+        if callable(module_lora_installer):
+            module_lora_installer(language_model)
         return activator
 
     def _load_activator_source(self, modules):
@@ -426,7 +464,7 @@ class SDTrainer(BaseSDTrainProcess):
 
         def encode_with_binding(sd_model, prompt, **kwargs):
             runtime_mode = kwargs.pop('runtime_mode', None) or getattr(sd_model, 'text_activator_runtime_mode', None)
-            if not self.three_phase_enabled or self.runtime_phase == 'b':
+            if not self.three_phase_enabled:
                 return original(prompt, runtime_mode=runtime_mode, **kwargs)
             prompts = [prompt] if isinstance(prompt, str) else list(prompt)
             placeholder = self.three_phase_trigger_training.placeholder
@@ -457,6 +495,7 @@ class SDTrainer(BaseSDTrainProcess):
                 mask_all_occurrences=self.three_phase_trigger_training.mask_all_occurrences,
                 require_atomic=True,
                 expected_token_id=getattr(self.text_activator, 'atomic_token_id', None),
+                virtual_tokens=getattr(self.text_activator, 'virtual_tokens', 1),
             ).to(sd_model.text_encoder.device)
             pipeline = importlib.import_module(
                 'extensions_built_in.diffusion_models.ideogram4.src.pipeline'
@@ -468,8 +507,10 @@ class SDTrainer(BaseSDTrainProcess):
                 batch.attention_mask,
                 (batch.attention_mask.cumsum(dim=-1) - 1).clamp(min=0).long(),
                 trigger_mask=batch.trigger_mask,
+                token_indices=getattr(batch, 'token_indices', None),
                 text_activator=self.text_activator,
                 runtime_mode=runtime_mode or 'full',
+                runtime_metadata=(batch.runtime_metadata() if hasattr(batch, 'runtime_metadata') else None),
                 return_taps=return_taps,
             )
             if return_taps:
@@ -493,6 +534,9 @@ class SDTrainer(BaseSDTrainProcess):
                     for index in range(features.shape[0])
                 ]
             embeds = AdvancedPromptEmbeds(**embeds_kwargs)
+            embeds.trigger_runtime_metadata = (
+                batch.runtime_metadata() if hasattr(batch, 'runtime_metadata') else None
+            )
             embeds.frozen_dtype_keys = ['trigger_masks']
             return embeds
 
@@ -1781,6 +1825,18 @@ class SDTrainer(BaseSDTrainProcess):
         )
     
 
+    @property
+    def conditional_response_v8_enabled(self):
+        return bool(
+            self.three_phase_enabled
+            and getattr(self.three_phase_trigger_training, 'schema_version', 7) == 8
+            and getattr(self.three_phase_trigger_training, 'objective_mode', None) == 'conditional_response_v8'
+        )
+
+    def _conditional_response_config(self):
+        losses = getattr(self.three_phase_trigger_training.phase_runtime, 'losses', {}) or {}
+        return losses.get('conditional_response_v8', losses.get('conditional_response', {}))
+
     def _activator_mode(self, mode):
         if not self.three_phase_enabled or self.text_activator is None:
             return contextlib.nullcontext()
@@ -1799,7 +1855,9 @@ class SDTrainer(BaseSDTrainProcess):
         return runtime_context()
 
     def _write_trigger_binding_metrics(self, loss=None):
-        if not self.three_phase_enabled or self.runtime_phase not in {'a1', 'a2'}:
+        if not self.three_phase_enabled or self.runtime_phase not in {'a1', 'b', 'a2'}:
+            return
+        if self.runtime_phase == 'b' and not self.conditional_response_v8_enabled:
             return
         if self._trigger_binding_last_metrics_written_step == self.step_num:
             return
@@ -1813,11 +1871,44 @@ class SDTrainer(BaseSDTrainProcess):
         )
         metrics_path = os.path.join(phase_root, artifact_config.metrics_file)
         os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+        split_config = getattr(self.three_phase_trigger_training, 'data_split', None)
+        split_manifest_path = getattr(split_config, 'manifest_path', None)
+        split_hash = None
+        if split_manifest_path and os.path.isfile(split_manifest_path):
+            split_module = importlib.import_module('toolkit.trigger_data_split')
+            split_hash = split_module.load_data_split_manifest(split_manifest_path).split_hash
+        parameter_diagnostics = {}
+        for name, parameter in self.text_activator.named_parameters():
+            parameter_diagnostics[name] = {
+                'parameter_norm': float(parameter.detach().float().norm().item()),
+                'gradient_norm': (
+                    float(parameter.grad.detach().float().norm().item())
+                    if parameter.grad is not None else None
+                ),
+                'requires_grad': bool(parameter.requires_grad),
+            }
         record = {
             'phase': self.runtime_phase,
             'step': self.step_num,
+            'schema_version': getattr(self.three_phase_trigger_training, 'schema_version', 7),
+            'objective_mode': getattr(self.three_phase_trigger_training, 'objective_mode', None),
+            'architecture_mode': getattr(
+                getattr(self.three_phase_trigger_training, 'text_activator', None),
+                'architecture_mode',
+                None,
+            ),
+            'split_manifest': split_manifest_path,
+            'split_hash': split_hash,
+            'probe_split': 'train',
+            'parameter_diagnostics': parameter_diagnostics,
             'metrics': self._trigger_binding_last_metrics,
         }
+        if torch.cuda.is_available():
+            record['cuda_memory'] = {
+                'allocated_bytes': int(torch.cuda.memory_allocated()),
+                'reserved_bytes': int(torch.cuda.memory_reserved()),
+                'max_allocated_bytes': int(torch.cuda.max_memory_allocated()),
+            }
         if loss is not None:
             record['loss'] = float(loss.detach().item() if torch.is_tensor(loss) else loss)
         import json
@@ -2044,6 +2135,216 @@ class SDTrainer(BaseSDTrainProcess):
         for key, value in metrics.items():
             self.additional_logs[f'phase/{self.runtime_phase}/{key}'] = float(value)
         self.additional_logs[f'phase/{self.runtime_phase}/loss'] = float(loss.detach().item())
+        self._write_trigger_binding_metrics(loss)
+        return loss
+
+    @staticmethod
+    def _v8_response_rhos(config):
+        configured = config.get('responses', config.get('categories', {}))
+        defaults = {'trigger': 1.0, 'hard': 0.55, 'neutral': 0.10, 'far': 0.0}
+        result = {}
+        for name, default in defaults.items():
+            value = configured.get(name, default)
+            if isinstance(value, dict):
+                value = value.get('rho', default)
+            result[name] = float(value)
+        return result
+
+    def _calculate_conditional_response_v8_loss(
+        self,
+        noisy_latents,
+        noise,
+        timesteps,
+        batch,
+        pred_kwargs,
+        dtype,
+    ):
+        config = self._conditional_response_config()
+        loss_module = self._load_trigger_binding_modules()['losses']
+        source_weights = self._phase_caption_source_weights() or {'primary': 1.0}
+        if source_weights == {'primary': 1.0}:
+            source_prompts = {'primary': [
+                getattr(item, 'caption_template', None) or item.raw_caption
+                for item in batch.file_items
+            ]}
+        else:
+            source_prompts = {
+                name: batch.get_caption_source_templates([name] * len(batch.file_items))
+                for name in source_weights
+            }
+        target = shared_loss_target(self, noise, batch, timesteps)
+        rhos = self._v8_response_rhos(config)
+        category_phrases = config.get('category_phrases', {})
+        category_predictions = {name: [] for name in rhos}
+        category_bases = {name: [] for name in rhos}
+        category_targets = {name: [] for name in rhos}
+        source_objectives = {}
+        source_local_alphas = {}
+        metrics = {}
+        for source_name, templates in source_prompts.items():
+            source_losses = []
+            source_trigger_alphas = []
+            for category_name in ('trigger', 'hard', 'neutral', 'far'):
+                if category_name == 'trigger':
+                    prompts = list(templates)
+                else:
+                    phrases = category_phrases.get(category_name, [''])
+                    if isinstance(phrases, str):
+                        phrases = [phrases]
+                    replacement = phrases[(self.step_num + len(source_losses)) % len(phrases)] if phrases else ''
+                    prompts = [template.replace('[trigger]', replacement) for template in templates]
+                mode = 'full' if category_name == 'trigger' else 'activator_bypass'
+                with self._activator_mode(mode):
+                    embeds = self.sd.get_prompt_embeds(prompts, return_taps=False)
+                if self.runtime_phase == 'b':
+                    with network_disabled(self.network):
+                        with torch.no_grad():
+                            base_pred = self.predict_noise(
+                                noisy_latents=noisy_latents,
+                                timesteps=timesteps,
+                                conditional_embeds=embeds.to(self.device_torch, dtype=dtype),
+                                unconditional_embeds=None,
+                                batch=batch,
+                                **pred_kwargs,
+                            ).detach()
+                    student_pred = self.predict_noise(
+                        noisy_latents=noisy_latents,
+                        timesteps=timesteps,
+                        conditional_embeds=embeds.to(self.device_torch, dtype=dtype),
+                        unconditional_embeds=None,
+                        batch=batch,
+                        is_primary_pred=category_name == 'trigger',
+                        **pred_kwargs,
+                    )
+                else:
+                    with self._activator_mode('activator_bypass'):
+                        with torch.no_grad():
+                            bypass_embeds = self.sd.get_prompt_embeds(prompts).detach()
+                            base_pred = self.predict_noise(
+                                noisy_latents=noisy_latents,
+                                timesteps=timesteps,
+                                conditional_embeds=bypass_embeds.to(self.device_torch, dtype=dtype),
+                                unconditional_embeds=None,
+                                batch=batch,
+                                **pred_kwargs,
+                            ).detach()
+                    student_pred = self.predict_noise(
+                        noisy_latents=noisy_latents,
+                        timesteps=timesteps,
+                        conditional_embeds=embeds.to(self.device_torch, dtype=dtype),
+                        unconditional_embeds=None,
+                        batch=batch,
+                        is_primary_pred=category_name == 'trigger',
+                        **pred_kwargs,
+                    )
+                response_loss = loss_module.per_item_response_mse(
+                    student_pred, base_pred, target, rhos[category_name]
+                )
+                diagnostics = loss_module.causal_response_decomposition(
+                    student_pred, base_pred, target
+                )
+                source_losses.append(response_loss)
+                category_predictions[category_name].append(student_pred)
+                category_bases[category_name].append(base_pred)
+                category_targets[category_name].append(target)
+                prefix = f'{self.runtime_phase}/source/{source_name}/category/{category_name}'
+                metrics[f'{prefix}/rho'] = rhos[category_name]
+                metrics[f'{prefix}/response_loss'] = float(response_loss.detach().mean().item())
+                metrics[f'{prefix}/alpha_local'] = float(diagnostics.alpha.detach().mean().item())
+                metrics[f'{prefix}/beta'] = float(diagnostics.beta.detach().mean().item())
+                metrics[f'{prefix}/omega'] = float(diagnostics.omega.detach().mean().item())
+                metrics[f'{prefix}/old_gain'] = float(diagnostics.old_gain.detach().mean().item())
+                metrics[f'{prefix}/reconstructed_gain'] = float(diagnostics.reconstructed_gain.detach().mean().item())
+                metrics[f'{prefix}/reconstruction_error'] = float(diagnostics.reconstruction_error.detach().abs().mean().item())
+                if category_name == 'trigger':
+                    source_trigger_alphas.append(diagnostics.alpha)
+            source_objectives[source_name] = torch.stack(source_losses).mean(0)
+            source_local_alphas[source_name] = torch.cat(source_trigger_alphas, dim=0)
+
+        aggregate, _, effective_weights = loss_module.aggregate_paired_source_losses(
+            source_objectives, source_weights
+        )
+        reference_prediction = torch.cat(category_predictions['neutral'], dim=0)
+        reference_base = torch.cat(category_bases['neutral'], dim=0)
+        reference_target = torch.cat(category_targets['neutral'], dim=0)
+        shared_direction = (reference_target - reference_base).detach().mean(dim=0)
+        shared_alphas = {}
+        off_direction = []
+        for category_name in rhos:
+            diagnostics = loss_module.causal_response_decomposition(
+                torch.cat(category_predictions[category_name], dim=0),
+                torch.cat(category_bases[category_name], dim=0),
+                torch.cat(category_targets[category_name], dim=0),
+                v_ref=shared_direction,
+            )
+            shared_alphas[category_name] = diagnostics.alpha
+            off_direction.append(loss_module.off_direction_penalty(diagnostics.omega).mean())
+            metrics[f'{self.runtime_phase}/category/{category_name}/alpha_shared'] = float(
+                diagnostics.alpha.detach().mean().item()
+            )
+        hierarchy = loss_module.adjacent_response_hierarchy_loss(
+            shared_alphas,
+            margins=config.get('hierarchy_margins', 0.0),
+            mode=config.get('hierarchy_mode', 'soft'),
+        )
+        response_weight = float(config.get('response_weight', 1.0))
+        hierarchy_weight = float(config.get('hierarchy_weight', 0.05 if self.runtime_phase == 'b' else 0.0))
+        omega_weight = float(config.get('omega_weight', 0.01))
+        alpha_floor_weight = float(config.get('alpha_floor_weight', 0.0))
+        alpha_floor_value = float(config.get('alpha_floor', 0.0))
+        alpha_floor_loss = loss_module.huber_response_floor(
+            shared_alphas['trigger'],
+            alpha_floor_value,
+            delta=float(config.get('alpha_floor_huber_delta', 0.1)),
+        ).mean()
+        consistency_weight = float(config.get('effect_consistency_weight', 0.0))
+        consistency_loss = aggregate.new_zeros(())
+        if len(source_local_alphas) >= 2:
+            source_names = list(source_local_alphas)
+            consistency_loss = loss_module.structured_natural_effect_consistency(
+                source_local_alphas[source_names[0]],
+                source_local_alphas[source_names[1]],
+                reduction=config.get('effect_consistency_reduction', 'paired'),
+            ).loss
+        gamma_regularization = aggregate.new_zeros(())
+        gamma_regularization_weight = float(config.get('gamma_regularization_weight', 0.0))
+        if self.runtime_phase == 'a2' and self.text_activator is not None:
+            gamma_parameters = [
+                parameter
+                for name, parameter in self.text_activator.named_parameters()
+                if name.startswith('gamma.') or name.startswith('component_gammas.')
+            ]
+            if gamma_parameters:
+                gamma_regularization = torch.stack([
+                    (parameter.float() ** 2).mean() for parameter in gamma_parameters
+                ]).mean()
+        per_item = response_weight * aggregate
+        loss = (
+            per_item.mean()
+            + hierarchy_weight * hierarchy.loss
+            + omega_weight * torch.stack(off_direction).mean()
+            + alpha_floor_weight * alpha_floor_loss
+            + consistency_weight * consistency_loss
+            + gamma_regularization_weight * gamma_regularization
+        )
+        metrics[f'{self.runtime_phase}/response_objective'] = float(aggregate.detach().mean().item())
+        metrics[f'{self.runtime_phase}/hierarchy_loss'] = float(hierarchy.loss.detach().item())
+        metrics[f'{self.runtime_phase}/off_direction_loss'] = float(torch.stack(off_direction).detach().mean().item())
+        metrics[f'{self.runtime_phase}/alpha_floor_loss'] = float(alpha_floor_loss.detach().item())
+        metrics[f'{self.runtime_phase}/effect_consistency_loss'] = float(consistency_loss.detach().item())
+        metrics[f'{self.runtime_phase}/gamma_regularization'] = float(gamma_regularization.detach().item())
+        metrics[f'{self.runtime_phase}/aggregate_loss'] = float(loss.detach().item())
+        for name, weight in effective_weights.items():
+            metrics[f'{self.runtime_phase}/source_weight/{name}'] = float(weight)
+        self._check_first_trigger_gradient(
+            loss,
+            category_predictions['trigger'][0],
+            category_bases['trigger'][0],
+        )
+        self._trigger_binding_last_metrics = metrics
+        self.additional_logs['runtime_phase'] = self.runtime_phase
+        for key, value in metrics.items():
+            self.additional_logs[f'phase/{self.runtime_phase}/{key}'] = float(value)
         self._write_trigger_binding_metrics(loss)
         return loss
 
@@ -3109,7 +3410,17 @@ class SDTrainer(BaseSDTrainProcess):
                     )
                 else:
                     tst_loss = None
-                    if self.three_phase_enabled and self.runtime_phase in {'a1', 'a2'}:
+                    if self.conditional_response_v8_enabled:
+                        with self.timer('conditional_response_v8_predict_and_loss'):
+                            tst_loss = self._calculate_conditional_response_v8_loss(
+                                noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                                noise=noise.to(self.device_torch, dtype=dtype).detach(),
+                                timesteps=timesteps,
+                                batch=batch,
+                                pred_kwargs=pred_kwargs,
+                                dtype=dtype,
+                            )
+                    elif self.three_phase_enabled and self.runtime_phase in {'a1', 'a2'}:
                         with self.timer('trigger_binding_predict_and_loss'):
                             tst_loss = self._calculate_trigger_binding_loss(
                                 noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),

@@ -515,3 +515,378 @@ def compute_a2_loss(
         source_per_item,
         metrics,
     )
+
+
+@dataclass(frozen=True)
+class CausalResponseDiagnostics:
+    alpha: torch.Tensor
+    beta: torch.Tensor
+    omega: torch.Tensor
+    old_gain: torch.Tensor
+    reconstructed_gain: torch.Tensor
+    reconstruction_error: torch.Tensor
+    reference_energy: torch.Tensor
+    residual_energy: torch.Tensor
+    response_mse: torch.Tensor
+    base_mse: torch.Tensor
+    omega_tolerance: float
+    uses_shared_reference: bool
+
+    @property
+    def omega_within_tolerance(self) -> torch.Tensor:
+        return self.omega >= -self.omega_tolerance
+
+    @property
+    def all_omega_within_tolerance(self) -> bool:
+        return bool(torch.all(self.omega_within_tolerance).item())
+
+
+@dataclass(frozen=True)
+class ResponseHierarchyResult:
+    loss: torch.Tensor
+    class_means: Dict[str, torch.Tensor]
+    adjacent_deficits: Dict[str, torch.Tensor]
+    adjacent_losses: Dict[str, torch.Tensor]
+
+
+@dataclass(frozen=True)
+class EffectConsistencyResult:
+    loss: torch.Tensor
+    per_item: torch.Tensor
+    structured_mean: torch.Tensor
+    natural_mean: torch.Tensor
+    mean_gap: torch.Tensor
+
+
+def _per_item_parameter(
+    value: TensorOrFloat,
+    reference: torch.Tensor,
+    name: str,
+) -> torch.Tensor:
+    tensor = _scalar_like(value, reference)
+    if tensor.ndim == 0:
+        return tensor
+    if tensor.ndim == 1 and tensor.shape[0] == reference.shape[0]:
+        return tensor.reshape((reference.shape[0],) + (1,) * (reference.ndim - 1))
+    try:
+        return torch.broadcast_to(tensor, reference.shape)
+    except RuntimeError as error:
+        raise ValueError(f'{name} must be scalar, per-item, or broadcastable to the prediction shape') from error
+
+
+def condition_local_response_target(
+    base_prediction: torch.Tensor,
+    target: torch.Tensor,
+    rho: TensorOrFloat,
+    *,
+    detach_base: bool = True,
+    detach_target: bool = True,
+) -> torch.Tensor:
+    if base_prediction.shape != target.shape:
+        raise ValueError('base_prediction and target shapes must match')
+    if base_prediction.ndim < 2:
+        raise ValueError('base_prediction and target must include batch and feature dimensions')
+    base = base_prediction.detach() if detach_base else base_prediction
+    endpoint = target.detach() if detach_target else target
+    rho_tensor = _per_item_parameter(rho, base, 'rho')
+    if not bool(torch.all(torch.isfinite(rho_tensor)).item()):
+        raise ValueError('rho must contain only finite values')
+    if bool(torch.any((rho_tensor < 0) | (rho_tensor > 1)).item()):
+        raise ValueError('rho must be in the closed interval [0, 1]')
+    return base + rho_tensor * (endpoint - base)
+
+
+def per_item_response_mse(
+    response_prediction: torch.Tensor,
+    base_prediction: torch.Tensor,
+    target: torch.Tensor,
+    rho: TensorOrFloat,
+    *,
+    detach_base: bool = True,
+    detach_target: bool = True,
+) -> torch.Tensor:
+    response_target = condition_local_response_target(
+        base_prediction,
+        target,
+        rho,
+        detach_base=detach_base,
+        detach_target=detach_target,
+    )
+    return per_item_diffusion_mse(response_prediction, response_target)
+
+
+def _broadcast_reference_direction(
+    v_ref: torch.Tensor,
+    reference: torch.Tensor,
+) -> torch.Tensor:
+    direction = v_ref.to(device=reference.device, dtype=reference.dtype)
+    if direction.shape == reference.shape:
+        return direction
+    if direction.shape == reference.shape[1:]:
+        direction = direction.unsqueeze(0)
+    try:
+        return torch.broadcast_to(direction, reference.shape)
+    except RuntimeError as error:
+        raise ValueError('v_ref must match or broadcast to the prediction shape') from error
+
+
+def causal_response_decomposition(
+    response_prediction: torch.Tensor,
+    base_prediction: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    v_ref: Optional[torch.Tensor] = None,
+    epsilon: float = 1.0e-6,
+    omega_tolerance: float = 1.0e-6,
+    detach_base: bool = True,
+    detach_target: bool = True,
+    detach_v_ref: bool = True,
+) -> CausalResponseDiagnostics:
+    if response_prediction.shape != base_prediction.shape or response_prediction.shape != target.shape:
+        raise ValueError('response_prediction, base_prediction, and target shapes must match')
+    if response_prediction.ndim < 2:
+        raise ValueError('predictions must include batch and feature dimensions')
+    if epsilon <= 0:
+        raise ValueError('epsilon must be positive')
+    if omega_tolerance < 0:
+        raise ValueError('omega_tolerance must be non-negative')
+
+    response = response_prediction.float()
+    base = base_prediction.float()
+    endpoint = target.float()
+    if detach_base:
+        base = base.detach()
+    if detach_target:
+        endpoint = endpoint.detach()
+    residual = response - base
+    if v_ref is None:
+        direction = endpoint - base
+        uses_shared_reference = False
+    else:
+        direction = _broadcast_reference_direction(v_ref, response)
+        if detach_v_ref:
+            direction = direction.detach()
+        uses_shared_reference = True
+
+    residual_flat = residual.flatten(1)
+    direction_flat = direction.flatten(1)
+    reference_energy = direction_flat.square().mean(1)
+    residual_energy = residual_flat.square().mean(1)
+    cross_energy = (residual_flat * direction_flat).mean(1)
+    denominator = reference_energy.detach() + float(epsilon)
+    alpha = cross_energy / denominator
+    beta = residual_energy / denominator
+    omega = beta - alpha.square()
+
+    reference_endpoint = base + direction
+    response_mse = per_item_diffusion_mse(response, reference_endpoint)
+    base_mse = per_item_diffusion_mse(base, reference_endpoint)
+    old_gain = 1.0 - response_mse / (base_mse.detach() + float(epsilon))
+    reconstructed_gain = 2.0 * alpha - beta
+    reconstruction_error = old_gain - reconstructed_gain
+    return CausalResponseDiagnostics(
+        alpha=alpha,
+        beta=beta,
+        omega=omega,
+        old_gain=old_gain,
+        reconstructed_gain=reconstructed_gain,
+        reconstruction_error=reconstruction_error,
+        reference_energy=reference_energy,
+        residual_energy=residual_energy,
+        response_mse=response_mse,
+        base_mse=base_mse,
+        omega_tolerance=float(omega_tolerance),
+        uses_shared_reference=uses_shared_reference,
+    )
+
+
+def _positive_floor_deficit(response: torch.Tensor, floor: TensorOrFloat) -> torch.Tensor:
+    _validate_per_item(response, 'response')
+    return torch.relu(_scalar_like(floor, response) - response)
+
+
+def soft_response_floor(
+    response: torch.Tensor,
+    floor: TensorOrFloat,
+    *,
+    temperature: float = 0.05,
+) -> torch.Tensor:
+    _validate_per_item(response, 'response')
+    if temperature <= 0:
+        raise ValueError('temperature must be positive')
+    deficit = _scalar_like(floor, response) - response
+    return float(temperature) * F.softplus(deficit / float(temperature))
+
+
+def huber_response_floor(
+    response: torch.Tensor,
+    floor: TensorOrFloat,
+    *,
+    delta: float = 0.1,
+) -> torch.Tensor:
+    if delta <= 0:
+        raise ValueError('delta must be positive')
+    deficit = _positive_floor_deficit(response, floor)
+    delta_tensor = _scalar_like(delta, response)
+    return torch.where(
+        deficit <= delta_tensor,
+        0.5 * deficit.square() / delta_tensor,
+        deficit - 0.5 * delta_tensor,
+    )
+
+
+def clamped_response_floor(
+    response: torch.Tensor,
+    floor: TensorOrFloat,
+    *,
+    max_deficit: float = 1.0,
+    squared: bool = True,
+) -> torch.Tensor:
+    if max_deficit <= 0:
+        raise ValueError('max_deficit must be positive')
+    deficit = _positive_floor_deficit(response, floor).clamp_max(float(max_deficit))
+    return deficit.square() if squared else deficit
+
+
+def response_floor_penalty(
+    response: torch.Tensor,
+    floor: TensorOrFloat,
+    *,
+    mode: str = 'soft',
+    temperature: float = 0.05,
+    huber_delta: float = 0.1,
+    max_deficit: float = 1.0,
+    squared: bool = True,
+) -> torch.Tensor:
+    if mode == 'soft':
+        return soft_response_floor(response, floor, temperature=temperature)
+    if mode == 'huber':
+        return huber_response_floor(response, floor, delta=huber_delta)
+    if mode == 'clamped':
+        return clamped_response_floor(response, floor, max_deficit=max_deficit, squared=squared)
+    raise ValueError("mode must be 'soft', 'huber', or 'clamped'")
+
+
+def off_direction_penalty(
+    omega: torch.Tensor,
+    *,
+    tolerance: float = 1.0e-6,
+    max_value: Optional[float] = None,
+) -> torch.Tensor:
+    _validate_per_item(omega, 'omega')
+    if tolerance < 0:
+        raise ValueError('tolerance must be non-negative')
+    if max_value is not None and max_value <= 0:
+        raise ValueError('max_value must be positive when provided')
+    penalty = torch.relu(omega - float(tolerance))
+    return penalty if max_value is None else penalty.clamp_max(float(max_value))
+
+
+def _normalized_adjacent_margins(
+    order: Sequence[str],
+    margins: Union[TensorOrFloat, Sequence[float], Mapping[str, float]],
+) -> Dict[str, float]:
+    pair_names = [f'{lower}->{higher}' for lower, higher in zip(order, order[1:])]
+    if isinstance(margins, Mapping):
+        if set(margins) != set(pair_names):
+            raise ValueError('margin mapping keys must exactly match adjacent condition pairs')
+        result = {name: float(margins[name]) for name in pair_names}
+    elif isinstance(margins, Sequence) and not isinstance(margins, (str, bytes, torch.Tensor)):
+        if len(margins) != len(pair_names):
+            raise ValueError('margin sequence must have one value per adjacent condition pair')
+        result = {name: float(value) for name, value in zip(pair_names, margins)}
+    else:
+        margin = float(torch.as_tensor(margins).item())
+        result = {name: margin for name in pair_names}
+    if any(value < 0 for value in result.values()):
+        raise ValueError('hierarchy margins must be non-negative')
+    return result
+
+
+def adjacent_response_hierarchy_loss(
+    responses_by_class: Mapping[str, torch.Tensor],
+    *,
+    order: Sequence[str] = ('far', 'neutral', 'hard', 'trigger'),
+    margins: Union[TensorOrFloat, Sequence[float], Mapping[str, float]] = 0.0,
+    mode: str = 'soft',
+    temperature: float = 0.05,
+    huber_delta: float = 0.1,
+    max_deficit: float = 1.0,
+) -> ResponseHierarchyResult:
+    order = tuple(order)
+    if len(order) < 2 or len(set(order)) != len(order):
+        raise ValueError('order must contain at least two unique class names')
+    if set(responses_by_class) != set(order):
+        raise ValueError('responses_by_class keys must exactly match order')
+    class_means: Dict[str, torch.Tensor] = {}
+    for name in order:
+        values = _validate_per_item(responses_by_class[name], f'responses_by_class[{name}]')
+        if values.numel() == 0:
+            raise ValueError(f'responses_by_class[{name}] must not be empty')
+        class_means[name] = values.mean()
+
+    normalized_margins = _normalized_adjacent_margins(order, margins)
+    adjacent_deficits: Dict[str, torch.Tensor] = {}
+    adjacent_losses: Dict[str, torch.Tensor] = {}
+    for lower, higher in zip(order, order[1:]):
+        pair_name = f'{lower}->{higher}'
+        gap = class_means[higher] - class_means[lower]
+        deficit = _scalar_like(normalized_margins[pair_name], gap) - gap
+        adjacent_deficits[pair_name] = deficit
+        scalar_gap = gap.reshape(1)
+        pair_loss = response_floor_penalty(
+            scalar_gap,
+            normalized_margins[pair_name],
+            mode=mode,
+            temperature=temperature,
+            huber_delta=huber_delta,
+            max_deficit=max_deficit,
+        ).squeeze(0)
+        adjacent_losses[pair_name] = pair_loss
+    loss = torch.stack(tuple(adjacent_losses.values())).mean()
+    return ResponseHierarchyResult(loss, class_means, adjacent_deficits, adjacent_losses)
+
+
+def structured_natural_effect_consistency(
+    structured_effect: torch.Tensor,
+    natural_effect: torch.Tensor,
+    *,
+    reduction: str = 'paired',
+    huber_delta: Optional[float] = None,
+) -> EffectConsistencyResult:
+    structured = _validate_per_item(structured_effect, 'structured_effect')
+    natural = _validate_per_item(natural_effect, 'natural_effect')
+    if reduction not in {'paired', 'mean'}:
+        raise ValueError("reduction must be 'paired' or 'mean'")
+    if reduction == 'paired':
+        if structured.shape != natural.shape:
+            raise ValueError('paired structured and natural effects must have matching shapes')
+        difference = structured - natural
+    else:
+        difference = (structured.mean() - natural.mean()).reshape(1)
+    if huber_delta is None:
+        per_item = difference.square()
+    else:
+        if huber_delta <= 0:
+            raise ValueError('huber_delta must be positive')
+        absolute = difference.abs()
+        delta = _scalar_like(huber_delta, difference)
+        per_item = torch.where(
+            absolute <= delta,
+            0.5 * difference.square() / delta,
+            absolute - 0.5 * delta,
+        )
+    structured_mean = structured.mean()
+    natural_mean = natural.mean()
+    return EffectConsistencyResult(
+        loss=per_item.mean(),
+        per_item=per_item,
+        structured_mean=structured_mean,
+        natural_mean=natural_mean,
+        mean_gap=structured_mean - natural_mean,
+    )
+
+
+conditional_response_target = condition_local_response_target
+causal_residual_decomposition = causal_response_decomposition
+batch_mean_response_hierarchy_loss = adjacent_response_hierarchy_loss

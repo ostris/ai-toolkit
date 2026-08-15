@@ -69,14 +69,35 @@ class TriggerBindingMetadata:
     character_spans: Tuple[Tuple[int, int], ...]
     token_spans: Tuple[Tuple[int, int], ...]
     token_indices: Tuple[int, ...]
+    virtual_token_indices: Tuple[int, ...]
+    occurrence_indices: Tuple[int, ...]
     input_ids: Tuple[int, ...]
     attention_mask: Tuple[int, ...]
     trigger_mask: Tuple[int, ...]
     atomic_token_id: Optional[int] = None
+    virtual_tokens: int = 1
 
     @property
     def occurrence_count(self) -> int:
         return len(self.character_spans)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "raw_text": self.raw_text,
+            "resolved_text": self.resolved_text,
+            "rendered_text": self.rendered_text,
+            "literal": self.literal,
+            "character_spans": [list(span) for span in self.character_spans],
+            "token_spans": [list(span) for span in self.token_spans],
+            "token_indices": list(self.token_indices),
+            "virtual_token_indices": list(self.virtual_token_indices),
+            "occurrence_indices": list(self.occurrence_indices),
+            "input_ids": list(self.input_ids),
+            "attention_mask": list(self.attention_mask),
+            "trigger_mask": list(self.trigger_mask),
+            "atomic_token_id": self.atomic_token_id,
+            "virtual_tokens": self.virtual_tokens,
+        }
 
 
 @dataclass
@@ -85,13 +106,23 @@ class TriggerBindingBatch:
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
     trigger_mask: torch.Tensor
+    token_indices: torch.Tensor
+    occurrence_indices: torch.Tensor
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to(self, *args, **kwargs) -> "TriggerBindingBatch":
         self.input_ids = self.input_ids.to(*args, **kwargs)
         self.attention_mask = self.attention_mask.to(*args, **kwargs)
         self.trigger_mask = self.trigger_mask.to(*args, **kwargs)
+        self.token_indices = self.token_indices.to(*args, **kwargs)
+        self.occurrence_indices = self.occurrence_indices.to(*args, **kwargs)
         return self
+
+    def runtime_metadata(self) -> Dict[str, Any]:
+        return {
+            **self.metadata,
+            "items": [item.to_dict() for item in self.items],
+        }
 
 
 @dataclass(frozen=True)
@@ -316,7 +347,10 @@ def bind_trigger_prompt(
     require_atomic: bool = False,
     expected_token_id: Optional[int] = None,
     add_generation_prompt: bool = True,
+    virtual_tokens: int = 1,
 ) -> TriggerBindingMetadata:
+    if virtual_tokens not in (1, 2, 4):
+        raise TriggerBindingError("virtual_tokens must be one of 1, 2 or 4")
     resolved = resolve_trigger_literal(
         raw_text,
         literal,
@@ -331,18 +365,17 @@ def bind_trigger_prompt(
             "chat template changed or duplicated literal-trigger occurrences; offset mapping is ambiguous"
         )
 
-    input_ids, attention_mask, offsets = _tokenize_with_offsets(tokenizer, rendered, max_length)
+    tokenizer_max_length = max_length if virtual_tokens == 1 else None
+    input_ids, attention_mask, offsets = _tokenize_with_offsets(
+        tokenizer, rendered, tokenizer_max_length
+    )
     token_indices, token_spans = map_trigger_offsets(
         offsets,
         rendered_spans,
         mask_all_occurrences=mask_all_occurrences,
     )
-    trigger_mask = [0] * len(input_ids)
-    for index in token_indices:
-        trigger_mask[index] = 1
-
     atomic_token_id = None
-    if require_atomic or expected_token_id is not None:
+    if require_atomic or expected_token_id is not None or virtual_tokens > 1:
         atomic_token_id = validate_atomic_token_id(
             tokenizer,
             literal,
@@ -357,6 +390,35 @@ def bind_trigger_prompt(
         if len(token_indices) != expected_occurrences:
             raise TriggerAtomicityError("each masked trigger occurrence must map to exactly one token")
 
+    expanded_ids: List[int] = []
+    expanded_attention: List[int] = []
+    expanded_mask: List[int] = []
+    expanded_virtual_indices: List[int] = []
+    expanded_occurrence_indices: List[int] = []
+    expanded_token_indices: List[int] = []
+    selected_positions = {position: occurrence for occurrence, position in enumerate(token_indices)}
+    for original_index, token_id in enumerate(input_ids):
+        occurrence = selected_positions.get(original_index)
+        if occurrence is None:
+            expanded_ids.append(token_id)
+            expanded_attention.append(attention_mask[original_index])
+            expanded_mask.append(0)
+            expanded_virtual_indices.append(0)
+            expanded_occurrence_indices.append(-1)
+            continue
+        for virtual_index in range(virtual_tokens):
+            expanded_token_indices.append(len(expanded_ids))
+            expanded_ids.append(token_id)
+            expanded_attention.append(attention_mask[original_index])
+            expanded_mask.append(1)
+            expanded_virtual_indices.append(virtual_index)
+            expanded_occurrence_indices.append(occurrence)
+
+    if max_length is not None and len(expanded_ids) > max_length:
+        raise TriggerTruncationError(
+            "virtual-token expansion exceeds max_length; increase the text limit or reduce virtual tokens"
+        )
+
     return TriggerBindingMetadata(
         raw_text=raw_text,
         resolved_text=resolved.text,
@@ -364,11 +426,14 @@ def bind_trigger_prompt(
         literal=literal,
         character_spans=rendered_spans,
         token_spans=token_spans,
-        token_indices=token_indices,
-        input_ids=tuple(input_ids),
-        attention_mask=tuple(attention_mask),
-        trigger_mask=tuple(trigger_mask),
+        token_indices=tuple(expanded_token_indices),
+        virtual_token_indices=tuple(expanded_virtual_indices),
+        occurrence_indices=tuple(expanded_occurrence_indices),
+        input_ids=tuple(expanded_ids),
+        attention_mask=tuple(expanded_attention),
+        trigger_mask=tuple(expanded_mask),
         atomic_token_id=atomic_token_id,
+        virtual_tokens=virtual_tokens,
     )
 
 
@@ -395,20 +460,26 @@ def bind_trigger_batch(
     ids: List[List[int]] = []
     attention: List[List[int]] = []
     masks: List[List[int]] = []
+    virtual_indices: List[List[int]] = []
+    occurrence_indices: List[List[int]] = []
     for item in items:
         padding = max_tokens - len(item.input_ids)
         ids.append(list(item.input_ids) + [int(pad_token_id)] * padding)
         attention.append(list(item.attention_mask) + [0] * padding)
         masks.append(list(item.trigger_mask) + [0] * padding)
+        virtual_indices.append(list(item.virtual_token_indices) + [0] * padding)
+        occurrence_indices.append(list(item.occurrence_indices) + [-1] * padding)
 
     batch_metadata = dict(metadata or {})
     batch_metadata.update(
         {
+            "architecture_version": 8,
             "batch_size": len(items),
             "sequence_length": max_tokens,
-            "occurrence_counts": tuple(item.occurrence_count for item in items),
-            "token_indices": tuple(item.token_indices for item in items),
-            "character_spans": tuple(item.character_spans for item in items),
+            "occurrence_counts": [item.occurrence_count for item in items],
+            "token_indices": [list(item.token_indices) for item in items],
+            "character_spans": [[list(span) for span in item.character_spans] for item in items],
+            "virtual_tokens": [item.virtual_tokens for item in items],
             "literal": literal,
         }
     )
@@ -417,6 +488,8 @@ def bind_trigger_batch(
         input_ids=torch.tensor(ids, dtype=torch.long),
         attention_mask=torch.tensor(attention, dtype=torch.long),
         trigger_mask=torch.tensor(masks, dtype=torch.bool),
+        token_indices=torch.tensor(virtual_indices, dtype=torch.long),
+        occurrence_indices=torch.tensor(occurrence_indices, dtype=torch.long),
         metadata=batch_metadata,
     )
 
