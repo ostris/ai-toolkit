@@ -41,11 +41,20 @@ video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.f
 audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
 
 
-def discover_tst_caption_sources(dataset_root, file_list, caption_sources):
+def discover_tst_caption_sources(
+    dataset_root,
+    file_list,
+    caption_sources,
+    complete_file_list_for_orphan_check=None,
+):
     if not caption_sources or not caption_sources.enabled:
         return {}
     dataset_root = os.path.abspath(dataset_root)
     unique_files = list(dict.fromkeys(os.path.abspath(path) for path in file_list))
+    complete_files = list(dict.fromkeys(
+        os.path.abspath(path)
+        for path in (complete_file_list_for_orphan_check or unique_files)
+    ))
     source_map = {}
     trigger_counts = {source.name: {} for source in caption_sources.sources}
     expected_mirror_images = set()
@@ -86,6 +95,15 @@ def discover_tst_caption_sources(dataset_root, file_list, caption_sources):
         if source.use_main_dataset:
             continue
         source_root = os.path.abspath(source.path)
+        for image_path in complete_files:
+            relative_id = os.path.normpath(os.path.relpath(image_path, dataset_root))
+            relative_stem = os.path.splitext(relative_id)[0]
+            expected_mirror_images.add(os.path.normcase(os.path.abspath(
+                os.path.join(source_root, relative_id)
+            )))
+            expected_mirror_captions.add(os.path.normcase(os.path.abspath(
+                os.path.join(source_root, relative_stem + source.caption_ext)
+            )))
         actual_images = set()
         actual_captions = set()
         for root, dirs, files in os.walk(source_root):
@@ -521,6 +539,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]
 
         tst_dataset_root = self.dataset_path if os.path.isdir(self.dataset_path) else os.path.dirname(self.dataset_path)
+        complete_file_list_for_orphan_check = list(file_list)
         split_manifest_path = getattr(self.dataset_config, 'trigger_data_split_manifest', None)
         split_name = getattr(self.dataset_config, 'trigger_data_split_name', None)
         if split_manifest_path is not None:
@@ -545,6 +564,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             tst_dataset_root,
             file_list,
             self.dataset_config.trigger_selective_caption_sources,
+            complete_file_list_for_orphan_check=complete_file_list_for_orphan_check,
         )
 
         if self.dataset_config.num_repeats > 1:

@@ -257,6 +257,48 @@ class TriggerSelectiveTrainingTest(unittest.TestCase):
             self.assertEqual(item['item_id'], os.path.join('nested', 'item.png'))
             self.assertEqual(item['sources']['natural']['caption'], 'natural [trigger] caption')
 
+    def test_caption_source_orphan_check_uses_complete_pre_split_image_set(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            main_root = os.path.join(temp_dir, 'main')
+            mirror_root = os.path.join(temp_dir, 'mirror')
+            os.makedirs(main_root)
+            os.makedirs(mirror_root)
+            train_image = os.path.join(main_root, 'train.png')
+            heldout_image = os.path.join(main_root, 'heldout.png')
+            for image_path in (train_image, heldout_image):
+                open(image_path, 'wb').close()
+                with open(os.path.splitext(image_path)[0] + '.json', 'w', encoding='utf-8') as handle:
+                    json.dump({'caption': 'structured [trigger]'}, handle)
+                mirror_image = os.path.join(mirror_root, os.path.basename(image_path))
+                open(mirror_image, 'wb').close()
+                with open(os.path.splitext(mirror_image)[0] + '.txt', 'w', encoding='utf-8') as handle:
+                    handle.write('natural [trigger]')
+            config = TriggerSelectiveTrainingConfig(
+                caption_sources={
+                    'enabled': True,
+                    'sources': [
+                        {'name': 'structured', 'use_main_dataset': True, 'caption_ext': '.json', 'format': 'json'},
+                        {'name': 'natural', 'path': mirror_root, 'caption_ext': '.txt', 'format': 'text'},
+                    ],
+                },
+            )
+            result = discover_tst_caption_sources(
+                main_root,
+                [train_image],
+                config.caption_sources,
+                complete_file_list_for_orphan_check=[train_image, heldout_image],
+            )
+            self.assertEqual(set(result), {os.path.abspath(train_image)})
+            extra_image = os.path.join(mirror_root, 'real_orphan.png')
+            open(extra_image, 'wb').close()
+            with self.assertRaisesRegex(ValueError, 'orphan mirror image'):
+                discover_tst_caption_sources(
+                    main_root,
+                    [train_image],
+                    config.caption_sources,
+                    complete_file_list_for_orphan_check=[train_image, heldout_image],
+                )
+
     def test_json_only_main_caption_source_is_supported(self):
         config = TriggerSelectiveTrainingConfig(
             enabled=True,
