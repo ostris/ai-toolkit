@@ -269,6 +269,7 @@ class PackedLayout:
     audio_indices: torch.Tensor
     text_indices: torch.Tensor
     num_condition_video_rows: int
+    num_condition_audio_rows: int = 0
 
 
 def build_packed_sequence(
@@ -279,24 +280,32 @@ def build_packed_sequence(
     num_audio_latents: int,
     patch_size=(1, 2, 2),
     keyframe_anchors: Tuple[str, ...] = (),
-    image_ref_shapes: Tuple[Tuple[int, int], ...] = (),
+    ref_blocks: Tuple[Tuple[int, int, int], ...] = (),
 ) -> PackedLayout:
     """Build the [text | conditions | target audio | target video] layout.
 
     The condition segment holds either fl2va keyframes (``keyframe_anchors``:
     rows pinned at the first/last target frame's rotary time, on the target's
-    spatial grid) or ref2va image references (``image_ref_shapes``: one
-    ``(latent_height, latent_width)`` per reference — references keep their
-    OWN aspect on their own aspect-normalized grid; each block sits at its
-    own rotary time and advances the shared media clock by 1.0, so the target
-    streams start at ``num_text + len(image_ref_shapes)``)."""
-    if keyframe_anchors and image_ref_shapes:
-        raise ValueError("keyframe_anchors and image_ref_shapes are mutually exclusive")
+    spatial grid) or ref2va references (``ref_blocks``: one
+    ``(t_lat, latent_height, latent_width)`` per reference — ``t_lat == 1``
+    for images. References keep their OWN aspect on their own
+    aspect-normalized grid; an image block advances the shared media clock by
+    1.0, a video block by its temporal span, and the target streams start
+    after the cumulative advance)."""
+    if keyframe_anchors and ref_blocks:
+        raise ValueError("keyframe_anchors and ref_blocks are mutually exclusive")
     _, ph, pw = patch_size
     rows_per_frame = (latent_height // ph) * (latent_width // pw)
     num_text = int(text_token_tags.shape[0])
-    ref_rows = [(h // ph) * (w // pw) for h, w in image_ref_shapes]
-    num_cond = len(keyframe_anchors) * rows_per_frame + sum(ref_rows)
+    # a ref block is (t_lat, h, w) or (t_lat, h, w, audio_latents): a video
+    # reference's soundtrack packs as clean audio rows immediately BEFORE its
+    # own video rows
+    ref_blocks = tuple(tuple(b) + (0,) * (4 - len(b)) for b in ref_blocks)
+    ref_vid_rows = [t * (h // ph) * (w // pw) for t, h, w, _ in ref_blocks]
+    ref_aud_rows = [a * AUDIO_CHANNELS for _, _, _, a in ref_blocks]
+    num_cond = (
+        len(keyframe_anchors) * rows_per_frame + sum(ref_vid_rows) + sum(ref_aud_rows)
+    )
     num_audio_rows = num_audio_latents * AUDIO_CHANNELS
     num_video_rows = num_latent_frames * rows_per_frame
     seq_len = num_text + num_cond + num_audio_rows + num_video_rows
@@ -305,10 +314,15 @@ def build_packed_sequence(
     audio_start = cond_start + num_cond
     video_start = audio_start + num_audio_rows
 
+    def _block_advance(t, a):
+        span = 1.0 if t == 1 else _temporal_position_span(t)
+        return max(span, float(a)) if a else span
+
     # text rows sit on the time axis at their row index; the media clock
-    # continues from there (past the reference blocks, which advance it 1.0
-    # each), so prompt length shifts the whole media clock
-    media_origin = float(num_text + len(image_ref_shapes))
+    # continues from there past the reference blocks, so prompt length (and
+    # reference count/length) shifts the whole media clock
+    media_advance = sum(_block_advance(t, a) for t, _, _, a in ref_blocks)
+    media_origin = float(num_text) + media_advance
     position_ids = torch.zeros(seq_len, 3, dtype=torch.float64)
     position_ids[:num_text, 0] = torch.arange(num_text, dtype=torch.float64)
 
@@ -340,25 +354,50 @@ def build_packed_sequence(
         position_ids[rows, 1:] = frame_grid
 
     ref_cursor = cond_start
-    for i, (ref_h, ref_w) in enumerate(image_ref_shapes):
+    ref_clock = float(num_text)
+    cond_audio_idx = []
+    cond_video_idx = []
+    if keyframe_anchors:
+        cond_video_idx.append(torch.arange(cond_start, audio_start))
+        ref_cursor = audio_start
+    for i, (ref_t, ref_h, ref_w, ref_a) in enumerate(ref_blocks):
         # each reference on its own aspect-normalized grid (area-matched to
         # the target, so the grids span comparable ranges)
         ref_sqrt_area = math.sqrt(ref_h * ref_w)
+        w_grid = _spatial_position_grid(ref_w, pw, ref_sqrt_area)
         ref_grid = torch.stack(
             [
                 g.reshape(-1)
                 for g in torch.meshgrid(
                     _spatial_position_grid(ref_h, ph, ref_sqrt_area),
-                    _spatial_position_grid(ref_w, pw, ref_sqrt_area),
+                    w_grid,
                     indexing="ij",
                 )
             ],
             dim=-1,
         )
-        rows = slice(ref_cursor, ref_cursor + ref_rows[i])
-        position_ids[rows, 0] = float(num_text + i)
-        position_ids[rows, 1:] = ref_grid
-        ref_cursor += ref_rows[i]
+        if ref_a:
+            # soundtrack rows first: channel-major, shared 40/s clock from the
+            # block origin, width pinned to the ref grid's extremes
+            a_time = ref_clock + torch.arange(ref_a, dtype=torch.float64)
+            rows = slice(ref_cursor, ref_cursor + ref_aud_rows[i])
+            position_ids[rows, 0] = a_time.repeat(AUDIO_CHANNELS)
+            position_ids[rows, 2] = torch.cat(
+                [
+                    torch.full((ref_a,), float(w_grid[0]), dtype=torch.float64),
+                    torch.full((ref_a,), float(w_grid[-1]), dtype=torch.float64),
+                ]
+            )
+            cond_audio_idx.append(torch.arange(rows.start, rows.stop))
+            ref_cursor += ref_aud_rows[i]
+        rows_per_ref_frame = ref_grid.shape[0]
+        block = torch.empty(ref_t, rows_per_ref_frame, 3, dtype=torch.float64)
+        block[:, :, 0] = _temporal_position_grid(ref_t, ref_clock)[:, None]
+        block[:, :, 1:] = ref_grid[None]
+        position_ids[ref_cursor : ref_cursor + ref_vid_rows[i]] = block.reshape(-1, 3)
+        cond_video_idx.append(torch.arange(ref_cursor, ref_cursor + ref_vid_rows[i]))
+        ref_cursor += ref_vid_rows[i]
+        ref_clock += _block_advance(ref_t, ref_a)
 
     # audio rows: channel-major, one rotary unit per latent (40/s = 24fps*5/3),
     # no height coordinate, width pinned to the grid extremes per channel
@@ -380,10 +419,10 @@ def build_packed_sequence(
     video_pos[:, :, 1:] = frame_grid[None]
     position_ids[video_start:] = video_pos.reshape(-1, 3)
 
-    video_indices = torch.cat(
-        [torch.arange(cond_start, audio_start), torch.arange(video_start, seq_len)]
-    )
-    audio_indices = torch.arange(audio_start, video_start)
+    num_cond_video = sum(int(x.shape[0]) for x in cond_video_idx)
+    num_cond_audio = sum(int(x.shape[0]) for x in cond_audio_idx)
+    video_indices = torch.cat(cond_video_idx + [torch.arange(video_start, seq_len)])
+    audio_indices = torch.cat(cond_audio_idx + [torch.arange(audio_start, video_start)])
     text_indices = torch.arange(num_text)
 
     token_tags = torch.empty(seq_len, dtype=torch.long)
@@ -398,7 +437,8 @@ def build_packed_sequence(
         video_indices=video_indices,
         audio_indices=audio_indices,
         text_indices=text_indices,
-        num_condition_video_rows=num_cond,
+        num_condition_video_rows=num_cond_video,
+        num_condition_audio_rows=num_cond_audio,
     )
 
 
@@ -419,6 +459,8 @@ def build_row_timesteps(
         condition_video_timestep
     )
     row_t[layout.audio_indices] = float(audio_timestep)
+    # reference soundtracks ride clean
+    row_t[layout.audio_indices[: layout.num_condition_audio_rows]] = 1.0
     return row_t
 
 

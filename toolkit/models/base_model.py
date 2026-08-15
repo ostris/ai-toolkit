@@ -177,6 +177,9 @@ class BaseModel:
         
         # set true for models that encode control image into text embeddings
         self.encode_control_in_text_embeddings = False
+        # control files may be VIDEOS (cached like dataset items, exposed on
+        # the batch as control_video_latents_list); see minimax_h3 ref2va
+        self.supports_video_control_images = False
         # control images will come in as a list for encoding some things if true
         self.has_multiple_control_images = False
         # do not resize control images
@@ -543,7 +546,11 @@ class BaseModel:
                         if has_control_images and self.encode_control_in_text_embeddings:
                             ctrl_img_list = []
                     
-                            if gen_config.ctrl_img is not None:
+                            if gen_config.ctrl_img is not None and os.path.splitext(str(gen_config.ctrl_img))[1].lower() in ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']:
+                                # control VIDEO: pass the path through; models with
+                                # supports_video_control_images handle it in get_prompt_embeds
+                                ctrl_img_list.append(str(gen_config.ctrl_img))
+                            elif gen_config.ctrl_img is not None:
                                 ctrl_img = Image.open(gen_config.ctrl_img).convert("RGB")
                                 # convert to 0 to 1 tensor
                                 ctrl_img = (
@@ -553,7 +560,11 @@ class BaseModel:
                                 )
                                 ctrl_img_list.append(ctrl_img)
                             
-                            if gen_config.ctrl_img_1 is not None:
+                            if gen_config.ctrl_img_1 is not None and os.path.splitext(str(gen_config.ctrl_img_1))[1].lower() in ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']:
+                                # control VIDEO: pass the path through; models with
+                                # supports_video_control_images handle it in get_prompt_embeds
+                                ctrl_img_list.append(str(gen_config.ctrl_img_1))
+                            elif gen_config.ctrl_img_1 is not None:
                                 ctrl_img_1 = Image.open(gen_config.ctrl_img_1).convert("RGB")
                                 # convert to 0 to 1 tensor
                                 ctrl_img_1 = (
@@ -562,7 +573,11 @@ class BaseModel:
                                     .to(self.device_torch, dtype=self.torch_dtype)
                                 )
                                 ctrl_img_list.append(ctrl_img_1)
-                            if gen_config.ctrl_img_2 is not None:
+                            if gen_config.ctrl_img_2 is not None and os.path.splitext(str(gen_config.ctrl_img_2))[1].lower() in ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']:
+                                # control VIDEO: pass the path through; models with
+                                # supports_video_control_images handle it in get_prompt_embeds
+                                ctrl_img_list.append(str(gen_config.ctrl_img_2))
+                            elif gen_config.ctrl_img_2 is not None:
                                 ctrl_img_2 = Image.open(gen_config.ctrl_img_2).convert("RGB")
                                 # convert to 0 to 1 tensor
                                 ctrl_img_2 = (
@@ -571,7 +586,11 @@ class BaseModel:
                                     .to(self.device_torch, dtype=self.torch_dtype)
                                 )
                                 ctrl_img_list.append(ctrl_img_2)
-                            if gen_config.ctrl_img_3 is not None:
+                            if gen_config.ctrl_img_3 is not None and os.path.splitext(str(gen_config.ctrl_img_3))[1].lower() in ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']:
+                                # control VIDEO: pass the path through; models with
+                                # supports_video_control_images handle it in get_prompt_embeds
+                                ctrl_img_list.append(str(gen_config.ctrl_img_3))
+                            elif gen_config.ctrl_img_3 is not None:
                                 ctrl_img_3 = Image.open(gen_config.ctrl_img_3).convert("RGB")
                                 # convert to 0 to 1 tensor
                                 ctrl_img_3 = (

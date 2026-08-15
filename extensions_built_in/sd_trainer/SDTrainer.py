@@ -173,9 +173,18 @@ class SDTrainer(BaseSDTrainProcess):
                 # see if we need to encode the control images
                 if self.sd.encode_control_in_text_embeddings and has_control_images:
                     
+                    video_exts = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
+
+                    def _is_ctrl_video(pth):
+                        return os.path.splitext(str(pth))[1].lower() in video_exts
+
                     ctrl_img_list = []
                     
-                    if gen_img_config.ctrl_img is not None:
+                    if gen_img_config.ctrl_img is not None and _is_ctrl_video(gen_img_config.ctrl_img):
+                        # control VIDEO: pass the path through; models with
+                        # supports_video_control_images handle it in get_prompt_embeds
+                        ctrl_img_list.append(str(gen_img_config.ctrl_img))
+                    elif gen_img_config.ctrl_img is not None:
                         ctrl_img = Image.open(gen_img_config.ctrl_img).convert("RGB")
                         # convert to 0 to 1 tensor
                         ctrl_img = (
@@ -185,7 +194,11 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                         ctrl_img_list.append(ctrl_img)
                     
-                    if gen_img_config.ctrl_img_1 is not None:
+                    if gen_img_config.ctrl_img_1 is not None and _is_ctrl_video(gen_img_config.ctrl_img_1):
+                        # control VIDEO: pass the path through; models with
+                        # supports_video_control_images handle it in get_prompt_embeds
+                        ctrl_img_list.append(str(gen_img_config.ctrl_img_1))
+                    elif gen_img_config.ctrl_img_1 is not None:
                         ctrl_img_1 = Image.open(gen_img_config.ctrl_img_1).convert("RGB")
                         # convert to 0 to 1 tensor
                         ctrl_img_1 = (
@@ -194,7 +207,11 @@ class SDTrainer(BaseSDTrainProcess):
                             .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
                         )
                         ctrl_img_list.append(ctrl_img_1)
-                    if gen_img_config.ctrl_img_2 is not None:
+                    if gen_img_config.ctrl_img_2 is not None and _is_ctrl_video(gen_img_config.ctrl_img_2):
+                        # control VIDEO: pass the path through; models with
+                        # supports_video_control_images handle it in get_prompt_embeds
+                        ctrl_img_list.append(str(gen_img_config.ctrl_img_2))
+                    elif gen_img_config.ctrl_img_2 is not None:
                         ctrl_img_2 = Image.open(gen_img_config.ctrl_img_2).convert("RGB")
                         # convert to 0 to 1 tensor
                         ctrl_img_2 = (
@@ -203,7 +220,11 @@ class SDTrainer(BaseSDTrainProcess):
                             .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
                         )
                         ctrl_img_list.append(ctrl_img_2)
-                    if gen_img_config.ctrl_img_3 is not None:
+                    if gen_img_config.ctrl_img_3 is not None and _is_ctrl_video(gen_img_config.ctrl_img_3):
+                        # control VIDEO: pass the path through; models with
+                        # supports_video_control_images handle it in get_prompt_embeds
+                        ctrl_img_list.append(str(gen_img_config.ctrl_img_3))
+                    elif gen_img_config.ctrl_img_3 is not None:
                         ctrl_img_3 = Image.open(gen_img_config.ctrl_img_3).convert("RGB")
                         # convert to 0 to 1 tensor
                         ctrl_img_3 = (

@@ -238,6 +238,14 @@ class DataLoaderBatchDTO:
             self.audio_tensor: Union[torch.Tensor, None] = None
             self.first_frame_latents: Union[torch.Tensor, None] = None
             self.audio_latents: Union[torch.Tensor, None] = None
+            # control-video reference paths (encoded + disk-cached lazily by
+            # models with supports_video_control_images)
+            self.control_video_paths_list: Union[List, None] = None
+            if any(getattr(x, 'control_video_paths', None) for x in self.file_items):
+                self.control_video_paths_list = [
+                    list(getattr(x, 'control_video_paths', None) or [])
+                    for x in self.file_items
+                ]
 
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None

@@ -108,9 +108,20 @@ class MiniMaxH3Pipeline:
             raise ValueError("ctrl_img (first frame) and ref_images are exclusive")
         anchors = ("first",) if ctrl_img is not None else ()
         # references keep their own aspect: latent dims come from each image
-        ref_shapes = tuple(
-            (img.size[1] // 16, img.size[0] // 16) for img in (ref_images or [])
-        )
+        # (PIL images are single-frame blocks; video refs arrive as latent
+        # tensors (C, T, h, w) already encoded by the caller)
+        ref_blocks = []
+        for r in ref_images or []:
+            if isinstance(r, dict):
+                lat = r["latent"]
+                a = r.get("audio_rows")
+                a_lat = int(a.shape[0]) // 2 if a is not None else 0
+                ref_blocks.append((lat.shape[1], lat.shape[2], lat.shape[3], a_lat))
+            elif isinstance(r, torch.Tensor):
+                ref_blocks.append((r.shape[1], r.shape[2], r.shape[3]))
+            else:
+                ref_blocks.append((1, r.size[1] // 16, r.size[0] // 16))
+        ref_blocks = tuple(ref_blocks)
         layout = build_packed_sequence(
             text_token_tags=token_tags,
             num_latent_frames=t_lat,
@@ -118,7 +129,7 @@ class MiniMaxH3Pipeline:
             latent_width=w_lat,
             num_audio_latents=a_lat,
             keyframe_anchors=anchors,
-            image_ref_shapes=ref_shapes,
+            ref_blocks=ref_blocks,
         )
         num_cond = layout.num_condition_video_rows
 
@@ -140,13 +151,36 @@ class MiniMaxH3Pipeline:
             )
             return patchify_video_latents(cond_latents)  # (1, rows, 96)
 
+        def noise_aug_rows(latents: torch.Tensor) -> torch.Tensor:
+            cond_noise = randn_tensor(
+                latents.shape, generator=generator, dtype=torch.float32
+            ).to(device)
+            mixed = (
+                KEYFRAME_NOISE_AUG_T * latents.to(device, torch.float32)
+                + (1.0 - KEYFRAME_NOISE_AUG_T) * cond_noise
+            )
+            return patchify_video_latents(mixed)
+
         cond_rows = None
+        cond_audio_rows = None
         if ctrl_img is not None:
             cond_rows = encode_condition_image(ctrl_img)
         elif ref_images:
-            cond_rows = torch.cat(
-                [encode_condition_image(img) for img in ref_images], dim=1
-            )
+            parts = []
+            audio_parts = []
+            for r in ref_images:
+                if isinstance(r, dict):
+                    # pre-encoded video reference (+ optional clean soundtrack)
+                    parts.append(noise_aug_rows(r["latent"][None]))
+                    if r.get("audio_rows") is not None:
+                        audio_parts.append(r["audio_rows"][None].to(device))
+                elif isinstance(r, torch.Tensor):
+                    parts.append(noise_aug_rows(r[None]))
+                else:
+                    parts.append(encode_condition_image(r))
+            cond_rows = torch.cat(parts, dim=1)
+            if audio_parts:
+                cond_audio_rows = torch.cat(audio_parts, dim=1).float()
 
         # --- initial noise -------------------------------------------------
         if latents is None:
@@ -186,10 +220,13 @@ class MiniMaxH3Pipeline:
             video_in = video_rows
             if cond_rows is not None:
                 video_in = torch.cat([cond_rows, video_rows], dim=1)
+            audio_in = audio_rows
+            if cond_audio_rows is not None:
+                audio_in = torch.cat([cond_audio_rows, audio_rows], dim=1)
 
             video_pred, audio_pred = transformer(
                 hidden_states=video_in.to(dtype),
-                audio_hidden_states=audio_rows.to(dtype),
+                audio_hidden_states=audio_in.to(dtype),
                 encoder_hidden_states=text_embeds[None],
                 row_timesteps=row_t,
                 token_tags=tags,
@@ -199,7 +236,7 @@ class MiniMaxH3Pipeline:
                 text_indices=text_indices,
             )
             v_video = video_pred[:, num_cond:].float()
-            v_audio = audio_pred.float()
+            v_audio = audio_pred[:, layout.num_condition_audio_rows :].float()
 
             denoised_v = video_rows + sv * v_video
             ratio_v = sv_next / sv
