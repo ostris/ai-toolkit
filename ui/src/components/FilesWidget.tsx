@@ -2,7 +2,7 @@ import React from 'react';
 import useFilesList from '@/hooks/useFilesList';
 import { Loader2, AlertCircle, Download, Box, Brain, Trash2, SlidersHorizontal } from 'lucide-react';
 import { openMergeLoRAsModal } from './MergeLoRAsModal';
-import { getFilename, getFoldername } from '@/utils/basic';
+import { getFilename, getFoldername, encodeFilePathForUrl } from '@/utils/basic';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
 
@@ -99,7 +99,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                 >
                   <a
                     target="_blank"
-                    href={`/api/files/${encodeURIComponent(file.path)}`}
+                    href={`/api/files/${encodeFilePathForUrl(file.path)}`}
                     className="flex items-center space-x-2 min-w-0 flex-1"
                   >
                     <Box className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
@@ -116,7 +116,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                     <span className="text-xs text-gray-400">{cleanSize(file.size)}</span>
                     <a
                       target="_blank"
-                      href={`/api/files/${encodeURIComponent(file.path)}`}
+                      href={`/api/files/${encodeFilePathForUrl(file.path)}`}
                       className="bg-purple-500 bg-opacity-0 group-hover:bg-opacity-10 rounded-full p-1 transition-all"
                     >
                       <Download className="w-3 h-3 text-purple-600 dark:text-purple-400" />
@@ -138,7 +138,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
               <div className="group flex items-center justify-between px-2 py-1.5 rounded-lg border-t border-gray-800 mt-1 pt-2 hover:bg-gray-800 transition-all duration-200">
                 <a
                   target="_blank"
-                  href={`/api/files/${encodeURIComponent(optimizerFile.path)}`}
+                  href={`/api/files/${encodeFilePathForUrl(optimizerFile.path)}`}
                   className="flex items-center space-x-2 min-w-0 flex-1"
                 >
                   <SlidersHorizontal className="w-4 h-4 text-amber-500 flex-shrink-0" />
@@ -153,7 +153,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                   <span className="text-xs text-gray-400">{cleanSize(optimizerFile.size)}</span>
                   <a
                     target="_blank"
-                    href={`/api/files/${encodeURIComponent(optimizerFile.path)}`}
+                    href={`/api/files/${encodeFilePathForUrl(optimizerFile.path)}`}
                     className="bg-amber-500 bg-opacity-0 group-hover:bg-opacity-10 rounded-full p-1 transition-all"
                   >
                     <Download className="w-3 h-3 text-amber-500" />

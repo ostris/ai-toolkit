@@ -248,6 +248,13 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
     const isImg = prefix === '/api/img/';
     const urlPath = (req.url || '').split('?')[0];
     const rest = urlPath.slice(prefix.length);
+    // Decode per URL segment so both forms resolve to the same file:
+    //   /api/files/%2Fmnt%2Fout%2Fjob%2Ffile.safetensors   (legacy: whole path in one segment)
+    //   /api/files/%2Fmnt%2Fout%2Fjob/file.safetensors     (folder / filename — what the UI emits;
+    //                                                       gives wget & co. the real filename)
+    // Windows folders arrive as `C%3A%5Cout%5Cjob` and decode to `C:\out\job`;
+    // path.resolve below normalizes the mixed `\`/`/` separators. Same logic as
+    // catchAllToFilePath in src/server/catchAllPath.ts for the Next.js routes.
     const decodedFilePath = rest
       .split('/')
       .map(decodeURIComponent)

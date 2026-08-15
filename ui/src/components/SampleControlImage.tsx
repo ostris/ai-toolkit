@@ -5,6 +5,7 @@ import classNames from 'classnames';
 import { useDropzone } from 'react-dropzone';
 import { FaUpload, FaImage, FaTimes } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
+import { encodeFilePathForUrl } from '@/utils/basic';
 import type { AxiosProgressEvent } from 'axios';
 
 const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.wmv', '.flv'];
@@ -31,7 +32,7 @@ export default function SampleControlImage({
   const backgroundUrl = useMemo(() => {
     if (localPreview) return localPreview;
     // videos preview as a server-generated thumbnail
-    if (src) return `/api/img/${encodeURIComponent(src)}${isVideoPath(src) ? '?thumb=1' : ''}`;
+    if (src) return `/api/img/${encodeFilePathForUrl(src)}${isVideoPath(src) ? '?thumb=1' : ''}`;
     return null;
   }, [src, localPreview]);
 

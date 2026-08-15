@@ -4,7 +4,7 @@ import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
-import { isVideo, isAudio } from '@/utils/basic';
+import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
 import useCaptionBatch, { setCachedCaption } from '@/hooks/useCaptionBatch';
 
 interface DatasetImageCardProps {
@@ -85,7 +85,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     let objectUrl: string | null = null;
 
     const timer = window.setTimeout(() => {
-      fetch(`/api/img/${encodeURIComponent(imageUrl)}?thumb=1`, { signal: controller.signal })
+      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}?thumb=1`, { signal: controller.signal })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           if ((r.headers.get('content-type') || '').startsWith('video/')) {
@@ -212,7 +212,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         >
           {streamVideo && (
             <video
-              src={`/api/img/${encodeURIComponent(imageUrl)}`}
+              src={`/api/img/${encodeFilePathForUrl(imageUrl)}`}
               className={classNames('w-full h-full object-contain', {
                 'cursor-zoom-in': !!onImageClick,
               })}
@@ -240,7 +240,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </div>
           )}
           {isItAudio && showAudioPlayer && (
-            <AudioPlayer src={`/api/img/${encodeURIComponent(imageUrl)}`} title={imageUrl.replace(/^.*[\\/]/, '')} />
+            <AudioPlayer src={`/api/img/${encodeFilePathForUrl(imageUrl)}`} title={imageUrl.replace(/^.*[\\/]/, '')} />
           )}
           {!isItAudio && blobUrl && (
             <img
