@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections import OrderedDict
@@ -347,6 +348,35 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
         )
         return contract_path
 
+    def _publish_phase_b_diffusion_lora(self) -> Optional[str]:
+        phase_root = self._phase_root('b')
+        phase_artifacts = self._phase_artifacts('b')
+        destination = os.path.join(
+            phase_root,
+            phase_artifacts.final_dir,
+            phase_artifacts.diffusion_lora_filename,
+        )
+        if os.path.isfile(destination):
+            return destination
+
+        native_candidates = (
+            os.path.join(phase_root, 'phase_b.safetensors'),
+            os.path.join(phase_root, f'{self.name}.safetensors'),
+        )
+        source = next((path for path in native_candidates if os.path.isfile(path)), None)
+        if source is None:
+            return None
+
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        temp_path = f'{destination}.tmp-{os.getpid()}'
+        try:
+            shutil.copyfile(source, temp_path)
+            os.replace(temp_path, destination)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        return destination
+
     def run_phase(self, phase_name: str):
         self._verify_phase_inputs(phase_name)
         self.active_phase = phase_name
@@ -355,6 +385,11 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
         command = [sys.executable, os.path.join(TOOLKIT_ROOT, 'run.py'), snapshot_path]
         result = subprocess.run(command, cwd=TOOLKIT_ROOT, check=False)
         status = 'completed' if result.returncode == 0 else 'failed'
+        if result.returncode == 0 and phase_name == 'b':
+            published = self._publish_phase_b_diffusion_lora()
+            if published is None:
+                status = 'failed'
+                result = subprocess.CompletedProcess(result.args, 1)
         self.write_completion_contract(phase_name, status, result.returncode)
         if result.returncode != 0:
             raise RuntimeError(
@@ -364,6 +399,8 @@ class ThreePhaseTriggerTrainer(BaseExtensionProcess):
     def _contract_is_verified(self, phase_name: str) -> bool:
         path = os.path.join(self.contract_root, f'phase_{phase_name}.json')
         if not os.path.isfile(path):
+            return False
+        if phase_name == 'b' and self._publish_phase_b_diffusion_lora() is None:
             return False
         try:
             with open(path, 'r', encoding='utf-8') as handle:

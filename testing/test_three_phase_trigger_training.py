@@ -369,6 +369,40 @@ class ThreePhaseTriggerTrainerTest(unittest.TestCase):
                 [{'step': 0, 'phase_b_json': 1.0}],
             )
 
+    def test_phase_b_native_checkpoint_is_published_for_a2_handoff(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            phase_root = process._phase_root('b')
+            os.makedirs(phase_root, exist_ok=True)
+            native_path = os.path.join(phase_root, 'phase_b.safetensors')
+            with open(native_path, 'wb') as handle:
+                handle.write(b'diffusion-lora')
+
+            published = process._publish_phase_b_diffusion_lora()
+
+            expected = os.path.join(phase_root, 'final', 'diffusion_lora.safetensors')
+            self.assertEqual(published, expected)
+            with open(expected, 'rb') as handle:
+                self.assertEqual(handle.read(), b'diffusion-lora')
+            process.three_phase_config.phase_a2.text_activator_source.phase = None
+            process.three_phase_config.phase_a2.text_activator_source.path = None
+            process._verify_phase_inputs('a2')
+
+    def test_completed_phase_b_contract_self_heals_missing_standard_artifact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            process = self._make_process(temp_dir)
+            phase_root = process._phase_root('b')
+            os.makedirs(phase_root, exist_ok=True)
+            with open(os.path.join(phase_root, 'phase_b.safetensors'), 'wb') as handle:
+                handle.write(b'diffusion-lora')
+            process.write_phase_snapshot('b')
+            process.write_completion_contract('b', 'completed', 0)
+
+            self.assertTrue(process._contract_is_verified('b'))
+            self.assertTrue(os.path.isfile(os.path.join(
+                phase_root, 'final', 'diffusion_lora.safetensors'
+            )))
+
     def test_snapshot_and_completion_contract_are_written(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             process = self._make_process(temp_dir)
