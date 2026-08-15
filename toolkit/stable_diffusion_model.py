@@ -215,6 +215,9 @@ class StableDiffusion:
         
         # set true for models that encode control image into text embeddings
         self.encode_control_in_text_embeddings = False
+        # control files may be VIDEOS (paths exposed on the batch as
+        # control_video_paths_list); see minimax_h3 ref2va
+        self.supports_video_control_images = False
         # control images will come in as a list for encoding some things if true
         self.has_multiple_control_images = False
         # do not resize control images
@@ -292,7 +295,20 @@ class StableDiffusion:
         if self.is_flux or self.is_v3:
             divisibility = divisibility * 2
         return divisibility * 2 # todo remove this
-        
+
+    def get_frame_count_snapper(self):
+        """Optional hook for video models whose VAE accepts frame counts on a
+        grid other than the default ``temporal_compression * n + 1``. Return a
+        MODULE-LEVEL function ``(num_frames) -> int`` (picklable — file items
+        travel into dataloader workers) that snaps a frame count DOWN to a
+        valid count, or None for the default auto_frame_count math."""
+        return None
+
+    def prepare_sample_prompt_context(self, gen_config):
+        """Optional hook called right before a sample prompt is encoded, with
+        the sample's GenerateImageConfig, for models whose control conditioning
+        in the text embeds depends on sample settings."""
+        return None
 
     def load_model(self):
         if self.is_loaded:

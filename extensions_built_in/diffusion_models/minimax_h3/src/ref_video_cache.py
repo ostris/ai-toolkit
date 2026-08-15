@@ -1,7 +1,8 @@
 """Reference-video latents for ref2va, without dataloader machinery.
 
-A control VIDEO gets the dataset's treatment — num_frames / auto_frame_count,
-fps, resolution bucket with center crop — then a single VAE encode whose
+A control VIDEO gets the dataset's temporal treatment — num_frames /
+auto_frame_count, fps — and ComfyUI's reference sizing (768-short-edge canvas
+or native when smaller, aspect kept), then a single VAE encode whose
 result is cached next to the video in ``_latent_cache/`` (keyed like normal
 latent caches: file signature + the config values that shape the latent).
 Everything is deterministic (even frame spread, no random start) so the cache
@@ -20,7 +21,82 @@ import torch
 from safetensors.torch import load_file, save_file
 
 from toolkit.basic import get_quick_signature_string
-from toolkit.buckets import get_bucket_for_image_size
+from .packing import reference_video_pixel_size
+
+
+def ref_frame_indices(total, src_fps, num_frames, dataset_fps, trim_tail):
+    """Source frame indices a reference video is sampled at (dataset-identical)."""
+    if trim_tail:
+        # dataset trim mode: real-time pacing from the start, tail trimmed —
+        # keeps motion speed honest and the soundtrack in sync
+        fps_ratio = src_fps / dataset_fps if src_fps > 0 else 1.0
+        return [min(round(i * fps_ratio), total - 1) for i in range(num_frames)]
+    # deterministic even frame spread across the clip
+    return [
+        min(round(i * (total - 1) / max(num_frames - 1, 1)), total - 1)
+        for i in range(num_frames)
+    ]
+
+
+def ref_video_num_frames(model, path, dataset_config):
+    """Dataset-identical frame count for a reference video."""
+    cap = cv2.VideoCapture(path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    src_fps = cap.get(cv2.CAP_PROP_FPS) or dataset_config.fps
+    cap.release()
+    if dataset_config.auto_frame_count:
+        num_frames = int(total / src_fps * dataset_config.fps)
+        snapper = model.get_frame_count_snapper()
+        if snapper is not None:
+            num_frames = snapper(num_frames)
+    else:
+        num_frames = dataset_config.num_frames
+    return num_frames, total, src_fps
+
+
+def load_video_ref_for_te(model, path, dataset_config=None, max_frames=None):
+    """Build the Qwen presentation from the SAME frames the latent rows use:
+    2 fps over the frame-count-treated 24 fps clip (ComfyUI: frames[::12],
+    timestamps i/2). Without a dataset config (sampling), the clip is
+    treated as its own length capped at ``max_frames``, snapped to 17n+5."""
+    from PIL import Image as _Image
+
+    from .packing import align_num_frames_down
+    from .text_encoder import VideoRef, video_has_audio
+
+    if dataset_config is not None:
+        num_frames, total, src_fps = ref_video_num_frames(model, path, dataset_config)
+        ds_fps = dataset_config.fps
+        trim = bool(
+            dataset_config.auto_frame_count
+            and dataset_config.trim_auto_frame_count_tail
+        )
+    else:
+        cap = cv2.VideoCapture(path)
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        src_fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+        cap.release()
+        ds_fps = 24
+        n = int(total / src_fps * ds_fps)
+        if max_frames:
+            n = min(n, max_frames)
+        num_frames = align_num_frames_down(max(n, 5))
+        trim = True
+    indices = ref_frame_indices(total, src_fps, num_frames, ds_fps, trim)
+    # 2 fps over the treated 24fps clip: every 12th treated frame
+    step = max(1, int(ds_fps // 2))
+    picks = list(range(0, len(indices), step))
+    cap = cv2.VideoCapture(path)
+    frames, times = [], []
+    for j in picks:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, indices[j])
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frames.append(_Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+        times.append(j / ds_fps)
+    cap.release()
+    return VideoRef(frames=frames, timestamps=times, has_audio=video_has_audio(path))
 
 
 def _cache_path(path: str, hash_dict: dict) -> str:
@@ -69,7 +145,7 @@ def load_ref_video_latent(model, path: str, dataset_config) -> dict:
     )
     hash_dict = {
         "signature": get_quick_signature_string(path),
-        "resolution": dataset_config.resolution,
+        "ref_sizing": "comfy_canvas",
         "num_frames": num_frames,
         "fps": dataset_config.fps,
         "trim_tail": trim_tail,
@@ -88,29 +164,13 @@ def load_ref_video_latent(model, path: str, dataset_config) -> dict:
         mem_cache[path] = entry
         return entry
 
-    # dataset-identical bucket sizing (center crop, no random)
-    bucket = get_bucket_for_image_size(
-        src_w,
-        src_h,
-        resolution=dataset_config.resolution,
-        divisibility=dataset_config.bucket_tolerance,
-    )
-    scale = max(bucket["width"] / src_w, bucket["height"] / src_h)
-    scale_w, scale_h = int(np.ceil(src_w * scale)), int(np.ceil(src_h * scale))
-    crop_x = (scale_w - bucket["width"]) // 2
-    crop_y = (scale_h - bucket["height"]) // 2
+    # ComfyUI reference-video sizing: 768-short-edge canvas (768*1344 area
+    # cap) or native size when smaller; aspect-preserving resize, no crop
+    out_h, out_w = reference_video_pixel_size(src_w, src_h)
 
-    if trim_tail:
-        # dataset trim mode: real-time pacing from the start, tail trimmed —
-        # keeps motion speed honest and the soundtrack in sync
-        fps_ratio = src_fps / dataset_config.fps if src_fps > 0 else 1.0
-        indices = [min(round(i * fps_ratio), total - 1) for i in range(num_frames)]
-    else:
-        # deterministic even frame spread across the clip
-        indices = [
-            min(round(i * (total - 1) / max(num_frames - 1, 1)), total - 1)
-            for i in range(num_frames)
-        ]
+    indices = ref_frame_indices(
+        total, src_fps, num_frames, dataset_config.fps, trim_tail
+    )
     frames = []
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -118,10 +178,7 @@ def load_ref_video_latent(model, path: str, dataset_config) -> dict:
         if not ok:
             raise ValueError(f"Could not read frame {idx} of {path}")
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = cv2.resize(frame, (scale_w, scale_h), interpolation=cv2.INTER_AREA)
-        frame = frame[
-            crop_y : crop_y + bucket["height"], crop_x : crop_x + bucket["width"]
-        ]
+        frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
         frames.append(frame)
     cap.release()
 
@@ -133,9 +190,14 @@ def load_ref_video_latent(model, path: str, dataset_config) -> dict:
         "latent": latent,
         "num_frames": torch.tensor(num_frames, dtype=torch.int64),
     }
-    # the soundtrack rides as clean condition rows; best effort (no track = None)
+    # the soundtrack rides as clean condition rows iff the file has an audio
+    # stream (the TE presentation's "<Audio j>" label uses the same test)
     audio_rows = None
     try:
+        from .text_encoder import video_has_audio
+
+        if not video_has_audio(path):
+            raise RuntimeError("no audio stream")
         import torchaudio
 
         waveform, sample_rate = torchaudio.load(path)

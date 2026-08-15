@@ -172,6 +172,7 @@ class SDTrainer(BaseSDTrainProcess):
                     has_control_images = True
                 # see if we need to encode the control images
                 if self.sd.encode_control_in_text_embeddings and has_control_images:
+                    self.sd.prepare_sample_prompt_context(gen_img_config)
                     
                     video_exts = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
 

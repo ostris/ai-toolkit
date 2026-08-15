@@ -112,13 +112,28 @@ def resolve_canvas_size(aspect_width: float, aspect_height: float) -> Tuple[int,
 def reference_pixel_size(
     ref_width: int, ref_height: int, target_height: int, target_width: int
 ) -> Tuple[int, int]:
-    """Reference images match the TARGET's pixel area while keeping their own
-    aspect ratio; both axes snap to the canvas multiple. Returns (height, width)."""
-    scale = math.sqrt((target_height * target_width) / float(ref_width * ref_height))
+    """Reference IMAGE sizing (ComfyUI 'match'): aspect-preserving scale DOWN
+    ONLY to the target's pixel area — never upscaled; both axes snap to the
+    canvas multiple. Returns (height, width)."""
+    scale = min(
+        1.0, math.sqrt((target_height * target_width) / float(ref_width * ref_height))
+    )
     m = CANVAS_MULTIPLE
     height = max(m, round(ref_height * scale / m) * m)
     width = max(m, round(ref_width * scale / m) * m)
     return height, width
+
+
+def reference_video_pixel_size(ref_width: int, ref_height: int) -> Tuple[int, int]:
+    """Reference VIDEO sizing (ComfyUI): the 768-short-edge canvas with the
+    768*1344 area cap, or the native size (rounded to /32) when the source is
+    smaller than that canvas. Returns (height, width)."""
+    ch, cw = resolve_canvas_size(ref_width, ref_height)
+    if ref_width * ref_height < cw * ch:
+        m = CANVAS_MULTIPLE
+        cw = max(m, round(ref_width / m) * m)
+        ch = max(m, round(ref_height / m) * m)
+    return ch, cw
 
 
 def prepare_reference_image(

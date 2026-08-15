@@ -2309,10 +2309,15 @@ class TextEmbeddingCachingMixin:
                         self.sd.set_device_state_preset('cache_text_encoder')
                         did_move = True
 
-                    if file_item.encode_control_in_text_embeddings and file_item.control_path is not None:
+                    control_video_paths = getattr(file_item, 'control_video_paths', None) or []
+                    if file_item.encode_control_in_text_embeddings and (
+                        file_item.control_path is not None or len(control_video_paths) > 0
+                    ):
                         ctrl_img_list = []
                         control_path_list = file_item.control_path
-                        if not isinstance(file_item.control_path, list):
+                        if control_path_list is None:
+                            control_path_list = []
+                        elif not isinstance(control_path_list, list):
                             control_path_list = [control_path_list]
                         for i in range(len(control_path_list)):
                             try:
@@ -2328,6 +2333,14 @@ class TextEmbeddingCachingMixin:
                             except Exception as e:
                                 print_acc(f"Error: {e}")
                                 print_acc(f"Error loading control image: {control_path_list[i]}")
+                        # control VIDEOS ride into the presentation by path (models
+                        # with supports_video_control_images turn them into
+                        # timestamped vision blocks); images first, then videos.
+                        # The model needs the dataset config to treat the clip
+                        # exactly like its latent rows (frame count / trim)
+                        ctrl_img_list.extend(control_video_paths)
+                        if len(control_video_paths) > 0:
+                            self.sd._ref_video_dataset_config = self.dataset_config
                         
                         if len(ctrl_img_list) == 0:
                             ctrl_img = None

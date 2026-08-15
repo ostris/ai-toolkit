@@ -35,9 +35,23 @@ class VideoRef:
 
     frames: list = field(default_factory=list)  # PIL images
     timestamps: list = field(default_factory=list)  # float seconds, per frame
+    # a soundtrack that rides as reference audio rows: the presentation gets an
+    # "<Audio j>: " label emitted BEFORE the "<Video k>: " block (audio itself
+    # never enters Qwen)
+    has_audio: bool = False
 
 
-def load_video_ref(path, max_frames: int = 0) -> "VideoRef":
+def video_has_audio(path) -> bool:
+    try:
+        import av
+
+        with av.open(path) as c:
+            return len(c.streams.audio) > 0
+    except Exception:
+        return False
+
+
+def load_video_ref(path, max_frames: int = 0, has_audio=None) -> "VideoRef":
     """Sample a video at 2 fps (slot rounding on its native fps) into a
     VideoRef with per-frame timestamps in seconds."""
     import cv2
@@ -70,7 +84,9 @@ def load_video_ref(path, max_frames: int = 0) -> "VideoRef":
     cap.release()
     if not frames:
         raise ValueError(f"No frames decoded from control video {path}")
-    return VideoRef(frames=frames, timestamps=times)
+    if has_audio is None:
+        has_audio = video_has_audio(path)
+    return VideoRef(frames=frames, timestamps=times, has_audio=has_audio)
 
 
 @torch.no_grad()
@@ -126,12 +142,18 @@ def encode_minimax_h3_prompt(
             pixel_values_videos = vids["pixel_values_videos"]
             video_grid_thw = vids["video_grid_thw"]
 
-        pic_idx, vid_idx = 0, 0
+        pic_idx, vid_idx, aud_idx = 0, 0, 0
         for k in keyframes:
             if isinstance(k, VideoRef):
                 grid = video_grid_thw[vid_idx]
                 per_pair = int(grid[1] * grid[2]) // merge
-                label_ids = tokenizer(
+                label_ids = []
+                if k.has_audio:
+                    aud_idx += 1
+                    label_ids += tokenizer(
+                        f"<Audio {aud_idx}>: ", add_special_tokens=False
+                    )["input_ids"]
+                label_ids += tokenizer(
                     f"<Video {vid_idx + 1}>: ", add_special_tokens=False
                 )["input_ids"]
                 token_ids += label_ids

@@ -77,7 +77,7 @@ from .src.packing import (
     unpatchify_video_tokens,
 )
 from .src.pipeline import MiniMaxH3Pipeline
-from .src.ref_video_cache import load_ref_video_latent
+from .src.ref_video_cache import load_ref_video_latent, load_video_ref_for_te
 from .src.text_encoder import (
     TEXT_ENCODER_LAYER,
     VideoRef,
@@ -187,6 +187,10 @@ class MinimaxH3Model(BaseModel):
 
         self.processor = None  # Qwen3VLProcessor
         self._warned_frame_trim = False
+        # video-ref presentation context: dataset config while caching training
+        # embeds; the sample's frame cap while encoding sample prompts
+        self._ref_video_dataset_config = None
+        self._sample_ref_max_frames = None
         self.latent_space_version = "minimax_h3_v1"
         # caption token cap (vision blocks are never truncated); the released
         # stack has no limit — set 0 to disable
@@ -205,6 +209,12 @@ class MinimaxH3Model(BaseModel):
     def get_frame_count_snapper(self):
         # auto_frame_count: snap dataset clips down to the VAE's 17n+5 grid
         return packing.align_num_frames_down
+
+    def prepare_sample_prompt_context(self, gen_config):
+        # sample prompts: video refs are treated at the sample's length, not
+        # the dataset's (which only applies while caching training embeds)
+        self._ref_video_dataset_config = None
+        self._sample_ref_max_frames = max(int(gen_config.num_frames), 5)
 
     @property
     def video_vae(self) -> MiniMaxH3VideoVAE:
@@ -673,8 +683,15 @@ class MinimaxH3Model(BaseModel):
                         Image.fromarray(arr.permute(1, 2, 0).cpu().numpy())
                     )
                 elif isinstance(img, str):
-                    # a control VIDEO path: 2 fps timestamped presentation
-                    pil_images.append(load_video_ref(img))
+                    # a control VIDEO path: 2 fps timestamped presentation over
+                    # the SAME frames the latent rows use (dataset treatment
+                    # when caching training embeds, sample-length at sampling)
+                    ds_cfg = getattr(self, "_ref_video_dataset_config", None)
+                    pil_images.append(
+                        load_video_ref_for_te(
+                            self, img, ds_cfg, max_frames=self._sample_ref_max_frames
+                        )
+                    )
                 else:
                     pil_images.append(img)
             if len(pil_images) == 1:
@@ -1281,13 +1298,14 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
                 ph, pw = packing.reference_pixel_size(
                     img.shape[2], img.shape[1], target_h, target_w
                 )
+                # LANCZOS like ComfyUI / the sampling path
                 resized.append(
                     torch.nn.functional.interpolate(
                         img[None].to(device, torch.float32),
                         size=(ph, pw),
-                        mode="bilinear",
+                        mode="bicubic",
                         antialias=True,
-                    )[0]
+                    )[0].clamp(0.0, 1.0)
                 )
             shapes = {tuple(r.shape[1:]) for r in resized}
             if len(shapes) > 1:
@@ -1346,9 +1364,8 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
             n = packing.align_num_frames_down(max(len(frames), 5))
             frames = frames[:n]
         h0, w0 = frames[0].shape[:2]
-        ph, pw = packing.reference_pixel_size(
-            w0, h0, gen_config.height, gen_config.width
-        )
+        # ComfyUI reference-video sizing (independent of the sample canvas)
+        ph, pw = packing.reference_video_pixel_size(w0, h0)
         pixels = torch.from_numpy(np.stack(frames)).float() / 255.0 * 2.0 - 1.0
         pixels = pixels.permute(3, 0, 1, 2)[None]  # (1, 3, T, H, W)
         pixels = (
@@ -1368,9 +1385,13 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
             generator=generator,
             fp16_round=True,
         )
-        # soundtrack rides clean when the clip has one (best effort)
+        # soundtrack rides clean when the clip has one (same test as the TE label)
         audio_rows = None
         try:
+            from .src.text_encoder import video_has_audio
+
+            if not video_has_audio(path):
+                raise RuntimeError("no audio stream")
             import torchaudio
 
             waveform, sample_rate = torchaudio.load(path)

@@ -283,6 +283,13 @@ class BaseModel:
             divisibility = divisibility * 2
         return divisibility
 
+    def prepare_sample_prompt_context(self, gen_config):
+        """Optional hook called right before a sample prompt is encoded, with
+        the sample's GenerateImageConfig, for models whose control conditioning
+        in the text embeds depends on sample settings (e.g. a video reference's
+        length capped at the sample's frame count)."""
+        return None
+
     def get_frame_count_snapper(self):
         """Optional hook for video models whose VAE accepts frame counts on a
         grid other than the default ``temporal_compression * n + 1``.
@@ -605,6 +612,7 @@ class BaseModel:
                             else:
                                 ctrl_img = ctrl_img_list[0] if len(ctrl_img_list) > 0 else None
                         # encode the prompt ourselves so we can do fun stuff with embeddings
+                        self.prepare_sample_prompt_context(gen_config)
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
                         conditional_embeds = self.encode_prompt(
