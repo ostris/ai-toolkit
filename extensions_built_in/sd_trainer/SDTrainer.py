@@ -1930,9 +1930,8 @@ class SDTrainer(BaseSDTrainProcess):
         encoded = {}
         for source_name, prompts in source_prompts.items():
             with self._activator_mode('full'):
-                active_embeds = self.sd.encode_prompt(
+                active_embeds = self.sd.get_prompt_embeds(
                     prompts,
-                    long_prompts=self.do_long_prompts,
                     return_taps=context_config.enabled,
                 )
                 active_pred = self.predict_noise(
@@ -1946,9 +1945,8 @@ class SDTrainer(BaseSDTrainProcess):
                 )
             with self._activator_mode('activator_bypass'):
                 with torch.no_grad():
-                    bypass_embeds = self.sd.encode_prompt(
+                    bypass_embeds = self.sd.get_prompt_embeds(
                         prompts,
-                        long_prompts=self.do_long_prompts,
                         return_taps=context_config.enabled,
                     ).detach()
                     bypass_pred = self.predict_noise(

@@ -331,7 +331,7 @@ class ThreePhaseRuntimeTest(unittest.TestCase):
         trainer.do_long_prompts = False
         trainer.additional_logs = {}
         trainer.sd = SimpleNamespace(
-            encode_prompt=lambda prompts, **kwargs: _FakeEmbeds(len(prompts)),
+            get_prompt_embeds=lambda prompts, **kwargs: _FakeEmbeds(len(prompts)),
             get_loss_target=lambda noise, batch, timesteps: noise + 1,
         )
         calls = []
@@ -397,7 +397,7 @@ class ThreePhaseRuntimeTest(unittest.TestCase):
             return embeds
 
         trainer.sd = SimpleNamespace(
-            encode_prompt=encode,
+            get_prompt_embeds=encode,
             get_loss_target=lambda noise, batch, timesteps: noise,
         )
         trainer.predict_noise = lambda noisy_latents, **kwargs: (
