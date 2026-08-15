@@ -372,7 +372,7 @@ export default function SampleImageViewer({
                 <div key={imgPath} className="flex space-x-2 mr-4">
                   {showingControlIdx !== null && (
                     <img
-                      src={`/api/img/${encodeURIComponent(imgPath!)}`}
+                      src={`/api/img/${encodeURIComponent(imgPath!)}?thumb=1`}
                       alt="Main"
                       className="max-h-12 max-w-12 object-contain bg-black border-2 border-gray-700 hover:border-gray-500 rounded cursor-pointer"
                       onClick={() => setShowingControlIdx(null)}
@@ -382,7 +382,7 @@ export default function SampleImageViewer({
                   {controlImages.map((ci, idx) => (
                     <img
                       key={idx}
-                      src={`/api/img/${encodeURIComponent(ci)}`}
+                      src={`/api/img/${encodeURIComponent(ci)}?thumb=1`}
                       alt={`Control ${idx + 1}`}
                       className={`max-h-12 max-w-12 object-contain bg-black border-2 rounded cursor-pointer ${
                         showingControlIdx === idx ? 'border-blue-500' : 'border-gray-700 hover:border-gray-500'
