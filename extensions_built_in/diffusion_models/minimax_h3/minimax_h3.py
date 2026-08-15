@@ -1330,7 +1330,7 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         blocks = [(1, h, w, 0) for h, w in ref_shapes]
         audio_rows = []
         self._append_video_ref_blocks(
-            batch, all_rows, audio_rows, blocks, device, dtype
+            batch, all_rows, audio_rows, blocks, device, dtype, target_h, target_w
         )
         if not all_rows:
             return None, None, (), ()
@@ -1364,8 +1364,10 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
             n = packing.align_num_frames_down(max(len(frames), 5))
             frames = frames[:n]
         h0, w0 = frames[0].shape[:2]
-        # ComfyUI reference-video sizing (independent of the sample canvas)
-        ph, pw = packing.reference_video_pixel_size(w0, h0)
+        # match the sample canvas's pixel area, own aspect kept
+        ph, pw = packing.reference_video_pixel_size(
+            w0, h0, gen_config.height, gen_config.width
+        )
         pixels = torch.from_numpy(np.stack(frames)).float() / 255.0 * 2.0 - 1.0
         pixels = pixels.permute(3, 0, 1, 2)[None]  # (1, 3, T, H, W)
         pixels = (
@@ -1405,10 +1407,11 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         return {"latent": latents[0].float(), "audio_rows": audio_rows}
 
     def _append_video_ref_blocks(
-        self, batch, all_rows, audio_rows, blocks, device, dtype
+        self, batch, all_rows, audio_rows, blocks, device, dtype, target_h, target_w
     ):
-        # control videos get dataset-identical treatment (frame count, fps,
-        # bucket) and one VAE encode, disk-cached next to the video; the
+        # control videos get the dataset's temporal treatment (frame count,
+        # fps), are area-matched to the target, and get one VAE encode
+        # disk-cached next to the video; the
         # resulting latents become multi-frame reference blocks packed after
         # the image references
         paths_per_item = getattr(batch, "control_video_paths_list", None)
@@ -1425,7 +1428,7 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
             auds = []
             for per_item in paths_per_item:
                 entry = load_ref_video_latent(
-                    self, per_item[ref_idx], batch.dataset_config
+                    self, per_item[ref_idx], batch.dataset_config, target_h, target_w
                 )
                 lats.append(entry["latent"].to(device, torch.float32))
                 auds.append(entry.get("audio_rows"))

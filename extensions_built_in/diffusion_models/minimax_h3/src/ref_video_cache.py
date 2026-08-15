@@ -1,8 +1,8 @@
 """Reference-video latents for ref2va, without dataloader machinery.
 
 A control VIDEO gets the dataset's temporal treatment — num_frames /
-auto_frame_count, fps — and ComfyUI's reference sizing (768-short-edge canvas
-or native when smaller, aspect kept), then a single VAE encode whose
+auto_frame_count, fps — and is area-matched to the target (own aspect kept, /32
+grid), then a single VAE encode whose
 result is cached next to the video in ``_latent_cache/`` (keyed like normal
 latent caches: file signature + the config values that shape the latent).
 Everything is deterministic (even frame spread, no random start) so the cache
@@ -112,7 +112,9 @@ def _cache_path(path: str, hash_dict: dict) -> str:
 
 
 @torch.no_grad()
-def load_ref_video_latent(model, path: str, dataset_config) -> dict:
+def load_ref_video_latent(
+    model, path: str, dataset_config, target_height: int, target_width: int
+) -> dict:
     """Returns {"latent": (C, T, h, w) cpu tensor, "num_frames": int},
     encoding + disk-caching on first use. ``model`` is the MinimaxH3 model
     (used for the VAE, audio encode and the frame-count snapper)."""
@@ -145,7 +147,10 @@ def load_ref_video_latent(model, path: str, dataset_config) -> dict:
     )
     hash_dict = {
         "signature": get_quick_signature_string(path),
-        "ref_sizing": "comfy_canvas",
+        "ref_sizing": "match_target_area",
+        "target_area": int(target_height * target_width)
+        if target_height and target_width
+        else 0,
         "num_frames": num_frames,
         "fps": dataset_config.fps,
         "trim_tail": trim_tail,
@@ -164,9 +169,10 @@ def load_ref_video_latent(model, path: str, dataset_config) -> dict:
         mem_cache[path] = entry
         return entry
 
-    # ComfyUI reference-video sizing: 768-short-edge canvas (768*1344 area
-    # cap) or native size when smaller; aspect-preserving resize, no crop
-    out_h, out_w = reference_video_pixel_size(src_w, src_h)
+    # match the target's pixel area (the dataset bucket the target trains at)
+    # with the ref's own aspect: same aspect -> identical size; aspect-
+    # preserving resize, no crop
+    out_h, out_w = reference_video_pixel_size(src_w, src_h, target_height, target_width)
 
     indices = ref_frame_indices(
         total, src_fps, num_frames, dataset_config.fps, trim_tail

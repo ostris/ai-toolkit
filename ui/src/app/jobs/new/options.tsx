@@ -922,7 +922,7 @@ export const modelArchs: ModelArch[] = [
       <div className="space-y-2">
         <p>
           Reference-to-video: control images condition the output as subject/style references (never as a first frame).
-          Reference images keep their aspect and scale down (never up) to the target's pixel area; reference videos use the 768-short-edge canvas (or native size if smaller). Each rides into the packed
+          References keep their own aspect and are matched to the target's pixel area (images scale down only, never up; a same-aspect video reference is exactly the target size). Each rides into the packed
           sequence as a reference block, and is also shown to the Qwen3-VL conditioner as a{' '}
           <code>&lt;Picture i&gt;</code> vision block. Training references come from the dataset control path(s);
           sampling uses the sample ctrl images — always as references. Image references only for now (no reference
