@@ -89,6 +89,30 @@ def load_video_ref(path, max_frames: int = 0, has_audio=None) -> "VideoRef":
     return VideoRef(frames=frames, timestamps=times, has_audio=has_audio)
 
 
+def trim_caption_tokens(embeds: torch.Tensor, tags: torch.Tensor, max_length):
+    """Cap the CAPTION rows of an already-encoded prompt at ``max_length``.
+
+    The presentation is ``[labels + vision blocks ...] + caption``: everything
+    up to and including the last vision row (tag 0) is structural conditioning
+    and kept intact; only the trailing text-tagged caption tail is truncated.
+    Lets embeds cached with a longer max_text_length serve a shorter one
+    without re-encoding. Returns (embeds, tags) — same objects when nothing to
+    trim.
+    """
+    if max_length is None or max_length <= 0:
+        return embeds, tags
+    is_vision = tags.to("cpu") == VIDEO_TAG
+    if bool(is_vision.any()):
+        head = int(is_vision.nonzero()[-1].item()) + 1
+    else:
+        head = 0
+    caption_len = int(tags.shape[0]) - head
+    if caption_len <= max_length:
+        return embeds, tags
+    keep = head + max_length
+    return embeds[:keep], tags[:keep]
+
+
 @torch.no_grad()
 def encode_minimax_h3_prompt(
     text_encoder,  # transformers Qwen3VLForConditionalGeneration

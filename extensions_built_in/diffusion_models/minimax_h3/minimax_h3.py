@@ -83,6 +83,7 @@ from .src.text_encoder import (
     VideoRef,
     encode_minimax_h3_prompt,
     load_video_ref,
+    trim_caption_tokens,
 )
 from .src.transformer import MiniMaxH3Transformer, MiniMaxH3TransformerParams
 from .src.vae import MiniMaxH3VideoVAE
@@ -1003,12 +1004,23 @@ class MinimaxH3Model(BaseModel):
                     dtype=torch.float32,
                 )
 
+            # embeds cached with a longer max_text_length: cap the caption
+            # tail (vision blocks are never touched)
+            trimmed = [
+                trim_caption_tokens(e, t, self.max_text_length)
+                for e, t in zip(
+                    text_embeddings.text_embeds, text_embeddings.text_token_tags
+                )
+            ]
+            text_embed_list = [e for e, _ in trimmed]
+            text_tag_list = [t for _, t in trimmed]
+
             # --- packed layout (per item: text lengths differ) --------------
             layouts = []
             for i in range(batch_size):
                 layouts.append(
                     build_packed_sequence(
-                        text_token_tags=text_embeddings.text_token_tags[i].to("cpu"),
+                        text_token_tags=text_tag_list[i].to("cpu"),
                         num_latent_frames=t_lat,
                         latent_height=h_lat,
                         latent_width=w_lat,
@@ -1046,11 +1058,11 @@ class MinimaxH3Model(BaseModel):
             text_batch = torch.zeros(
                 batch_size,
                 max_text,
-                text_embeddings.text_embeds[0].shape[-1],
+                text_embed_list[0].shape[-1],
                 device=device,
                 dtype=dtype,
             )
-            for i, emb in enumerate(text_embeddings.text_embeds):
+            for i, emb in enumerate(text_embed_list):
                 text_batch[i, : emb.shape[0]] = emb.to(device, dtype)
 
             video_rows = patchify_video_latents(

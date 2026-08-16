@@ -26,6 +26,7 @@ from PIL import Image
 from diffusers.utils.torch_utils import randn_tensor
 
 from . import packing
+from .text_encoder import trim_caption_tokens
 from .packing import (
     AUDIO_CHANNELS,
     AUDIO_SIGMA_SHIFT,
@@ -100,8 +101,13 @@ class MiniMaxH3Pipeline:
         w_lat = width // 16
         a_lat = packing.audio_latent_num_frames(num_frames)
 
-        text_embeds = conditional_embeds.text_embeds[0].to(device, dtype)
-        token_tags = conditional_embeds.text_token_tags[0].to("cpu", torch.long)
+        text_embeds, token_tags = trim_caption_tokens(
+            conditional_embeds.text_embeds[0],
+            conditional_embeds.text_token_tags[0],
+            getattr(model, "max_text_length", None),
+        )
+        text_embeds = text_embeds.to(device, dtype)
+        token_tags = token_tags.to("cpu", torch.long)
 
         # --- packed layout -------------------------------------------------
         if ctrl_img is not None and ref_images:
