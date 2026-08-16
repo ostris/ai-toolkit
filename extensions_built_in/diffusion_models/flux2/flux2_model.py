@@ -22,7 +22,9 @@ from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
 from .src.autoencoder import AutoEncoder, AutoEncoderParams, AutoEncoderSmallDecoderParams
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
+import gc
 from PIL import Image
 import torch.nn.functional as F
 
@@ -59,6 +61,9 @@ class Flux2Model(BaseModel):
     flux2_vae_path: str = None
     flux2_te_filename: str = FLUX2_TRANSFORMER_FILENAME
     flux2_is_guidance_distilled: bool = True
+    # HF repo used to fetch ancillary files (e.g. VAE) when name_or_path is
+    # a local .safetensors file instead of a repo id.
+    flux2_hf_repo_id: str = "black-forest-labs/FLUX.2-dev"
 
     def __init__(
         self,
@@ -136,10 +141,12 @@ class Flux2Model(BaseModel):
             transformer = Flux2(self.get_flux2_params())
 
         # use local path if provided
-        if os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
+        if os.path.isfile(transformer_path) and transformer_path.endswith(".safetensors"):
+            # direct .safetensors file path
+            pass
+        elif os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
             transformer_path = os.path.join(transformer_path, self.flux2_te_filename)
-
-        if not os.path.exists(transformer_path):
+        elif not os.path.exists(transformer_path):
             # assume it is from the hub
             transformer_path = huggingface_hub.hf_hub_download(
                 repo_id=model_path,
@@ -147,13 +154,64 @@ class Flux2Model(BaseModel):
                 token=HF_TOKEN,
             )
 
-        transformer_state_dict = load_file(transformer_path, device="cpu")
+        # Stream-load directly into the meta-device module, one tensor at a time.
+        # Avoids ever holding a full state_dict in RAM alongside the module, which
+        # otherwise pins ~24-30GB of bf16 weights through the entire quantize pass
+        # because assign=True makes the dict and module share tensor references.
+        target_map = {}
+        for full_name, _ in transformer.named_parameters():
+            parent_path, _, leaf = full_name.rpartition(".")
+            parent = transformer
+            if parent_path:
+                for p in parent_path.split("."):
+                    parent = getattr(parent, p)
+            target_map[full_name] = (parent, leaf, True)
+        for full_name, _ in transformer.named_buffers():
+            parent_path, _, leaf = full_name.rpartition(".")
+            parent = transformer
+            if parent_path:
+                for p in parent_path.split("."):
+                    parent = getattr(parent, p)
+            target_map[full_name] = (parent, leaf, False)
 
-        # cast to dtype
-        for key in transformer_state_dict:
-            transformer_state_dict[key] = transformer_state_dict[key].to(dtype)
+        fp8_dtype_names = {"F8_E4M3", "F8_E5M2"}
+        is_prequantized_fp8 = False
 
-        transformer.load_state_dict(transformer_state_dict, assign=True)
+        with safe_open(transformer_path, framework="pt", device="cpu") as f:
+            sample_keys = list(f.keys())
+            for k in sample_keys[:64]:
+                if f.get_slice(k).get_dtype() in fp8_dtype_names:
+                    is_prequantized_fp8 = True
+                    break
+
+            if is_prequantized_fp8 and not self.model_config.quantize:
+                # fp8 on disk; auto-enable quanto so we re-pack into QTensor form and
+                # keep the fp8 memory footprint at runtime (loading into a plain bf16
+                # module would otherwise waste the savings).
+                self.print_and_status_update(
+                    f"Detected pre-quantized FP8 weights in {os.path.basename(transformer_path)};"
+                    " enabling quantize=True automatically"
+                )
+                self.model_config.quantize = True
+            elif is_prequantized_fp8:
+                self.print_and_status_update(
+                    f"Detected pre-quantized FP8 weights in {os.path.basename(transformer_path)}"
+                )
+
+            for key in sample_keys:
+                if key not in target_map:
+                    continue
+                t = f.get_tensor(key).to(dtype)
+                parent, leaf, is_param = target_map[key]
+                if is_param:
+                    setattr(parent, leaf, torch.nn.Parameter(t, requires_grad=False))
+                else:
+                    setattr(parent, leaf, t)
+                del t
+
+        del target_map
+        gc.collect()
+        flush()
 
         if self.model_config.quantize:
             # patch the state dict method
@@ -199,7 +257,14 @@ class Flux2Model(BaseModel):
                 if len(vae_path.split("/")) == 3 and vae_path.endswith(".safetensors"):
                     vae_filename = vae_path.split("/")[-1]
                     vae_path = "/".join(vae_path.split("/")[:-1])
-            p = vae_path if vae_path is not None else model_path
+            if vae_path is not None:
+                p = vae_path
+            elif os.path.isfile(model_path):
+                # model_path points at a local .safetensors file, not an HF repo;
+                # fall back to the class-default repo so the VAE can still be fetched.
+                p = self.flux2_hf_repo_id
+            else:
+                p = model_path
             # assume it is from the hub
             vae_path = huggingface_hub.hf_hub_download(
                 repo_id=p,
