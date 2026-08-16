@@ -78,64 +78,6 @@ export interface ModelArch {
 const defaultNameOrPath = '';
 const defaultLinearRank = 32;
 
-// used by the MiniMax-H3 fl2va arch (ref2va is contrastive-guidance only)
-const minimaxH3DistillationHandling = {
-  label: 'Distillation Handling Method',
-  options: [
-    { value: 'cg', label: 'Contrastive Guidance (default)' },
-    { value: 'ta', label: 'Training Adapter' },
-    { value: 'both', label: 'Contrastive Guidance + Training Adapter' },
-  ],
-  getValue: (config: JobConfig) => {
-    const assistantLoraPath = config?.config?.process?.[0]?.model?.assistant_lora_path;
-    const hasAssistantLoraPath = assistantLoraPath && assistantLoraPath.trim() !== '';
-    const hasContrastiveGuidance = config?.config?.process?.[0]?.train?.do_guidance_loss;
-    if (hasAssistantLoraPath && hasContrastiveGuidance) {
-      return 'both';
-    }
-    if (hasAssistantLoraPath) {
-      return 'ta';
-    }
-    return 'cg';
-  },
-  onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => {
-    if (value === 'cg') {
-      setJobConfig(true, 'config.process[0].train.do_guidance_loss');
-      setJobConfig(undefined, 'config.process[0].model.assistant_lora_path');
-      if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
-        setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
-      }
-    } else if (value === 'ta') {
-      setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
-      setJobConfig(undefined, 'config.process[0].train.guidance_loss_target');
-      setJobConfig(
-        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
-        'config.process[0].model.assistant_lora_path',
-      );
-    } else if (value === 'both') {
-      setJobConfig(true, 'config.process[0].train.do_guidance_loss');
-      setJobConfig(
-        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
-        'config.process[0].model.assistant_lora_path',
-      );
-      if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
-        setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
-      }
-    }
-  },
-  doc: {
-    title: 'MiniMax-H3 Distillation Handling',
-    description: (
-      <div>
-        MiniMax H3 is a guidance distilled model, so training on it directly will make the guidance distillation break
-        down. There are two different ways to train on this model without breaking the guidance distillation:
-        Contrastive Guidance and Training Adapter. Both have their pros and cons. The adapter is faster, but will still
-        break down over a long run. Contrastive Guidance is slower, but is less likely to break down.
-      </div>
-    ),
-  },
-};
-
 export const modelArchs: ModelArch[] = [
   {
     name: 'anima',
@@ -801,6 +743,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.cache_text_embeddings': [true, false],
       'config.process[0].train.do_guidance_loss': [true, undefined],
       'config.process[0].train.guidance_loss_target': [3.5, undefined],
+      'config.process[0].model.assistant_lora_path': [
+        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
+        undefined,
+      ],
       'config.process[0].network.linear': [16, defaultLinearRank],
       'config.process[0].network.linear_alpha': [16, defaultLinearRank],
       'config.process[0].network.network_kwargs.ignore_if_contains': [['adaln_proj'], []],
@@ -833,7 +779,65 @@ export const modelArchs: ModelArch[] = [
       'datasets.auto_frame_count',
       'model.assistant_lora_path',
     ],
-    customModelSelectOptions: [minimaxH3DistillationHandling],
+    customModelSelectOptions: [
+      {
+        label: 'Distillation Handling Method',
+        options: [
+          { value: 'cg', label: 'Contrastive Guidance' },
+          { value: 'ta', label: 'Training Adapter' },
+          { value: 'both', label: 'Contrastive Guidance + Training Adapter (default)' },
+        ],
+        getValue: (config: JobConfig) => {
+          const assistantLoraPath = config?.config?.process?.[0]?.model?.assistant_lora_path;
+          const hasAssistantLoraPath = assistantLoraPath && assistantLoraPath.trim() !== '';
+          const hasContrastiveGuidance = config?.config?.process?.[0]?.train?.do_guidance_loss;
+          if (hasAssistantLoraPath && hasContrastiveGuidance) {
+            return 'both';
+          }
+          if (hasAssistantLoraPath) {
+            return 'ta';
+          }
+          return 'cg';
+        },
+        onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => {
+          if (value === 'cg') {
+            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
+            setJobConfig(undefined, 'config.process[0].model.assistant_lora_path');
+            if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
+              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
+            }
+          } else if (value === 'ta') {
+            setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
+            setJobConfig(undefined, 'config.process[0].train.guidance_loss_target');
+            setJobConfig(
+              'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
+              'config.process[0].model.assistant_lora_path',
+            );
+          } else if (value === 'both') {
+            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
+            setJobConfig(
+              'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
+              'config.process[0].model.assistant_lora_path',
+            );
+            if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
+              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
+            }
+          }
+        },
+        doc: {
+          title: 'MiniMax-H3 Distillation Handling',
+          description: (
+            <div>
+              MiniMax H3 is a guidance distilled model, so training on it directly will make the guidance distillation
+              break down. There are two different ways to train on this model without breaking the guidance
+              distillation: Contrastive Guidance and Training Adapter. Both have their pros and cons. The adapter is
+              faster, but will still break down over a long run. Contrastive Guidance is slower, but is less likely to
+              break down.
+            </div>
+          ),
+        },
+      },
+    ],
     modelNotes: (
       <div className="space-y-2">
         <p>
@@ -922,11 +926,11 @@ export const modelArchs: ModelArch[] = [
       <div className="space-y-2">
         <p>
           Reference-to-video: control images condition the output as subject/style references (never as a first frame).
-          References keep their own aspect and are matched to the target's pixel area (images scale down only, never up; a same-aspect video reference is exactly the target size). Each rides into the packed
-          sequence as a reference block, and is also shown to the Qwen3-VL conditioner as a{' '}
-          <code>&lt;Picture i&gt;</code> vision block. Training references come from the dataset control path(s);
-          sampling uses the sample ctrl images — always as references. Image references only for now (no reference
-          video/audio).
+          References keep their own aspect and are matched to the target's pixel area (images scale down only, never up;
+          a same-aspect video reference is exactly the target size). Each rides into the packed sequence as a reference
+          block, and is also shown to the Qwen3-VL conditioner as a <code>&lt;Picture i&gt;</code> vision block.
+          Training references come from the dataset control path(s); sampling uses the sample ctrl images — always as
+          references. Image references only for now (no reference video/audio).
         </p>
         <p>
           Weights load like MiniMax-H3 (see that arch's notes) from the{' '}
