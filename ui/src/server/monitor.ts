@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import os from 'os';
 import si from 'systeminformation';
 import { loadMacstats } from '@/server/macstats';
+import { createLoadSampler, readCpuTemperature, readMemory } from '@/server/cpuStats';
 import { CpuInfo, GpuInfo, GPUApiResponse, MonitorHistoryPoint, MonitorInit, MonitorSample } from '@/types';
 import { historyPointFromSample, MONITOR_HISTORY_LENGTH, MONITOR_TICK_MS } from '@/utils/monitorSample';
 
@@ -105,6 +106,8 @@ class SystemMonitor {
   private cpuTempInFlight = false;
   private lastCpuTempAt = 0;
   private cpuStatic: { name: string; cores: number } | null = null;
+  // Differences os.cpus() times between ticks; no child process involved.
+  private sampleLoad = createLoadSampler();
 
   start(): void {
     if (this.isMac) {
@@ -213,10 +216,10 @@ class SystemMonitor {
           totalMemory: ramData.total / (1024 * 1024),
           availableMemory: ramData.free / (1024 * 1024),
           freeMemory: ramData.free / (1024 * 1024),
-          currentLoad: (await si.currentLoad()).currentLoad || 0,
+          currentLoad: this.sampleLoad(),
         };
       } catch {
-        // Fallback to systeminformation if macstats fails
+        // Fallback to the generic path if macstats fails
       }
     }
 
@@ -224,7 +227,10 @@ class SystemMonitor {
     // tick skip beats, so it refreshes concurrently and we use the cached
     // value (at most a tick or two old).
     this.refreshCpuTemp();
-    const [memoryData, load] = await Promise.all([si.mem(), si.currentLoad()]);
+    // Nothing below spawns a process. Every child process forks this server
+    // first, and forking a multi-GB Node heap freezes the event loop for
+    // hundreds of ms — at tick cadence that stalled every request in the UI.
+    const memoryData = await readMemory();
     return {
       name: cpuStatic.name,
       cores: cpuStatic.cores,
@@ -232,20 +238,21 @@ class SystemMonitor {
       totalMemory: memoryData.total / (1024 * 1024),
       availableMemory: memoryData.available / (1024 * 1024),
       freeMemory: memoryData.free / (1024 * 1024),
-      currentLoad: load.currentLoad || 0,
+      currentLoad: this.sampleLoad(),
     };
   }
 
   private refreshCpuTemp(): void {
-    // si.cpuTemperature() execs `sensors`, which can take ~1s of slow SMBus
+    // On Linux this is a sysfs read; elsewhere it may still shell out (via
+    // systeminformation), and e.g. `sensors` can take ~1s of slow SMBus
     // polling — refreshed back-to-back it becomes a permanently resident
     // child. Every few seconds is plenty for a temperature.
     if (this.cpuTempInFlight || Date.now() - this.lastCpuTempAt < CPU_TEMP_REFRESH_MS) return;
     this.lastCpuTempAt = Date.now();
     this.cpuTempInFlight = true;
-    si.cpuTemperature()
+    readCpuTemperature()
       .then(t => {
-        this.lastCpuTemp = t.main || 0;
+        this.lastCpuTemp = t ?? 0;
       })
       .catch(() => {
         // keep the previous value
