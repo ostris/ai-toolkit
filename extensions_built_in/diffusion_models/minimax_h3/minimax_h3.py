@@ -1364,17 +1364,12 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         n = packing.align_num_frames_down(min(total, max(gen_config.num_frames, 5)))
         indices = [round(i * (total - 1) / max(n - 1, 1)) for i in range(n)]
-        frames = []
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ok, frame = cap.read()
-            if not ok:
-                break
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        from .src.ref_video_cache import read_frames_at
+
+        frames = [
+            cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in read_frames_at(cap, indices)
+        ]
         cap.release()
-        if len(frames) != n:
-            n = packing.align_num_frames_down(max(len(frames), 5))
-            frames = frames[:n]
         h0, w0 = frames[0].shape[:2]
         # match the sample canvas's pixel area, own aspect kept
         ph, pw = packing.reference_video_pixel_size(

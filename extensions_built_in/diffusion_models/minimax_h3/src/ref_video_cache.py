@@ -87,16 +87,50 @@ def load_video_ref_for_te(model, path, dataset_config=None, max_frames=None):
     step = max(1, int(ds_fps // 2))
     picks = list(range(0, len(indices), step))
     cap = cv2.VideoCapture(path)
-    frames, times = [], []
-    for j in picks:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, indices[j])
+    raw_frames = read_frames_at(cap, [indices[j] for j in picks])
+    cap.release()
+    frames = [
+        _Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in raw_frames
+    ]
+    times = [j / ds_fps for j in picks]
+    return VideoRef(frames=frames, timestamps=times, has_audio=video_has_audio(path))
+
+
+def read_frames_at(cap, indices):
+    """Read the frames at sorted ``indices`` by decoding SEQUENTIALLY (seek-per-
+    frame is both slow and unreliable on VBR/web clips). Container frame counts
+    routinely overstate the decodable count by a few frames; when the stream
+    ends early, missing tail frames repeat the last decoded frame instead of
+    failing. Returns a list of BGR frames aligned with ``indices``."""
+    wanted = list(indices)
+    out = {}
+    need = sorted(set(wanted))
+    if not need:
+        return []
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    pos = 0
+    max_idx = need[-1]
+    ptr = 0
+    last = None
+    while ptr < len(need) and pos <= max_idx:
         ok, frame = cap.read()
         if not ok:
             break
-        frames.append(_Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
-        times.append(j / ds_fps)
-    cap.release()
-    return VideoRef(frames=frames, timestamps=times, has_audio=video_has_audio(path))
+        while ptr < len(need) and need[ptr] == pos:
+            out[pos] = frame
+            ptr += 1
+        last = frame
+        pos += 1
+    if not out and last is None:
+        raise ValueError("Could not decode any frames")
+    frames = []
+    for idx in wanted:
+        if idx in out:
+            frames.append(out[idx])
+        else:
+            # ran past the decodable end: hold the last real frame
+            frames.append(last)
+    return frames
 
 
 def _cache_path(path: str, hash_dict: dict) -> str:
@@ -177,16 +211,16 @@ def load_ref_video_latent(
     indices = ref_frame_indices(
         total, src_fps, num_frames, dataset_config.fps, trim_tail
     )
+    try:
+        raw_frames = read_frames_at(cap, indices)
+    except ValueError as e:
+        raise ValueError(f"{e}: {path}") from e
+    cap.release()
     frames = []
-    for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ok, frame = cap.read()
-        if not ok:
-            raise ValueError(f"Could not read frame {idx} of {path}")
+    for frame in raw_frames:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
         frames.append(frame)
-    cap.release()
 
     pixels = torch.from_numpy(np.stack(frames)).float() / 255.0 * 2.0 - 1.0
     pixels = pixels.permute(0, 3, 1, 2)  # (T, C, H, W), [-1, 1]
