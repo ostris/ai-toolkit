@@ -85,6 +85,7 @@ export interface MonitorInit extends MonitorSample {
 
 export interface NetworkConfig {
   type: string;
+  pretrained_lora_path?: string;
   linear: number;
   linear_alpha: number;
   conv: number;
