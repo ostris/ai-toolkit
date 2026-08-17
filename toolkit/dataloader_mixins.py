@@ -2136,6 +2136,11 @@ class TextEmbeddingFileItemDTOMixin:
             item["control_path"] = self.control_path
         if self.encode_control_in_text_embeddings and getattr(self, 'control_video_paths', None):
             item["control_videos"] = sorted(self.control_video_paths)
+            # v2: reference-video vision blocks are no longer resampled by the
+            # processor (do_sample_frames=False); older video-ref embeds are
+            # misaligned with their presentation. Only items WITH control
+            # videos carry this key, so no other cache is touched.
+            item["control_videos_version"] = 2
         # first-frame vision conditioning changes the embedding content -> new cache key
         elif (
             getattr(self, "encode_first_frame_in_text_embeddings", False)

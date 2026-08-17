@@ -160,8 +160,15 @@ def encode_minimax_h3_prompt(
             pixel_values = vision["pixel_values"]
             image_grid_thw = vision["image_grid_thw"]
         if videos:
+            import numpy as np
+
+            # frames are already sampled at 2 fps: do_sample_frames=False keeps
+            # the video processor from resampling them (official diffusers
+            # ref2va encoder passes the same flag)
             vids = processor.video_processor(
-                videos=[v.frames for v in videos], return_tensors="pt"
+                videos=[np.stack([np.asarray(f.convert("RGB")) for f in v.frames]) for v in videos],
+                do_sample_frames=False,
+                return_tensors="pt",
             )
             pixel_values_videos = vids["pixel_values_videos"]
             video_grid_thw = vids["video_grid_thw"]
