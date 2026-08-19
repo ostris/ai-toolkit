@@ -96,6 +96,23 @@ def load_video_ref_for_te(model, path, dataset_config=None, max_frames=None):
     return VideoRef(frames=frames, timestamps=times, has_audio=video_has_audio(path))
 
 
+def static_image_video_ref(image, num_frames: int, fps: int = 24):
+    """Present a still IMAGE as a silent static reference video: the same
+    frame held for ``num_frames`` at ``fps``, sampled at 2 fps like
+    :func:`load_video_ref_for_te` (frame picks every fps//2, timestamps
+    j/fps). Used when image references are routed through the video-ref path
+    (``image_refs_as_video``)."""
+    from .text_encoder import VideoRef
+
+    step = max(1, int(fps // 2))
+    picks = list(range(0, int(num_frames), step))
+    return VideoRef(
+        frames=[image] * len(picks),
+        timestamps=[j / fps for j in picks],
+        has_audio=False,
+    )
+
+
 def read_frames_at(cap, indices):
     """Read the frames at sorted ``indices`` by decoding SEQUENTIALLY (seek-per-
     frame is both slow and unreliable on VBR/web clips). Container frame counts

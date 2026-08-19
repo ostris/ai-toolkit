@@ -985,16 +985,60 @@ export const modelArchs: ModelArch[] = [
           ),
         },
       },
+      {
+        label: 'Image Reference Presentation',
+        options: [
+          { value: 'picture', label: 'Picture (default)' },
+          { value: 'video', label: 'Static video clip' },
+        ],
+        getValue: (config: JobConfig) => {
+          return config?.config?.process?.[0]?.model?.model_kwargs?.image_refs_as_video ? 'video' : 'picture';
+        },
+        onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => {
+          const kwargs = { ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}) };
+          if (value === 'video') {
+            kwargs.image_refs_as_video = true;
+          } else {
+            delete kwargs.image_refs_as_video;
+            delete kwargs.image_ref_video_frames;
+          }
+          setJobConfig(kwargs, 'config.process[0].model.model_kwargs');
+        },
+        doc: {
+          title: 'MiniMax-H3 Image Reference Presentation',
+          description: (
+            <div className="space-y-2">
+              <p>
+                How still-image references (dataset control images and sample ctrl images) are shown to the model.
+                Video references always use the video path.
+              </p>
+              <p>
+                <strong>Picture</strong>: the native ref2va recipe — a single-frame reference block, shown to Qwen3-VL as
+                a <code>&lt;Picture i&gt;</code> block, scaled down only.
+              </p>
+              <p>
+                <strong>Static video clip</strong>: the image is held for 5 frames (2 latent frames) and routed through
+                the exact path a reference VIDEO takes — video sizing (matched to the target's pixel area), multi-frame
+                reference block, <code>&lt;Video k&gt;</code> timestamped presentation. Use this when training on image
+                references but sampling with video references, so the LoRA learns the pathway it will be used through.
+                Adds a handful of rows per reference. Frame count is adjustable with{' '}
+                <code>model_kwargs.image_ref_video_frames</code> (17n+5). Changing this re-caches text embeddings.
+              </p>
+            </div>
+          ),
+        },
+      },
     ],
     modelNotes: (
       <div className="space-y-2">
         <p>
-          Reference-to-video: control images condition the output as subject/style references (never as a first frame).
-          References keep their own aspect and are matched to the target's pixel area (images scale down only, never up;
-          a same-aspect video reference is exactly the target size). Each rides into the packed sequence as a reference
-          block, and is also shown to the Qwen3-VL conditioner as a <code>&lt;Picture i&gt;</code> vision block.
-          Training references come from the dataset control path(s); sampling uses the sample ctrl images — always as
-          references. Image references only for now (no reference video/audio).
+          Reference-to-video: control images and videos condition the output as subject/style references (never as a
+          first frame). References keep their own aspect and are matched to the target's pixel area (images scale down
+          only, never up; a same-aspect video reference is exactly the target size). Each rides into the packed sequence
+          as a reference block, and is also shown to the Qwen3-VL conditioner as a <code>&lt;Picture i&gt;</code> (image)
+          or timestamped <code>&lt;Video k&gt;</code> (video) vision block. Training references come from the dataset
+          control path(s); sampling uses the sample ctrl images — always as references. The Image Reference Presentation
+          option can route still images through the video-reference path as short static clips.
         </p>
         <p>
           Weights load like MiniMax-H3 (see that arch's notes) from the{' '}
