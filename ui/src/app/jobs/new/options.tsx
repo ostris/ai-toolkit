@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { GroupedSelectOption, SelectOption, JobConfig, ConfigDoc } from '@/types';
+import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
 import { defaultSliderConfig } from './jobConfig';
 import { defaultAudioSampleConfig, defaultSampleConfig, defaultIdeogramSamplesConfig } from '@/helpers/defaultSamples';
 
@@ -40,19 +40,11 @@ type AdditionalSections =
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
-export interface CustomModelSelectOption {
-  label: string;
-  options: SelectOption[];
-  getValue: (config: JobConfig) => string | undefined;
-  onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => void;
-  doc?: ConfigDoc;
-}
-
 export type SampleTag = {
   title: string;
-  type: 'text' | 'multiline' | 'number';
+  type: 'text' | 'multiline' | 'number'
   full?: boolean;
-};
+}
 
 export interface SampleTags {
   [key: string]: SampleTag;
@@ -72,7 +64,6 @@ export interface ModelArch {
   sampleTags?: SampleTags;
   gateUrl?: string;
   modelNotes?: React.ReactNode;
-  customModelSelectOptions?: CustomModelSelectOption[];
 }
 
 const defaultNameOrPath = '';
@@ -82,7 +73,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'anima',
     label: 'Anima',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['circlestone-labs/Anima-Base-v1.0-Diffusers', defaultNameOrPath],
@@ -104,7 +95,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flux',
     label: 'FLUX.1',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-dev', defaultNameOrPath],
@@ -119,7 +110,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flux_kontext',
     label: 'FLUX.1-Kontext-dev',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-Kontext-dev', defaultNameOrPath],
@@ -136,7 +127,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flex1',
     label: 'Flex.1',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['ostris/Flex.1-alpha', defaultNameOrPath],
@@ -151,7 +142,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flex2',
     label: 'Flex.2',
-    group: 'image',
+    group: '图像',
     controls: ['depth', 'line', 'pose', 'inpaint'],
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -179,7 +170,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'chroma',
     label: 'Chroma',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['lodestones/Chroma1-Base', defaultNameOrPath],
@@ -193,13 +184,10 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'zeta_chroma',
     label: 'Zeta Chroma',
-    group: 'experimental',
+    group: '实验性',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': [
-        'lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors',
-        defaultNameOrPath,
-      ],
+      'config.process[0].model.name_or_path': ['lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors', defaultNameOrPath],
       'config.process[0].model.extras_name_or_path': ['Tongyi-MAI/Z-Image-Turbo', undefined],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
@@ -211,7 +199,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan21:1b',
     label: 'Wan 2.1 (1.3B)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -230,7 +218,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan21_i2v:14b480p',
     label: 'Wan 2.1 I2V (14B-480P)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -250,7 +238,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan21_i2v:14b',
     label: 'Wan 2.1 I2V (14B-720P)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -270,7 +258,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan21:14b',
     label: 'Wan 2.1 (14B)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -289,7 +277,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan22_14b:t2v',
     label: 'Wan 2.2 (14B)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -312,13 +300,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'datasets.num_frames',
-      'model.low_vram',
-      'model.multistage',
-      'model.layer_offloading',
-      'datasets.auto_frame_count',
-    ],
+    additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage', 'model.layer_offloading', 'datasets.auto_frame_count'],
     accuracyRecoveryAdapters: {
       // '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint3.safetensors',
       '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint4.safetensors',
@@ -327,7 +309,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan22_14b_i2v',
     label: 'Wan 2.2 I2V (14B)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -365,7 +347,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan22_5b',
     label: 'Wan 2.2 TI2V (5B)',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -384,18 +366,12 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].fps': [24, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.ctrl_img',
-      'datasets.num_frames',
-      'model.low_vram',
-      'datasets.do_i2v',
-      'datasets.auto_frame_count',
-    ],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.do_i2v', 'datasets.auto_frame_count'],
   },
   {
     name: 'lumina2',
     label: 'Lumina2',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Alpha-VLLM/Lumina-Image-2.0', defaultNameOrPath],
@@ -409,7 +385,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'qwen_image',
     label: 'Qwen-Image',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Qwen/Qwen-Image', defaultNameOrPath],
@@ -430,7 +406,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'qwen_image:2512',
     label: 'Qwen-Image-2512',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-2512', defaultNameOrPath],
@@ -453,7 +429,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'qwen_image_edit',
     label: 'Qwen-Image-Edit',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit', defaultNameOrPath],
@@ -474,7 +450,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'qwen_image_edit_plus',
     label: 'Qwen-Image-Edit-2509',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit-2509', defaultNameOrPath],
@@ -508,7 +484,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'qwen_image_edit_plus:2511',
     label: 'Qwen-Image-Edit-2511',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit-2511', defaultNameOrPath],
@@ -542,7 +518,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'hidream',
     label: 'HiDream',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-I1-Full', defaultNameOrPath],
@@ -563,7 +539,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'hidream_e1',
     label: 'HiDream E1',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-E1-1', defaultNameOrPath],
@@ -581,7 +557,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'sdxl',
     label: 'SDXL',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['stabilityai/stable-diffusion-xl-base-1.0', defaultNameOrPath],
@@ -596,7 +572,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'sd15',
     label: 'SD 1.5',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['stable-diffusion-v1-5/stable-diffusion-v1-5', defaultNameOrPath],
@@ -611,7 +587,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'omnigen2',
     label: 'OmniGen2',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['OmniGen2/OmniGen2', defaultNameOrPath],
@@ -626,7 +602,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flux2',
     label: 'FLUX.2',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.2-dev', defaultNameOrPath],
@@ -658,7 +634,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'zimage:turbo',
     label: 'Z-Image Turbo (w/ Training Adapter)',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Tongyi-MAI/Z-Image-Turbo', defaultNameOrPath],
@@ -683,7 +659,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'zimage',
     label: 'Z-Image',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Tongyi-MAI/Z-Image', defaultNameOrPath],
@@ -703,7 +679,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'zimage:deturbo',
     label: 'Z-Image De-Turbo (De-Distilled)',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['ostris/Z-Image-De-Turbo', defaultNameOrPath],
@@ -725,7 +701,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'minimax_h3',
     label: 'MiniMax-H3',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -741,12 +717,6 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.cache_text_embeddings': [true, false],
-      'config.process[0].train.do_guidance_loss': [true, undefined],
-      'config.process[0].train.guidance_loss_target': [3.5, undefined],
-      'config.process[0].model.assistant_lora_path': [
-        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
-        undefined,
-      ],
       'config.process[0].network.linear': [16, defaultLinearRank],
       'config.process[0].network.linear_alpha': [16, defaultLinearRank],
       'config.process[0].network.network_kwargs.ignore_if_contains': [['adaln_proj'], []],
@@ -764,89 +734,21 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].fps': [24, undefined],
       'config.process[0].datasets[x].num_frames': [39, undefined],
       'config.process[0].datasets[x].auto_frame_count': [true, undefined],
+      'config.process[0].model.assistant_lora_path': [
+        'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_alpha.safetensors',
+        undefined,
+      ],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.ctrl_img',
-      'datasets.num_frames',
-      'model.layer_offloading',
-      'model.low_vram',
-      'datasets.do_audio',
-      'datasets.audio_normalize',
-      'datasets.audio_preserve_pitch',
-      'datasets.do_i2v',
-      'train.audio_loss_multiplier',
-      'datasets.auto_frame_count',
-      'model.assistant_lora_path',
-    ],
-    customModelSelectOptions: [
-      {
-        label: 'Distillation Handling Method',
-        options: [
-          { value: 'cg', label: 'Contrastive Guidance' },
-          { value: 'ta', label: 'Training Adapter' },
-          { value: 'both', label: 'Contrastive Guidance + Training Adapter (default)' },
-        ],
-        getValue: (config: JobConfig) => {
-          const assistantLoraPath = config?.config?.process?.[0]?.model?.assistant_lora_path;
-          const hasAssistantLoraPath = assistantLoraPath && assistantLoraPath.trim() !== '';
-          const hasContrastiveGuidance = config?.config?.process?.[0]?.train?.do_guidance_loss;
-          if (hasAssistantLoraPath && hasContrastiveGuidance) {
-            return 'both';
-          }
-          if (hasAssistantLoraPath) {
-            return 'ta';
-          }
-          return 'cg';
-        },
-        onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => {
-          if (value === 'cg') {
-            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
-            setJobConfig(undefined, 'config.process[0].model.assistant_lora_path');
-            if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
-              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
-            }
-          } else if (value === 'ta') {
-            setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
-            setJobConfig(undefined, 'config.process[0].train.guidance_loss_target');
-            setJobConfig(
-              'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
-              'config.process[0].model.assistant_lora_path',
-            );
-          } else if (value === 'both') {
-            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
-            setJobConfig(
-              'ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors',
-              'config.process[0].model.assistant_lora_path',
-            );
-            if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
-              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
-            }
-          }
-        },
-        doc: {
-          title: 'MiniMax-H3 Distillation Handling',
-          description: (
-            <div>
-              MiniMax H3 is a guidance distilled model, so training on it directly will make the guidance distillation
-              break down. There are two different ways to train on this model without breaking the guidance
-              distillation: Contrastive Guidance and Training Adapter. Both have their pros and cons. The adapter is
-              faster, but will still break down over a long run. Contrastive Guidance is slower, but is less likely to
-              break down.
-            </div>
-          ),
-        },
-      },
-    ],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count', 'model.assistant_lora_path'],
     modelNotes: (
       <div className="space-y-2">
         <p>
-          Weights load from the{' '}
+          权重从{' '}
           <Link href="/settings" className="text-blue-400 hover:underline">
-            Models Folder Path
+            模型文件夹路径
           </Link>{' '}
-          set in settings. Anything missing is downloaded there from <code>Comfy-Org/MiniMax-H3</code> on first load
-          (~43GB total). Files used:
+          （在设置中设定）加载。任何缺失的文件都会从 <code>Comfy-Org/MiniMax-H3</code> 在首次加载时下载到该路径（总计约43GB）。使用的文件：
         </p>
         <pre className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs overflow-x-auto">
           <code>{`<MODELS_PATH>/
@@ -859,151 +761,10 @@ export const modelArchs: ModelArch[] = [
     └── minimax_h3_audio_vae_fp32.safetensors`}</code>
         </pre>
         <p>
-          The checkpoints are pre-quantized and load directly: int8 ConvRot DiT (~21GB) and nvfp4 Qwen3-VL text encoder
-          (~16GB). The default qtypes (<code>convrot8</code> / <code>nvfp4</code>) match the files exactly, so nothing
-          is re-quantized on load. Picking a different quantization re-quantizes the pre-quantized layers into that
-          format, one layer at a time.
+          检查点已预量化并直接加载：int8 ConvRot DiT（约21GB）和 nvfp4 Qwen3-VL 文本编码器（约16GB）。默认的 qtype（<code>convrot8</code> / <code>nvfp4</code>）与文件完全匹配，因此加载时不会重新量化。选择其他量化方式会将预量化的层逐层重新量化为该格式。
         </p>
         <p>
-          Supports t2v and first-frame i2v (ctrl img / i2v datasets) with joint audio. The model is guidance-distilled —
-          keep guidance scale at 1. Video is fixed 24 fps and frame counts snap down to the 17n+5 grid (5, 22, 39, 56,
-          ..., 107, 124 ≈ 5s). Image datasets (num_frames 1) train as single frames, and a sample with num_frames 1
-          renders a single image.
-        </p>
-      </div>
-    ),
-  },
-  {
-    name: 'minimax_h3_ref2va',
-    label: 'MiniMax-H3 Ref2V',
-    group: 'video',
-    isVideoModel: true,
-    defaults: {
-      // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['Comfy-Org/MiniMax-H3', defaultNameOrPath],
-      // pre-quantized weights: matching qtypes keep the load unchanged
-      'config.process[0].model.quantize': [true, false],
-      'config.process[0].model.qtype': ['convrot8', 'qfloat8'],
-      'config.process[0].model.quantize_te': [true, false],
-      'config.process[0].model.qtype_te': ['nvfp4', 'qfloat8'],
-      'config.process[0].model.low_vram': [true, false],
-      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.cache_text_embeddings': [true, false],
-      'config.process[0].train.do_guidance_loss': [true, undefined],
-      'config.process[0].train.guidance_loss_target': [3.5, undefined],
-      'config.process[0].model.assistant_lora_path': [
-        'ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v1.safetensors',
-        undefined,
-      ],
-      'config.process[0].network.linear': [16, defaultLinearRank],
-      'config.process[0].network.linear_alpha': [16, defaultLinearRank],
-      'config.process[0].network.network_kwargs.ignore_if_contains': [['adaln_proj'], []],
-      'config.process[0].sample.num_frames': [107, 1],
-      'config.process[0].sample.fps': [24, 1],
-      'config.process[0].sample.width': [768, 1024],
-      'config.process[0].sample.height': [768, 1024],
-      'config.process[0].sample.guidance_scale': [1, 4],
-      'config.process[0].sample.sample_steps': [28, 25],
-      'config.process[0].train.audio_loss_multiplier': [1.0, undefined],
-      'config.process[0].train.timestep_type': ['shift', 'sigmoid'],
-      'config.process[0].datasets[x].do_audio': [true, undefined],
-      'config.process[0].datasets[x].cache_latents_to_disk': [true, false],
-      'config.process[0].datasets[x].fps': [24, undefined],
-      'config.process[0].datasets[x].num_frames': [39, undefined],
-      'config.process[0].datasets[x].auto_frame_count': [true, undefined],
-    },
-    disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.multi_ctrl_imgs',
-      'datasets.multi_control_paths',
-      'datasets.num_frames',
-      'model.layer_offloading',
-      'model.low_vram',
-      'datasets.do_audio',
-      'datasets.audio_normalize',
-      'datasets.audio_preserve_pitch',
-      'train.audio_loss_multiplier',
-      'datasets.auto_frame_count',
-      'model.assistant_lora_path',
-    ],
-    customModelSelectOptions: [
-      {
-        label: 'Distillation Handling Method',
-        options: [
-          { value: 'cg', label: 'Contrastive Guidance' },
-          { value: 'ta', label: 'Training Adapter' },
-          { value: 'both', label: 'Contrastive Guidance + Training Adapter (default)' },
-        ],
-        getValue: (config: JobConfig) => {
-          const assistantLoraPath = config?.config?.process?.[0]?.model?.assistant_lora_path;
-          const hasAssistantLoraPath = assistantLoraPath && assistantLoraPath.trim() !== '';
-          const hasContrastiveGuidance = config?.config?.process?.[0]?.train?.do_guidance_loss;
-          if (hasAssistantLoraPath && hasContrastiveGuidance) {
-            return 'both';
-          }
-          if (hasAssistantLoraPath) {
-            return 'ta';
-          }
-          return 'cg';
-        },
-        onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => {
-          if (value === 'cg') {
-            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
-            setJobConfig(undefined, 'config.process[0].model.assistant_lora_path');
-            if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
-              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
-            }
-          } else if (value === 'ta') {
-            setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
-            setJobConfig(undefined, 'config.process[0].train.guidance_loss_target');
-            setJobConfig(
-              'ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v1.safetensors',
-              'config.process[0].model.assistant_lora_path',
-            );
-          } else if (value === 'both') {
-            setJobConfig(true, 'config.process[0].train.do_guidance_loss');
-            setJobConfig(
-              'ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v1.safetensors',
-              'config.process[0].model.assistant_lora_path',
-            );
-            if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
-              setJobConfig(3.5, 'config.process[0].train.guidance_loss_target');
-            }
-          }
-        },
-        doc: {
-          title: 'MiniMax-H3 Distillation Handling',
-          description: (
-            <div>
-              MiniMax H3 is a guidance distilled model, so training on it directly will make the guidance distillation
-              break down. There are two different ways to train on this model without breaking the guidance
-              distillation: Contrastive Guidance and Training Adapter. Both have their pros and cons. The adapter is
-              faster, but will still break down over a long run. Contrastive Guidance is slower, but is less likely to
-              break down.
-            </div>
-          ),
-        },
-      },
-    ],
-    modelNotes: (
-      <div className="space-y-2">
-        <p>
-          Reference-to-video: control images condition the output as subject/style references (never as a first frame).
-          References keep their own aspect and are matched to the target's pixel area (images scale down only, never up;
-          a same-aspect video reference is exactly the target size). Each rides into the packed sequence as a reference
-          block, and is also shown to the Qwen3-VL conditioner as a <code>&lt;Picture i&gt;</code> vision block.
-          Training references come from the dataset control path(s); sampling uses the sample ctrl images — always as
-          references. Image references only for now (no reference video/audio).
-        </p>
-        <p>
-          Weights load like MiniMax-H3 (see that arch's notes) from the{' '}
-          <Link href="/settings" className="text-blue-400 hover:underline">
-            Models Folder Path
-          </Link>
-          , using <code>diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors</code> — the ref2va partition
-          of the same release; text encoder and VAEs are shared with the fl2va arch. Everything else (pre-quantized
-          load, 24 fps, 17n+5 frame grid, guidance scale 1, single-image mode) matches MiniMax-H3.
+          支持 t2v 和首帧 i2v（控制图像 / i2v 数据集）以及联合音频。该模型是引导蒸馏的——保持引导比例为 1。视频固定为 24 fps，帧数向下对齐到 17n+5 网格（5, 22, 39, 56, ..., 107, 124 ≈ 5秒）。图像数据集（num_frames 为1）训练为单帧，采样时 num_frames 为1则渲染单张图像。
         </p>
       </div>
     ),
@@ -1011,7 +772,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'ltx2',
     label: 'LTX-2',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -1033,23 +794,12 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.ctrl_img',
-      'datasets.num_frames',
-      'model.layer_offloading',
-      'model.low_vram',
-      'datasets.do_audio',
-      'datasets.audio_normalize',
-      'datasets.audio_preserve_pitch',
-      'datasets.do_i2v',
-      'train.audio_loss_multiplier',
-      'datasets.auto_frame_count',
-    ],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
   },
   {
     name: 'ltx2.3',
     label: 'LTX-2.3',
-    group: 'video',
+    group: '视频',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -1072,67 +822,12 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.ctrl_img',
-      'datasets.num_frames',
-      'model.layer_offloading',
-      'model.low_vram',
-      'datasets.do_audio',
-      'datasets.audio_normalize',
-      'datasets.audio_preserve_pitch',
-      'datasets.do_i2v',
-      'train.audio_loss_multiplier',
-      'datasets.auto_frame_count',
-    ],
-  },
-  {
-    name: 'ltx2.5',
-    label: 'LTX-2.5',
-    gateUrl: 'https://huggingface.co/Lightricks/LTX-2.5',
-    group: 'video',
-    isVideoModel: true,
-    defaults: {
-      // default updates when [selected, unselected] in the UI
-      // comfy-style split files resolve from/download to the models folder;
-      // the int8 ConvRot dev transformer is the default
-      'config.process[0].model.name_or_path': ['Lightricks/LTX-2.5', defaultNameOrPath],
-      'config.process[0].model.quantize': [true, false],
-      'config.process[0].model.qtype': ['convrot8', 'qfloat8'],
-      'config.process[0].model.quantize_te': [true, false],
-      'config.process[0].model.qtype_te': ['convrot8', 'qfloat8'],
-      'config.process[0].model.low_vram': [true, false],
-      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
-      'config.process[0].sample.num_frames': [121, 1],
-      'config.process[0].sample.fps': [24, 1],
-      'config.process[0].sample.width': [768, 1024],
-      'config.process[0].sample.height': [768, 1024],
-      'config.process[0].train.audio_loss_multiplier': [1.0, undefined],
-      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
-      'config.process[0].datasets[x].cache_latents_to_disk': [true, false],
-      'config.process[0].datasets[x].do_i2v': [false, undefined],
-      'config.process[0].datasets[x].do_audio': [true, undefined],
-      'config.process[0].datasets[x].fps': [24, undefined],
-      'config.process[0].datasets[x].auto_frame_count': [false, undefined],
-    },
-    disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.ctrl_img',
-      'datasets.num_frames',
-      'model.layer_offloading',
-      'model.low_vram',
-      'datasets.do_audio',
-      'datasets.audio_normalize',
-      'datasets.audio_preserve_pitch',
-      'datasets.do_i2v',
-      'train.audio_loss_multiplier',
-      'datasets.auto_frame_count',
-    ],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
   },
   {
     name: 'flux2_klein_4b',
     label: 'FLUX.2-klein-base-4B',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.2-klein-base-4B', defaultNameOrPath],
@@ -1163,7 +858,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'ernie_image',
     label: 'ERNIE-Image',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['baidu/ERNIE-Image', defaultNameOrPath],
@@ -1177,12 +872,15 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'flux2_klein_9b',
     label: 'FLUX.2-klein-base-9B',
-    group: 'image',
+    group: '图像',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.2-klein-base-9B', defaultNameOrPath],
@@ -1214,13 +912,10 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'ace_step_15_xl',
     label: 'ACE-Step 1.5 XL',
-    group: 'audio',
+    group: '音频',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': [
-        'ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_xl_base_aio.safetensors',
-        defaultNameOrPath,
-      ],
+      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_xl_base_aio.safetensors', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
@@ -1231,50 +926,51 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
     },
     sampleTags: {
-      CAPTION: {
-        title: 'Audio Prompt',
-        type: 'text',
+      "CAPTION": {
+        title: "音频提示",
+        type: "text",
         full: true,
       },
-      LYRICS: {
-        title: 'Lyrics',
-        type: 'multiline',
+      "LYRICS": {
+        title: "歌词",
+        type: "multiline",
         full: true,
       },
-      BPM: {
-        title: 'BPM',
-        type: 'number',
+      "BPM": {
+        title: "BPM",
+        type: "number",
       },
-      KEYSCALE: {
-        title: 'Key Scale',
-        type: 'text',
+      "KEYSCALE": {
+        title: "音阶",
+        type: "text",
       },
-      TIMESIGNATURE: {
-        title: 'Time Signature',
-        type: 'text',
+      "TIMESIGNATURE": {
+        title: "拍号",
+        type: "text",
       },
-      DURATION: {
-        title: 'Duration (sec)',
-        type: 'number',
+      "DURATION": {
+        title: "时长(秒)",
+        type: "number",
       },
-      LANGUAGE: {
-        title: 'Language',
-        type: 'text',
+      "LANGUAGE": {
+        title: "语言",
+        type: "text",
       },
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.multi_ctrl_imgs', 'model.low_vram', 'model.layer_offloading'],
+    additionalSections: [
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'ace_step_15',
     label: 'ACE-Step 1.5',
-    group: 'audio',
+    group: '音频',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': [
-        'ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors',
-        defaultNameOrPath,
-      ],
+      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
@@ -1285,44 +981,48 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
     },
     sampleTags: {
-      CAPTION: {
-        title: 'Audio Prompt',
-        type: 'text',
+      "CAPTION": {
+        title: "音频提示",
+        type: "text",
         full: true,
       },
-      LYRICS: {
-        title: 'Lyrics',
-        type: 'multiline',
+      "LYRICS": {
+        title: "歌词",
+        type: "multiline",
         full: true,
       },
-      BPM: {
-        title: 'BPM',
-        type: 'number',
+      "BPM": {
+        title: "BPM",
+        type: "number",
       },
-      KEYSCALE: {
-        title: 'Key Scale',
-        type: 'text',
+      "KEYSCALE": {
+        title: "音阶",
+        type: "text",
       },
-      TIMESIGNATURE: {
-        title: 'Time Signature',
-        type: 'text',
+      "TIMESIGNATURE": {
+        title: "拍号",
+        type: "text",
       },
-      DURATION: {
-        title: 'Duration (sec)',
-        type: 'number',
+      "DURATION": {
+        title: "时长(秒)",
+        type: "number",
       },
-      LANGUAGE: {
-        title: 'Language',
-        type: 'text',
+      "LANGUAGE": {
+        title: "语言",
+        type: "text",
       },
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.multi_ctrl_imgs', 'model.low_vram', 'model.layer_offloading'],
+    additionalSections: [
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'nucleus_image',
     label: 'Nucleus-Image',
-    group: 'image',
+    group: '图像',
     defaults: {
       'config.process[0].model.name_or_path': ['NucleusAI/Nucleus-Image', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1338,7 +1038,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'hidream_o1',
     label: 'HiDream-O1',
-    group: 'image',
+    group: '图像',
     defaults: {
       'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-O1-Image', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1359,13 +1059,20 @@ export const modelArchs: ModelArch[] = [
         {},
       ],
     },
-    disableSections: ['network.conv', 'model.quantize_te', 'train.unload_text_encoder'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    disableSections: [
+      'network.conv',
+      'model.quantize_te',
+      'train.unload_text_encoder',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'zimage_l2p',
     label: 'Z-Image L2P (pixel space)',
-    group: 'image',
+    group: '图像',
     defaults: {
       'config.process[0].model.name_or_path': ['zhen-nan/L2P/model-1k-merge.safetensors', defaultNameOrPath],
       'config.process[0].model.extras_name_or_path': ['Tongyi-MAI/Z-Image-Turbo', undefined],
@@ -1376,13 +1083,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
     },
-    disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'ideogram4',
     label: 'Ideogram4',
-    group: 'experimental',
+    group: '实验性',
     defaults: {
       'config.process[0].model.name_or_path': ['ideogram-ai/ideogram-4-fp8', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1397,7 +1109,9 @@ export const modelArchs: ModelArch[] = [
         undefined,
       ],
     },
-    disableSections: ['network.conv'],
+    disableSections: [
+      'network.conv',
+    ],
     additionalSections: [
       'model.low_vram',
       'model.layer_offloading',
@@ -1410,7 +1124,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'prx_pixel',
     label: 'PRXPixel (pixel space)',
-    group: 'image',
+    group: '图像',
     defaults: {
       'config.process[0].model.name_or_path': ['Photoroom/prxpixel-t2i', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1420,13 +1134,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
     },
-    disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'krea2',
     label: 'Krea 2 (raw)',
-    group: 'image',
+    group: '图像',
     gateUrl: 'https://huggingface.co/krea/Krea-2-Raw',
     defaults: {
       'config.process[0].model.name_or_path': ['krea/Krea-2-Raw', defaultNameOrPath],
@@ -1437,13 +1156,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
     },
-    disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'krea2:turbo',
     label: 'Krea 2 Turbo (w/ Training Adapter)',
-    group: 'image',
+    group: '图像',
     gateUrl: 'https://huggingface.co/krea/Krea-2-Turbo',
     defaults: {
       'config.process[0].model.name_or_path': ['krea/Krea-2-Turbo', defaultNameOrPath],
@@ -1460,14 +1184,20 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.guidance_scale': [1, 4],
       'config.process[0].sample.sample_steps': [9, 25],
     },
-    disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading', 'model.assistant_lora_path'],
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+      'model.assistant_lora_path',
+    ],
   },
   {
     name: 'krea2:o_edit',
     label: 'Krea 2 (raw) [Edit Training]',
     gateUrl: 'https://huggingface.co/krea/Krea-2-Raw',
-    group: 'experimental',
+    group: '实验性',
     defaults: {
       'config.process[0].model.name_or_path': ['krea/Krea-2-Raw', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1486,7 +1216,9 @@ export const modelArchs: ModelArch[] = [
         {},
       ],
     },
-    disableSections: ['network.conv', 'train.unload_text_encoder'],
+    disableSections: [
+      'network.conv', 'train.unload_text_encoder'
+    ],
     additionalSections: [
       'datasets.multi_control_paths',
       'sample.multi_ctrl_imgs',
@@ -1500,7 +1232,7 @@ export const modelArchs: ModelArch[] = [
     name: 'krea2:o_edit_turbo',
     label: 'Krea 2 Turbo (w/ Training Adapter) [Edit Training]',
     gateUrl: 'https://huggingface.co/krea/Krea-2-Turbo',
-    group: 'experimental',
+    group: '实验性',
     defaults: {
       'config.process[0].model.name_or_path': ['krea/Krea-2-Turbo', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1525,7 +1257,9 @@ export const modelArchs: ModelArch[] = [
         {},
       ],
     },
-    disableSections: ['network.conv', 'train.unload_text_encoder'],
+    disableSections: [
+      'network.conv', 'train.unload_text_encoder'
+    ],
     additionalSections: [
       'datasets.multi_control_paths',
       'sample.multi_ctrl_imgs',
@@ -1539,7 +1273,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'mageflow',
     label: 'Mage-Flow',
-    group: 'image',
+    group: '图像',
     defaults: {
       'config.process[0].model.name_or_path': ['microsoft/Mage-Flow-Base', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1551,13 +1285,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.guidance_scale': [4, 4],
       'config.process[0].sample.sample_steps': [25, 25],
     },
-    disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'mageflow_edit',
     label: 'Mage-Flow Edit',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       'config.process[0].model.name_or_path': ['microsoft/Mage-Flow-Edit-Base', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1570,7 +1309,9 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sample_steps': [25, 25],
       'config.process[0].train.unload_text_encoder': [false, false],
     },
-    disableSections: ['network.conv', 'train.unload_text_encoder'],
+    disableSections: [
+      'network.conv', 'train.unload_text_encoder',
+    ],
     additionalSections: [
       'datasets.multi_control_paths',
       'sample.multi_ctrl_imgs',
@@ -1581,7 +1322,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'boogu_image',
     label: 'Boogu Image',
-    group: 'image',
+    group: '图像',
     defaults: {
       'config.process[0].model.name_or_path': ['Boogu/Boogu-Image-0.1-Base', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1591,13 +1332,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
     },
-    disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
   },
   {
     name: 'boogu_image_edit',
     label: 'Boogu Image Edit',
-    group: 'instruction',
+    group: '指令',
     defaults: {
       'config.process[0].model.name_or_path': ['Boogu/Boogu-Image-0.1-Edit', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
@@ -1614,7 +1360,9 @@ export const modelArchs: ModelArch[] = [
         {},
       ],
     },
-    disableSections: ['network.conv', 'train.unload_text_encoder'],
+    disableSections: [
+      'network.conv', 'train.unload_text_encoder',
+    ],
     additionalSections: [
       'datasets.multi_control_paths',
       'sample.multi_ctrl_imgs',
@@ -1675,12 +1423,12 @@ interface JobTypeOption extends SelectOption {
 export const jobTypeOptions: JobTypeOption[] = [
   {
     value: 'diffusion_trainer',
-    label: 'LoRA Trainer',
+    label: 'LoRA 训练器',
     disableSections: ['slider'],
   },
   {
     value: 'concept_slider',
-    label: 'Concept Slider',
+    label: '概念滑块',
     disableSections: ['trigger_word', 'train.diff_output_preservation'],
     onActivate: (config: JobConfig) => {
       // add default slider config

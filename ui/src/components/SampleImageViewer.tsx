@@ -8,7 +8,7 @@ import classNames from 'classnames';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
-import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
+import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import BoundingBoxOverlay, { parseBoundingBoxes } from './BoundingBoxOverlay';
@@ -131,10 +131,10 @@ export default function SampleImageViewer({
   const handleDelete = useCallback(() => {
     if (!imgPath) return;
     openConfirm({
-      title: 'Delete Sample',
-      message: `Are you sure you want to delete this sample? This action cannot be undone.`,
+      title: '删除样本',
+      message: `确定要删除此样本吗？此操作不可撤销。`,
       type: 'warning',
-      confirmText: 'Delete',
+      confirmText: '删除',
       onConfirm: () => {
         apiClient
           .post('/api/img/delete', { imgPath: imgPath })
@@ -314,14 +314,14 @@ export default function SampleImageViewer({
                 (isAudio(displayedImgPath) ? (
                   <div className="w-[500px] h-[500px] max-w-full sm:max-w-[95vw] max-h-[82vh]">
                     <AudioPlayer
-                      src={`/api/img/${encodeFilePathForUrl(displayedImgPath)}`}
+                      src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                       title={displayedImgPath.replace(/^.*[\\/]/, '')}
                       autoPlay
                     />
                   </div>
                 ) : isVideo(displayedImgPath) ? (
                   <video
-                    src={`/api/img/${encodeFilePathForUrl(displayedImgPath)}`}
+                    src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                     className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain"
                     preload="none"
                     playsInline
@@ -345,8 +345,8 @@ export default function SampleImageViewer({
                     <TransformComponent>
                       <div className="relative">
                         <img
-                          src={`/api/img/${encodeFilePathForUrl(displayedImgPath)}`}
-                          alt="Sample Image"
+                          src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
+                          alt="样本图像"
                           draggable={false}
                           className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none !pointer-events-auto"
                         />
@@ -362,7 +362,7 @@ export default function SampleImageViewer({
                 {sampleItem?.prompt && (
                   <div className="absolute inset-0 grid place-items-center overflow-auto mr-4">
                     <div className="w-full">
-                      <span className="text-gray-400 mr-1">Prompt:</span>
+                      <span className="text-gray-400 mr-1">提示词：</span>
                       <span className="whitespace-pre-wrap break-words">{sampleItem.prompt}</span>
                     </div>
                   </div>
@@ -372,23 +372,23 @@ export default function SampleImageViewer({
                 <div key={imgPath} className="flex space-x-2 mr-4">
                   {showingControlIdx !== null && (
                     <img
-                      src={`/api/img/${encodeFilePathForUrl(imgPath!)}?thumb=1`}
-                      alt="Main"
+                      src={`/api/img/${encodeURIComponent(imgPath!)}`}
+                      alt="主图像"
                       className="max-h-12 max-w-12 object-contain bg-black border-2 border-gray-700 hover:border-gray-500 rounded cursor-pointer"
                       onClick={() => setShowingControlIdx(null)}
-                      title="Main image"
+                      title="主图像"
                     />
                   )}
                   {controlImages.map((ci, idx) => (
                     <img
                       key={idx}
-                      src={`/api/img/${encodeFilePathForUrl(ci)}?thumb=1`}
-                      alt={`Control ${idx + 1}`}
+                      src={`/api/img/${encodeURIComponent(ci)}`}
+                      alt={`控制图像 ${idx + 1}`}
                       className={`max-h-12 max-w-12 object-contain bg-black border-2 rounded cursor-pointer ${
                         showingControlIdx === idx ? 'border-blue-500' : 'border-gray-700 hover:border-gray-500'
                       }`}
                       onClick={() => setShowingControlIdx(idx)}
-                      title={`Control image ${idx + 1}`}
+                      title={`控制图像 ${idx + 1}`}
                     />
                   ))}
                 </div>
@@ -396,13 +396,13 @@ export default function SampleImageViewer({
 
               <div className="text-xs">
                 <div>
-                  <span className="text-gray-400">Step:</span> {imgInfo.step.toLocaleString()}
+                  <span className="text-gray-400">步数：</span> {imgInfo.step.toLocaleString()}
                 </div>
                 <div>
-                  <span className="text-gray-400">Sample #:</span> {imgInfo.promptIdx + 1}
+                  <span className="text-gray-400">样本 #：</span> {imgInfo.promptIdx + 1}
                 </div>
                 <div>
-                  <span className="text-gray-400">Seed:</span> {seed}
+                  <span className="text-gray-400">种子：</span> {seed}
                 </div>
               </div>
             </div>
@@ -411,7 +411,7 @@ export default function SampleImageViewer({
                 <button
                   type="button"
                   onClick={() => setShowBoxes(v => !v)}
-                  title={showBoxes ? 'Hide bounding boxes' : 'Show bounding boxes'}
+                  title={showBoxes ? '隐藏边界框' : '显示边界框'}
                   className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
                     'opacity-100 text-blue-400': showBoxes,
                     'opacity-50': !showBoxes,
@@ -433,16 +433,16 @@ export default function SampleImageViewer({
                       <MenuItem>
                         <a
                           className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
-                          href={`/api/img/${encodeFilePathForUrl(imgPath)}`}
+                          href={`/api/img/${encodeURIComponent(imgPath)}`}
                           download={imgPath.replace(/^.*[\\/]/, '')}
                         >
-                          Download
+                          下载
                         </a>
                       </MenuItem>
                     )}
                     <MenuItem>
                       <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
-                        Delete Sample
+                        删除样本
                       </div>
                     </MenuItem>
                   </MenuItems>

@@ -85,7 +85,7 @@ export const Modal: React.FC<ModalProps> = ({
                   type="button"
                   className="ml-auto inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-gray-700 hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 flex-shrink-0"
                   onClick={onClose}
-                  aria-label="Close modal"
+                  aria-label="关闭模态框"
                 >
                   <svg
                     className="h-5 w-5"

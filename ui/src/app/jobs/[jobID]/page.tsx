@@ -31,14 +31,14 @@ interface Page {
 
 const pages: Page[] = [
   {
-    name: 'Overview',
+    name: '概览',
     value: 'overview',
     icon: MdDashboard,
     component: JobOverview,
     mainCss: 'pt-24',
   },
   {
-    name: 'Samples',
+    name: '样本',
     value: 'samples',
     icon: MdImage,
     component: SampleImages,
@@ -47,7 +47,7 @@ const pages: Page[] = [
     jobTypes: ['train'],
   },
   {
-    name: 'Loss Graph',
+    name: '损失图表',
     value: 'loss_log',
     icon: MdShowChart,
     component: JobLossGraph,
@@ -55,14 +55,14 @@ const pages: Page[] = [
     jobTypes: ['train'],
   },
   {
-    name: 'Config File',
+    name: '配置文件',
     value: 'config',
     icon: MdCode,
     component: JobConfigViewer,
     mainCss: 'pt-[80px] px-0 pb-0',
   },
   {
-    name: 'Plugin',
+    name: '插件',
     value: 'plugin',
     icon: MdExtension,
     component: JobPlugin,
@@ -93,9 +93,9 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
 
   const jobType = job?.job_type || 'unknown';
 
-  let title = `Job: ${job?.name || 'Loading...'}`;
+  let title = `任务：${job?.name || '加载中...'}`;
   if (jobType === 'caption') {
-    title = `Captioning: ${job?.job_ref || 'Loading...'}`;
+    title = `打标：${job?.job_ref || '加载中...'}`;
   }
 
   return (
@@ -124,8 +124,8 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
         )}
       </TopBar>
       <MainContent className={pages.find(page => page.value === pageKey)?.mainCss}>
-        {status === 'loading' && job == null && <p>Loading...</p>}
-        {status === 'error' && job == null && <p>Error fetching job</p>}
+        {status === 'loading' && job == null && <p>加载中...</p>}
+        {status === 'error' && job == null && <p>获取任务失败</p>}
         {job && (
           <>
             {pages.map(page => {

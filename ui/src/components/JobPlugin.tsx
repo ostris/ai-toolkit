@@ -28,10 +28,10 @@ export default function JobPlugin({ job }: JobPluginProps) {
   }, [job.id]);
 
   if (status === 'loading') {
-    return <p className="p-4">Loading plugin...</p>;
+    return <p className="p-4">加载插件…</p>;
   }
   if (status === 'error' || html == null) {
-    return <p className="p-4">Error loading plugin</p>;
+    return <p className="p-4">加载插件出错</p>;
   }
 
   // Sandboxed iframe keeps the plugin's scripts and styles isolated from the app.

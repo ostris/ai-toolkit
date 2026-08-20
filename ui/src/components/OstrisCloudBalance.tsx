@@ -57,7 +57,7 @@ export default function OstrisCloudBalance() {
         {display ? (
           <span className="text-xs font-medium text-gray-100 tabular-nums">{display}</span>
         ) : (
-          <span className="inline-block h-3 w-10 rounded bg-gray-700 animate-pulse" aria-label="Loading balance" />
+          <span className="inline-block h-3 w-10 rounded bg-gray-700 animate-pulse" aria-label="加载余额" />
         )}
       </div>
     </a>

@@ -24,11 +24,11 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
       <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <h2 className="font-semibold text-gray-100">CPU Info</h2>
+            <h2 className="font-semibold text-gray-100">CPU 信息</h2>
           </div>
         </div>
         <div className="p-4">
-          <p className="text-sm text-gray-400">No CPU data available</p>
+          <p className="text-sm text-gray-400">暂无 CPU 数据</p>
         </div>
       </div>
     );
@@ -49,7 +49,7 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
           <div className="">
             <div className="flex items-center space-x-2 mb-1 mt-1">
               <Cpu className="w-4 h-4 text-gray-400" />
-              <p className="text-xs text-gray-400">CPU Load</p>
+              <p className="text-xs text-gray-400">CPU 负载</p>
               <span className="text-xs text-gray-300 ml-auto">{cpu.currentLoad.toFixed(1)}%</span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
@@ -62,7 +62,7 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
           <div>
             <div className="flex items-center space-x-2 mb-1 mt-1">
               <HardDrive className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              <p className="text-xs text-gray-400">Memory</p>
+              <p className="text-xs text-gray-400">内存</p>
               <span className="text-xs text-gray-300 ml-auto">
                 {(((cpu.totalMemory - cpu.availableMemory) / cpu.totalMemory) * 100).toFixed(1)}%
               </span>

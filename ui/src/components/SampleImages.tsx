@@ -8,7 +8,6 @@ import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
-import { encodeFilePathForUrl } from '@/utils/basic';
 import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
@@ -33,7 +32,7 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
       const zipPath = res.data.zipPath; // e.g. /mnt/Train2/out/ui/.../samples.zip
       if (!zipPath) throw new Error('No zipPath in response');
 
-      const downloadPath = `/api/files/${encodeFilePathForUrl(zipPath)}`;
+      const downloadPath = `/api/files/${encodeURIComponent(zipPath)}`;
       const a = document.createElement('a');
       a.href = downloadPath;
       // optional: suggest filename (browser may ignore if server sets Content-Disposition)
@@ -62,7 +61,7 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
       ) : (
         <FaDownload className="inline-block sm:mr-2" />
       )}
-      <span className="hidden sm:inline">{isZipping ? 'Preparing' : 'Download'}</span>
+      <span className="hidden sm:inline">{isZipping ? '准备中' : '下载'}</span>
     </Button>
   );
 };
@@ -118,8 +117,8 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
     if (status == 'loading') {
       icon = <LuLoader className="animate-spin w-8 h-8" />;
-      text = 'Loading Samples';
-      subtitle = 'Please wait while we fetch your samples...';
+      text = '加载样本中';
+      subtitle = '请稍候，正在获取样本…';
       showIt = true;
       bgColor = 'bg-gray-50 dark:bg-gray-800/50';
       textColor = 'text-gray-900 dark:text-gray-100';
@@ -127,8 +126,8 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
     if (status == 'error') {
       icon = <LuBan className="w-8 h-8" />;
-      text = 'Error Loading Samples';
-      subtitle = 'There was a problem fetching the samples.';
+      text = '加载样本出错';
+      subtitle = '获取样本时出现问题。';
       showIt = true;
       bgColor = 'bg-red-50 dark:bg-red-950/20';
       textColor = 'text-red-900 dark:text-red-100';
@@ -136,8 +135,8 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
     if (status == 'success' && sampleImages.length === 0) {
       icon = <LuImageOff className="w-8 h-8" />;
-      text = 'No Samples Found';
-      subtitle = 'No samples have been generated yet';
+      text = '未找到样本';
+      subtitle = '尚未生成任何样本';
       showIt = true;
       bgColor = 'bg-gray-50 dark:bg-gray-800/50';
       textColor = 'text-gray-900 dark:text-gray-100';
@@ -200,7 +199,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
                       imageUrl={sample}
                       numSamples={numSamples}
                       sampleImages={sampleImages}
-                      alt="Sample Image"
+                      alt="样本图像"
                       onClick={() => setSelectedSamplePath(sample)}
                       observerRoot={scrollParent}
                     />
@@ -225,14 +224,14 @@ export default function SampleImages({ job }: SampleImagesProps) {
       <div
         className="hidden md:flex fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToTop}
-        title="Scroll to Top"
+        title="滚动到顶部"
       >
         <FaCaretUp className="text-gray-500 dark:text-gray-400" />
       </div>
       <div
         className="hidden md:flex fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToBottom}
-        title="Scroll to Bottom"
+        title="滚动到底部"
       >
         <FaCaretDown className="text-gray-500 dark:text-gray-400" />
       </div>

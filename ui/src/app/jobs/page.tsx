@@ -9,7 +9,7 @@ export default function Dashboard() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-base sm:text-lg">Queue</h1>
+          <h1 className="text-base sm:text-lg">队列</h1>
         </div>
         <div className="flex-1"></div>
         <div>
@@ -17,8 +17,8 @@ export default function Dashboard() {
             href="/jobs/new"
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md text-sm sm:text-base whitespace-nowrap"
           >
-            <span className="sm:hidden">+ New Job</span>
-            <span className="hidden sm:inline">New Training Job</span>
+            <span className="sm:hidden">+ 新建任务</span>
+            <span className="hidden sm:inline">新建训练任务</span>
           </Link>
         </div>
       </TopBar>

@@ -72,7 +72,7 @@ export default function TrainingForm() {
         setJobConfig(parsed);
       } catch (err) {
         console.error('Failed to parse config file:', err);
-        alert('Failed to parse config file. Please check the file format.');
+        alert('解析配置文件失败。请检查文件格式。');
       }
     };
     reader.readAsText(file);
@@ -169,9 +169,9 @@ export default function TrainingForm() {
       })
       .catch(error => {
         if (error.response?.status === 409) {
-          alert('Training name already exists. Please choose a different name.');
+          alert('训练名称已存在。请选择其他名称。');
         } else {
-          alert('Failed to save job. Please try again.');
+          alert('保存任务失败，请重试。');
         }
         console.log('Error saving training:', error);
       })
@@ -197,7 +197,7 @@ export default function TrainingForm() {
         </div>
         <div className="flex-shrink-0">
           <h1 className="text-base sm:text-lg truncate max-w-[120px] sm:max-w-none">
-            {runId ? 'Edit Training Job' : 'New Training Job'}
+            {runId ? '编辑训练任务' : '新建训练任务'}
           </h1>
         </div>
         <div className="flex-1"></div>
@@ -213,7 +213,7 @@ export default function TrainingForm() {
             <div className="hidden sm:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
             <div className="hidden md:block">
               <Button className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md" onClick={handleImportConfig}>
-                Import Config
+                导入配置
               </Button>
             </div>
             <div className="hidden md:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
@@ -257,8 +257,8 @@ export default function TrainingForm() {
             className="text-gray-200 bg-gray-800 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
             onClick={() => setShowAdvancedView(!showAdvancedView)}
           >
-            <span className="sm:hidden">{showAdvancedView ? 'Simple' : 'Advanced'}</span>
-            <span className="hidden sm:inline">{showAdvancedView ? 'Show Simple' : 'Show Advanced'}</span>
+            <span className="sm:hidden">{showAdvancedView ? '简易' : '高级'}</span>
+            <span className="hidden sm:inline">{showAdvancedView ? '显示简易模式' : '显示高级模式'}</span>
           </Button>
         </div>
         <div className="flex-shrink-0">
@@ -268,11 +268,11 @@ export default function TrainingForm() {
             disabled={status === 'saving'}
           >
             {status === 'saving' ? (
-              'Saving...'
+              '保存中…'
             ) : (
               <>
-                <span className="sm:hidden">{runId ? 'Update' : 'Create'}</span>
-                <span className="hidden sm:inline">{runId ? 'Update Job' : 'Create Job'}</span>
+                <span className="sm:hidden">{runId ? '更新' : '创建'}</span>
+                <span className="hidden sm:inline">{runId ? '更新任务' : '创建任务'}</span>
               </>
             )}
           </Button>
@@ -310,7 +310,7 @@ export default function TrainingForm() {
           <ErrorBoundary
             fallback={
               <div className="flex items-center justify-center h-64 text-lg text-red-600 font-medium bg-red-100 dark:bg-red-900/20 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-lg">
-                Advanced job detected. Please switch to advanced view to continue.
+                检测到高级任务，请切换到高级视图继续。
               </div>
             }
           >

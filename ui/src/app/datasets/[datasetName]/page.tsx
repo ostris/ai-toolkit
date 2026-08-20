@@ -13,7 +13,6 @@ import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
-import DatasetActionBar from '@/components/DatasetActionBar';
 import CaptionMonitor from '@/components/CaptionMonitor';
 import { CreatableSelectInput } from '@/components/formInputs';
 
@@ -77,8 +76,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
     if (status == 'loading') {
       icon = <LuLoader className="animate-spin w-8 h-8" />;
-      text = 'Loading Images';
-      subtitle = 'Please wait while we fetch your dataset images...';
+      text = '加载图像中';
+      subtitle = '请稍候，正在获取数据集图像...';
       showIt = true;
       bgColor = 'bg-gray-800/50';
       textColor = 'text-gray-100';
@@ -86,8 +85,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
     if (status == 'error') {
       icon = <LuBan className="w-8 h-8" />;
-      text = 'Error Loading Images';
-      subtitle = 'There was a problem fetching the images. Please try refreshing the page.';
+      text = '加载图像出错';
+      subtitle = '获取图像时出现问题。请尝试刷新页面。';
       showIt = true;
       bgColor = 'bg-red-600/20';
       textColor = 'text-red-100';
@@ -95,8 +94,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
     if (status == 'success' && imgList.length === 0) {
       icon = <LuImageOff className="w-8 h-8" />;
-      text = 'No Images Found';
-      subtitle = 'This dataset is empty. Click "Add Images" to get started.';
+      text = '未找到图像';
+      subtitle = '此数据集为空。点击“添加图像”开始。';
       showIt = true;
       bgColor = 'bg-gray-800/50';
       textColor = 'text-gray-100';
@@ -127,14 +126,14 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
         <div className="min-w-0 flex-shrink">
           <h1 className="text-base sm:text-lg truncate">
-            <span className="hidden sm:inline">Dataset: </span>
+            <span className="hidden sm:inline">数据集：</span>
             {datasetName}
           </h1>
         </div>
         <div className="flex-1"></div>
         <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
           <div className="flex items-center gap-1">
-            <label className="text-xs text-gray-400 hidden sm:inline whitespace-nowrap">Caption ext</label>
+            <label className="text-xs text-gray-400 hidden sm:inline whitespace-nowrap">打标扩展名</label>
             <CreatableSelectInput
               className="w-44"
               value={captionExt}
@@ -155,18 +154,12 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md text-sm sm:text-base whitespace-nowrap"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
           >
-            <span className="sm:hidden">+ Add</span>
-            <span className="hidden sm:inline">Add Images</span>
+            <span className="sm:hidden">+ 添加</span>
+            <span className="hidden sm:inline">添加图像</span>
           </Button>
-          <DatasetActionBar datasetName={datasetName} />
         </div>
       </TopBar>
-      <MainContent
-        ref={scrollParentCallback}
-        belowTopBar
-        className="transition-[bottom] duration-300"
-        style={{ bottom: `${captionBarHeight}px` }}
-      >
+      <MainContent ref={scrollParentCallback}>
         {PageInfoContent}
         {status === 'success' && imgList.length > 0 && scrollParent && (
           <VirtuosoGrid
@@ -179,7 +172,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               if (!img) return null;
               return (
                 <DatasetImageCard
-                  alt="image"
+                  alt="图像"
                   isAutoCaptioning={isAutoCaptioning}
                   imageUrl={img.img_path}
                   onDelete={() => refreshImageList(datasetName)}
@@ -193,9 +186,9 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             computeItemKey={index => imgList[index]?.img_path ?? index}
           />
         )}
-        {/* Baseline gap below the last row of cards. The caption bar itself is handled by
-            shrinking MainContent's bottom to the bar height, so no dynamic spacer is needed. */}
-        <div className="h-6" />
+        {/* Spacer so the last cards stay accessible above the floating caption bar.
+            Always keeps a baseline gap, plus the bar height when it is showing. */}
+        <div style={{ height: `${captionBarHeight + 24}px` }} className="transition-[height] duration-300" />
       </MainContent>
       <AddImagesModal />
       {isSettingsLoaded && (

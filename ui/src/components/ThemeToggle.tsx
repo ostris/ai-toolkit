@@ -16,7 +16,7 @@ const ThemeToggle = () => {
     <button
       onClick={toggleTheme}
       className={`flex items-center justify-center p-1 rounded-lg transition-colors ${buttonClass}`}
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
     >
       {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
     </button>

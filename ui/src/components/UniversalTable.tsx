@@ -35,12 +35,12 @@ export default function UniversalTable({
         </div>
       ) : rows.length === 0 ? (
         <div className="p-6 text-center text-gray-400">
-          <p className="text-sm">Empty</p>
+          <p className="text-sm">空</p>
           <button
             onClick={() => onRefresh()}
             className="mt-2 px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded transition-colors"
           >
-            Refresh
+            刷新
           </button>
         </div>
       ) : (

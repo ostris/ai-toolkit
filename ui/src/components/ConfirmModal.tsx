@@ -182,7 +182,7 @@ export default function ConfirmModal() {
                 onClick={onConfirm}
                 className={`inline-flex w-full justify-center rounded-md ${getButtonBgColor()} px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto`}
               >
-                {confirm?.confirmText || 'Confirm'}
+                {confirm?.confirmText || '确认'}
               </button>
               <button
                 type="button"
@@ -190,7 +190,7 @@ export default function ConfirmModal() {
                 onClick={onCancel}
                 className="mt-3 inline-flex w-full justify-center rounded-md bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800 sm:mt-0 sm:w-auto ring-0"
               >
-                Cancel
+                取消
               </button>
             </div>
           </DialogPanel>

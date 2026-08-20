@@ -7,7 +7,7 @@ import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import classNames from 'classnames';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
-import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
+import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { BoundingBoxEditor, parseBoundingBoxes, extractBoxes } from './BoundingBoxOverlay';
@@ -220,10 +220,10 @@ export default function DatasetImageViewer({
   const handleDelete = useCallback(() => {
     if (!imgPath) return;
     openConfirm({
-      title: 'Delete Image',
-      message: `Are you sure you want to delete this image? This action cannot be undone.`,
+      title: '删除图像',
+      message: `确定要删除此图像吗？此操作不可撤销。`,
       type: 'warning',
-      confirmText: 'Delete',
+      confirmText: '删除',
       onConfirm: () => {
         apiClient
           .post('/api/img/delete', { imgPath })
@@ -410,11 +410,11 @@ export default function DatasetImageViewer({
               {imgPath &&
                 (isAudio(imgPath) ? (
                   <div className="w-[500px] h-[500px] max-w-full max-h-[50vh] sm:max-h-[90vh]">
-                    <AudioPlayer src={`/api/img/${encodeFilePathForUrl(imgPath)}`} title={filename} autoPlay />
+                    <AudioPlayer src={`/api/img/${encodeURIComponent(imgPath)}`} title={filename} autoPlay />
                   </div>
                 ) : isVideo(imgPath) ? (
                   <video
-                    src={`/api/img/${encodeFilePathForUrl(imgPath)}`}
+                    src={`/api/img/${encodeURIComponent(imgPath)}`}
                     className="w-auto h-auto max-w-full max-h-[50vh] sm:max-h-[90vh] object-contain"
                     preload="none"
                     playsInline
@@ -438,8 +438,8 @@ export default function DatasetImageViewer({
                     <TransformComponent>
                       <div className="relative">
                         <img
-                          src={`/api/img/${encodeFilePathForUrl(imgPath)}`}
-                          alt="Dataset Image"
+                          src={`/api/img/${encodeURIComponent(imgPath)}`}
+                          alt="数据集图像"
                           draggable={false}
                           className="w-auto h-auto max-w-full max-h-[50vh] sm:max-h-[90vh] object-contain select-none !pointer-events-auto"
                         />
@@ -471,7 +471,7 @@ export default function DatasetImageViewer({
                         setIsDrawing(false);
                       }
                     }}
-                    title={showBoxes ? 'Hide bounding boxes' : 'Show & edit bounding boxes'}
+                    title={showBoxes ? '隐藏边界框' : '显示并编辑边界框'}
                     className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
                       'opacity-100 text-blue-400': showBoxes,
                       'opacity-50': !showBoxes,
@@ -493,16 +493,16 @@ export default function DatasetImageViewer({
                         <MenuItem>
                           <a
                             className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
-                            href={`/api/img/${encodeFilePathForUrl(imgPath)}`}
+                            href={`/api/img/${encodeURIComponent(imgPath)}`}
                             download={filename}
                           >
-                            Download
+                            下载
                           </a>
                         </MenuItem>
                       )}
                       <MenuItem>
                         <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
-                          Delete Image
+                          删除图像
                         </div>
                       </MenuItem>
                     </MenuItems>
@@ -515,7 +515,7 @@ export default function DatasetImageViewer({
             <div className="bg-gray-950 w-full sm:w-96 shrink-0 flex flex-col gap-2 p-3 overflow-y-auto text-sm">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs text-gray-400 truncate min-w-0">
-                  <span className="text-gray-500 mr-1">File:</span>
+                  <span className="text-gray-500 mr-1">文件：</span>
                   <span className="text-gray-300">{filename}</span>
                 </div>
                 <div className="text-xs text-gray-400 whitespace-nowrap">
@@ -531,7 +531,7 @@ export default function DatasetImageViewer({
                     if (template) setCaption(template.trim());
                   }}
                 >
-                  <option value="">Templates...</option>
+                  <option value="">模板…</option>
                   {Object.keys(datasetTemplates).map(key => (
                     <option key={key} value={key}>
                       {key}
@@ -562,7 +562,7 @@ export default function DatasetImageViewer({
                 >
                   <textarea
                     className="w-full h-full bg-transparent text-gray-100 text-sm p-2 resize-none outline-none focus:ring-0 focus:outline-none"
-                    placeholder={isCaptionLoaded ? 'Add a caption...' : 'Loading caption...'}
+                    placeholder={isCaptionLoaded ? '添加打标…' : '加载打标…'}
                     value={caption}
                     onChange={e => setCaption(e.target.value)}
                     onKeyDown={handleCaptionKeyDown}

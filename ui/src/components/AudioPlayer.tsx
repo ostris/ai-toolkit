@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '@/utils/api';
-import { encodeFilePathForUrl } from '@/utils/basic';
 
 type AudioPlayerProps = {
   src: string;
@@ -41,17 +40,16 @@ function broadcastExclusivePlay(token: string) {
 
 /**
  * Build the server-side album-art URL from the audio src.
- * The audio src is `/api/img/{encodedFolder}/{encodedFile}` (or the legacy
- * `/api/img/{encodedPath}`) — we keep the encoded tail as-is and point to
- * `/api/audio/art/...` instead; that route accepts both shapes.
+ * The audio src is `/api/img/{encodedPath}` — we extract the path
+ * and point to `/api/audio/art/{encodedPath}` instead.
  */
 function albumArtUrlFromSrc(src: string): string {
   const prefix = '/api/img/';
   if (src.startsWith(prefix)) {
     return `/api/audio/art/${src.slice(prefix.length)}`;
   }
-  // Fallback: assume src is a raw file path
-  return `/api/audio/art/${encodeFilePathForUrl(src)}`;
+  // Fallback: assume src is already an encoded path
+  return `/api/audio/art/${encodeURIComponent(src)}`;
 }
 
 export default function AudioPlayer({
@@ -186,7 +184,7 @@ export default function AudioPlayer({
     const onError = () => {
       setIsPlaying(false);
       setIsBuffering(false);
-      setErr('Failed to load audio.');
+      setErr('加载音频失败。');
     };
 
     el.addEventListener('loadedmetadata', onLoaded);
@@ -353,7 +351,7 @@ export default function AudioPlayer({
       onPlay?.();
       startLoop();
     } catch {
-      setErr('Playback was blocked or failed.');
+      setErr('播放被阻止或失败。');
     }
   }
 
@@ -458,7 +456,7 @@ export default function AudioPlayer({
             </div>
           ) : !isReady ? (
             <div className="mt-2 text-gray-500" style={{ fontSize: subSize }}>
-              Loading…
+              加载中…
             </div>
           ) : null}
         </div>
@@ -481,8 +479,8 @@ export default function AudioPlayer({
                   'focus:outline-none focus:ring-2 focus:ring-gray-500/40',
                 ].join(' ')}
                 style={{ width: restartBtn, height: restartBtn }}
-                aria-label="Restart"
-                title="Restart"
+                aria-label="重新播放"
+                title="重新播放"
               >
                 <svg width={restartIcon} height={restartIcon} viewBox="0 0 24 24" className="mx-auto" aria-hidden>
                   <path d="M12 5a7 7 0 1 1-6.4 4H3l3.5-3.5L10 9H7.8A5 5 0 1 0 12 7v-2z" fill="currentColor" />
@@ -497,8 +495,8 @@ export default function AudioPlayer({
                   'focus:outline-none focus:ring-2 focus:ring-gray-500/40',
                 ].join(' ')}
                 style={{ width: playBtn, height: playBtn }}
-                aria-label={isPlaying ? 'Pause' : 'Play'}
-                title={isPlaying ? 'Pause' : 'Play'}
+                aria-label={isPlaying ? '暂停' : '播放'}
+                title={isPlaying ? '暂停' : '播放'}
               >
                 {!isPlaying ? (
                   <svg width={playIcon} height={playIcon} viewBox="0 0 24 24" className="mx-auto" aria-hidden>
@@ -511,7 +509,7 @@ export default function AudioPlayer({
                 )}
 
                 {isBuffering ? (
-                  <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 text-xs text-gray-300">Buffering…</div>
+                  <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 text-xs text-gray-300">缓冲中…</div>
                 ) : null}
               </button>
             </div>
@@ -535,7 +533,7 @@ export default function AudioPlayer({
               onPointerMove={onBarPointerMove}
               onPointerUp={onBarPointerUp}
               onPointerCancel={() => setDragging(false)}
-              title="Scrub"
+              title="拖动进度"
             >
               <div
                 className="absolute left-0 top-0 h-full rounded-full bg-gray-600"

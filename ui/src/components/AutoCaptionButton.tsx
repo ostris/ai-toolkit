@@ -26,8 +26,8 @@ export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning, ca
         className="text-white bg-gray-400 px-2 sm:px-3 py-1 rounded-md mr-1 sm:mr-2 inline-flex items-center gap-1 sm:gap-1.5 text-sm sm:text-base whitespace-nowrap"
       >
         <Loader2 className="w-4 h-4 animate-spin" />
-        <span className="hidden sm:inline">Auto Captioning...</span>
-        <span className="sm:hidden">Captioning</span>
+        <span className="hidden sm:inline">自动打标中…</span>
+        <span className="sm:hidden">打标中</span>
       </Link>
     );
   }
@@ -44,8 +44,8 @@ export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning, ca
         )
       }
     >
-      <span className="hidden sm:inline">Auto Caption</span>
-      <span className="sm:hidden">Caption</span>
+      <span className="hidden sm:inline">自动打标</span>
+      <span className="sm:hidden">打标</span>
     </Button>
   );
 }

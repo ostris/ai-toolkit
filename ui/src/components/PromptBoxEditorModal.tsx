@@ -164,9 +164,9 @@ const PromptBoxEditorModal: React.FC = () => {
                 {!isIdeogram && (
                   <div className="absolute inset-0 flex items-center justify-center text-center px-6 pointer-events-none">
                     <span className="text-xs text-white/80">
-                      No image — this is a layout preview.
+                      无图像——这是布局预览。
                       <br />
-                      Convert to a structured caption to place boxes.
+                      转换为结构化打标以放置框。
                     </span>
                   </div>
                 )}
@@ -195,7 +195,7 @@ const PromptBoxEditorModal: React.FC = () => {
                         setIsDrawing(false);
                       }
                     }}
-                    title={showBoxes ? 'Hide bounding boxes' : 'Show & edit bounding boxes'}
+                    title={showBoxes ? '隐藏边界框' : '显示并编辑边界框'}
                     className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
                       'opacity-100 text-blue-400': showBoxes,
                       'opacity-50': !showBoxes,
@@ -207,7 +207,7 @@ const PromptBoxEditorModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={onClose}
-                  title="Close"
+                  title="关闭"
                   className="bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100"
                 >
                   <X />
@@ -218,7 +218,7 @@ const PromptBoxEditorModal: React.FC = () => {
             {/* Right sidebar: structured caption editor (or plain prompt) */}
             <div className="bg-gray-950 w-full sm:w-96 shrink-0 flex flex-col gap-2 p-3 overflow-y-auto text-sm">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-gray-300">{modalInfo?.title ?? 'Edit Prompt'}</span>
+                <span className="text-xs font-semibold text-gray-300">{modalInfo?.title ?? '编辑提示词'}</span>
               </div>
               {isIdeogram ? (
                 <IdeogramCaptionSidebar
@@ -238,7 +238,7 @@ const PromptBoxEditorModal: React.FC = () => {
                 <div className="flex flex-col gap-2">
                   <textarea
                     className="w-full min-h-[12rem] rounded border-2 border-gray-700 bg-gray-900 text-gray-100 text-sm p-2 resize-none outline-none focus:border-blue-500"
-                    placeholder="Enter prompt..."
+                    placeholder="输入提示词…"
                     value={caption}
                     onChange={e => setCaption(e.target.value)}
                   />
@@ -250,7 +250,7 @@ const PromptBoxEditorModal: React.FC = () => {
                     }}
                     className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-purple-500 bg-purple-600/20 text-purple-200 hover:bg-purple-600/30 text-xs transition-colors"
                   >
-                    <SquareDashed className="w-3.5 h-3.5" /> Convert to structured caption
+                    <SquareDashed className="w-3.5 h-3.5" /> 转换为结构化打标
                   </button>
                   <div className="flex justify-end">
                     <button
@@ -262,7 +262,7 @@ const PromptBoxEditorModal: React.FC = () => {
                         'border-gray-700 text-gray-500 cursor-default': !isDirty,
                       })}
                     >
-                      {isDirty ? 'Save' : 'Saved'}
+                      {isDirty ? '保存' : '已保存'}
                     </button>
                   </div>
                 </div>

@@ -254,7 +254,7 @@ export default function AddImagesModal() {
             <div className="bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
               <div className="text-center">
                 <DialogTitle as="h3" className="text-base font-semibold text-gray-200 mb-4">
-                  Add Images to: {datasetName}
+                  添加图片到：{datasetName}
                 </DialogTitle>
 
                 {/* Drop zone + click to select */}
@@ -270,11 +270,11 @@ export default function AddImagesModal() {
                     <FaUpload className="size-8 mb-3 text-gray-400" />
                     {!isUploading ? (
                       <>
-                        <p className="text-sm text-gray-200 text-center">Drag & drop files here or click to select</p>
-                        <p className="text-xs text-gray-400 mt-1">Images, videos, .txt or .json supported</p>
+                        <p className="text-sm text-gray-200 text-center">拖放文件到此处，或点击选择</p>
+                        <p className="text-xs text-gray-400 mt-1">支持图片、视频、.txt 或 .json 文件</p>
                       </>
                     ) : (
-                      <p className="text-sm text-gray-200 text-center">Drop more files to add to queue</p>
+                      <p className="text-sm text-gray-200 text-center">拖放更多文件以加入队列</p>
                     )}
                   </div>
                 </div>
@@ -283,7 +283,7 @@ export default function AddImagesModal() {
                 {isUploading && (
                   <div className="mt-4">
                     <p className="text-sm font-semibold text-gray-200 mb-2">
-                      Uploading… {doneCount + errorCount} / {totalCount}
+                      上传中… {doneCount + errorCount} / {totalCount}
                     </p>
                     <div className="w-full h-2.5 bg-white/20 rounded-full overflow-hidden">
                       <div
@@ -293,7 +293,7 @@ export default function AddImagesModal() {
                     </div>
                     {errorCount > 0 && (
                       <p className="text-xs text-red-400 mt-1">
-                        {errorCount} file{errorCount !== 1 ? 's' : ''} failed
+                        {errorCount} 个文件失败
                       </p>
                     )}
                   </div>
@@ -315,7 +315,7 @@ export default function AddImagesModal() {
                   isUploading ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-600 hover:bg-gray-500'
                 }`}
               >
-                {isUploading ? 'Cancel Upload' : 'Close'}
+                {isUploading ? '取消上传' : '关闭'}
               </button>
             </div>
           </DialogPanel>
@@ -375,8 +375,8 @@ function FileRow({ entry }: { entry: FileEntry }) {
       </span>
       <span className="flex-shrink-0 w-16 text-right">
         {entry.status === 'uploading' && <span className="text-blue-300">{entry.progress}%</span>}
-        {entry.status === 'error' && <span className="text-red-400">Failed</span>}
-        {entry.status === 'pending' && <span className="text-white/30">Queued</span>}
+        {entry.status === 'error' && <span className="text-red-400">失败</span>}
+        {entry.status === 'pending' && <span className="text-white/30">排队中</span>}
       </span>
     </div>
   );

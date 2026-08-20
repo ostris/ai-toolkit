@@ -35,7 +35,7 @@ const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, 
               'hover:bg-opacity-80',
             )}
           >
-            <span className="sr-only">Toggle {title}</span>
+            <span className="sr-only">切换 {title}</span>
             <span
               className={classNames(
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',

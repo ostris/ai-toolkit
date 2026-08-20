@@ -125,7 +125,7 @@ export const CaptionDatasetModal: React.FC = () => {
   const saveJob = async () => {
     if (isSavingRef.current) return;
     if (!modalInfo?.datasetPath) {
-      alert('Dataset path is missing. Please try again.');
+      alert('数据集路径缺失，请重试。');
       return;
     }
     isSavingRef.current = true;
@@ -153,9 +153,9 @@ export const CaptionDatasetModal: React.FC = () => {
       })
       .catch(error => {
         if (error.response?.status === 409) {
-          alert('A caption job for this dataset already exists. Please check your jobs list.');
+          alert('该数据集已存在打标任务，请检查任务列表。');
         } else {
-          alert('Failed to save job. Please try again.');
+          alert('保存任务失败，请重试。');
         }
         console.log('Error saving training:', error);
         isSavingRef.current = false;
@@ -171,7 +171,7 @@ export const CaptionDatasetModal: React.FC = () => {
     }`;
 
   return (
-    <Modal isOpen={open} onClose={handleClose} title="Caption Dataset" size={activeTab === 'advanced' ? 'xl' : 'lg'}>
+    <Modal isOpen={open} onClose={handleClose} title="数据集打标" size={activeTab === 'advanced' ? 'xl' : 'lg'}>
       <div className="relative space-y-4 text-gray-200">
         {showLoadingOverlay && (
           <div className="absolute -left-6 -right-6 -top-4 -bottom-4 z-10 flex items-center justify-center backdrop-blur-sm bg-gray-900/40">
@@ -180,10 +180,10 @@ export const CaptionDatasetModal: React.FC = () => {
         )}
         <div className="flex items-center border-b border-gray-700 -mt-2">
           <button type="button" className={tabButtonClass('simple')} onClick={() => setActiveTab('simple')}>
-            Simple
+            简易
           </button>
           <button type="button" className={tabButtonClass('advanced')} onClick={() => setActiveTab('advanced')}>
-            Advanced
+            高级
           </button>
           <div className="flex-1" />
           {activeTab === 'advanced' && showGPUSelect && (
@@ -223,13 +223,13 @@ export const CaptionDatasetModal: React.FC = () => {
               className="rounded-md bg-gray-700 px-4 py-2 text-gray-200 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500"
               onClick={handleClose}
             >
-              Cancel
+              取消
             </button>
             <button
               type="submit"
               className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              Add to Queue
+              加入队列
             </button>
           </div>
         </form>

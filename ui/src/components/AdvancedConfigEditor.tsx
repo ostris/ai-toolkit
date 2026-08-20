@@ -136,7 +136,7 @@ export default function AdvancedConfigEditor<T>({ config, setConfig, transformOn
     } catch (e: any) {
       setHasError(true);
       const line = e?.linePos?.[0]?.line ?? e?.linePos?.line ?? 1;
-      setMarkers([{ message: e?.message ?? 'Invalid YAML', line }]);
+      setMarkers([{ message: e?.message ?? '无效的 YAML', line }]);
     }
   };
 

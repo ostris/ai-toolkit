@@ -20,8 +20,7 @@ interface CaptionMonitorProps {
 // info, and the live log.
 export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionMonitorProps) {
   const { job, status, refreshJob } = useJobByRef(datasetPath, 3000);
-  // Start collapsed; an active run pops it open via the effect below.
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
 
   const isActive = !!(job && (job.status === 'running' || job.status === 'queued'));
 
@@ -69,13 +68,12 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
   }, [log, isScrolledToBottom]);
 
   // Animate the docked height instead of translating, so the collapsed panel
-  // never extends below the container and adds scroll. No job for this
-  // dataset -> 0 (hidden), collapsed -> just the header bar, expanded ->
-  // full panel. The most recent captioning job is shown even when finished.
+  // never extends below the container and adds scroll. Inactive -> 0 (hidden),
+  // collapsed -> just the header bar, expanded -> full panel.
   const HEADER_HEIGHT = 44;
   const PANEL_HEIGHT = 300;
   let height = 0;
-  if (job) height = collapsed ? HEADER_HEIGHT : PANEL_HEIGHT;
+  if (isActive) height = collapsed ? HEADER_HEIGHT : PANEL_HEIGHT;
 
   useEffect(() => {
     onHeightChange?.(height);
@@ -98,7 +96,7 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
           <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-500/10 text-emerald-500 whitespace-nowrap">
             {job?.status ?? '...'}
           </span>
-          <h2 className="text-sm text-gray-100 truncate min-w-0 flex-shrink">{job?.info || 'Captioning...'}</h2>
+          <h2 className="text-sm text-gray-100 truncate min-w-0 flex-shrink">{job?.info || '打标中…'}</h2>
           {totalSteps > 0 && (
             <div className="hidden sm:flex items-center gap-2 flex-1 min-w-0">
               <div className="flex-1 bg-gray-700 rounded-full h-2 min-w-0">
@@ -109,12 +107,12 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
               </span>
             </div>
           )}
-          <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
+          <div className="flex items-center gap-3 flex-shrink-0">
             {job && <JobActionBar job={job} onRefresh={refreshJob} autoStartQueue={true} menuAnchor="top end" />}
             <button
               onClick={() => setCollapsed(c => !c)}
               className="text-gray-400 hover:text-gray-100"
-              title={collapsed ? 'Show' : 'Hide'}
+              title={collapsed ? '展开' : '收起'}
             >
               {collapsed ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
             </button>
@@ -130,8 +128,8 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
                 className="text-xs text-gray-300 absolute inset-0 p-3 overflow-y-auto"
                 onScroll={handleScroll}
               >
-                {statusLog === 'loading' && 'Loading log...'}
-                {statusLog === 'error' && 'Error loading log'}
+                {statusLog === 'loading' && '加载日志…'}
+                {statusLog === 'error' && '加载日志出错'}
                 {['success', 'refreshing'].includes(statusLog) && (
                   <div>
                     {logLines.map((line, index) => (
@@ -147,7 +145,7 @@ export default function CaptionMonitor({ datasetPath, onHeightChange }: CaptionM
               <GPUWidget gpu={gpuList[0]} />
             ) : (
               <div className="flex items-center gap-2 text-xs text-gray-500 p-2">
-                <Cpu className="w-4 h-4" /> Loading GPU info...
+                <Cpu className="w-4 h-4" /> 加载GPU信息…
               </div>
             )}
           </div>

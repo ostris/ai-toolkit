@@ -35,7 +35,7 @@ export default function DocModal() {
               <div className="sm:flex sm:items-start">
                 <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left flex-1">
                   <DialogTitle as="h3" className={`text-base font-semibold `}>
-                    {doc?.title || 'Confirm Action'}
+                    {doc?.title || '确认操作'}
                   </DialogTitle>
                   <div className="mt-2 text-sm text-gray-200">{doc?.description}</div>
                 </div>
@@ -48,7 +48,7 @@ export default function DocModal() {
                 onClick={onClose}
                 className="mt-3 inline-flex w-full justify-center rounded-md bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800 sm:mt-0 sm:w-auto ring-0"
               >
-                Close
+                关闭
               </button>
             </div>
           </DialogPanel>
