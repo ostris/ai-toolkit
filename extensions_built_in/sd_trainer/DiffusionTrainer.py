@@ -337,6 +337,17 @@ class DiffusionTrainer(SDTrainer):
                 self.thread_pool.shutdown(wait=True)
 
     def handle_timing_print_hook(self, timing_dict):
+        # pull the rate from the progress bar's EMA so the UI matches it exactly
+        rate = None  # iter/sec
+        if self.progress_bar is not None:
+            rate = self.progress_bar.format_dict.get("rate")
+        if rate:
+            if rate >= 1:
+                self.update_db_key("speed_string", f"{rate:.2f} iter/sec")
+            else:
+                self.update_db_key("speed_string", f"{1 / rate:.2f} sec/iter")
+            return
+        # fallback: bar not available yet (no rate until its first refresh)
         if "train_loop" not in timing_dict:
             print("train_loop not found in timing_dict", timing_dict)
             return
