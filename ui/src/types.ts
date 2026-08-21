@@ -106,6 +106,7 @@ export interface SaveConfig {
 }
 
 export interface DatasetConfig {
+  batch_size?: number;
   folder_path: string;
   mask_path: string | null;
   mask_min_value: number;

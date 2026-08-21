@@ -1232,6 +1232,17 @@ export default function SimpleJob({
                         placeholder="eg. 1"
                         docKey={'dataset.num_repeats'}
                       />
+                      <NumberInput
+                        label="Batch Size"
+                        value={dataset.batch_size ?? null}
+                        className="pt-2"
+                        onChange={value =>
+                          setJobConfig(value == null ? undefined : value, `config.process[0].datasets[${i}].batch_size`)
+                        }
+                        placeholder={`${jobConfig.config.process[0].train.batch_size}`}
+                        min={1}
+                        allowEmpty
+                      />
                     </div>
                     <div>
                       <TextInput
