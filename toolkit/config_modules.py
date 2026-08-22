@@ -522,6 +522,22 @@ class TrainConfig:
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
         self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow, pseudo_huber
+
+        # per-image adaptive LR: tracks each dataset item's loss trend across epochs and throttles
+        # images that stay hard without improving (likely a bad/mislabeled caption), while giving
+        # a small boost to consistently healthy ones. Model- and network-agnostic (works for every
+        # arch and both LoKr and LoRA) — it only writes into the existing per-item loss_multiplier
+        # field. See toolkit/loss_watch.py.
+        self.per_image_adaptive_lr = kwargs.get('per_image_adaptive_lr', False)
+        # Evaluated on a step-count window (ai-toolkit has no epoch concept). Auto-computed as
+        # ~one pass over the dataset (dataset_size / batch_size) when left None; set explicitly
+        # to override, e.g. for a very large dataset where "one pass" would be too infrequent.
+        self.per_image_adaptive_lr_window_steps = kwargs.get('per_image_adaptive_lr_window_steps', None)
+        # windows of history required before it starts classifying/throttling (default 2, i.e.
+        # first action at window index 3). With a resolution list, one auto-computed window
+        # already covers every resolution copy of every image, so this can cost more real steps
+        # than expected on a short run — lower it if warmup is eating too much of the budget.
+        self.per_image_adaptive_lr_warmup_windows = kwargs.get('per_image_adaptive_lr_warmup_windows', None)
         
         # do the loss on a timestep to 0 prediction
         self.t0_loss_target = kwargs.get('t0_loss_target', False)
