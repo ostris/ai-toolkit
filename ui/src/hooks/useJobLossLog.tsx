@@ -116,6 +116,27 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     }
   }, [jobID, reloadInterval]);
 
+  // Delete every logged step in [minStep, maxStep] from the on-disk log, then
+  // drop those points locally so the chart updates without a full reload.
+  const deleteRange = useCallback(
+    async (minStep: number, maxStep: number) => {
+      if (!jobID) return;
+      await apiClient.delete(`/api/jobs/${jobID}/loss`, { data: { min_step: minStep, max_step: maxStep } });
+      setSeries(prev => {
+        const next: SeriesMap = {};
+        for (const k of Object.keys(prev)) {
+          const kept = prev[k].filter(p => p.step < minStep || p.step > maxStep);
+          next[k] = kept;
+          // Re-anchor incremental polling to the new tail so a deleted tail
+          // isn't treated as already-fetched.
+          lastStepByKeyRef.current[k] = kept.length ? kept[kept.length - 1].step : null;
+        }
+        return next;
+      });
+    },
+    [jobID],
+  );
+
   // reset when job changes. Declared before the poll loop so the reset runs
   // before the first fetch when jobID changes.
   useEffect(() => {
@@ -128,5 +149,5 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
 
   usePollLoop(refreshLoss, reloadInterval, [jobID]);
 
-  return { series, keys, lossKeys, status, refreshLoss, setSeries };
+  return { series, keys, lossKeys, status, refreshLoss, deleteRange, setSeries };
 }
