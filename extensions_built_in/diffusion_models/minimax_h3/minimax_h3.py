@@ -1297,6 +1297,12 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         # control VIDEOS are cached like dataset items and consumed as
         # multi-frame reference blocks
         self.supports_video_control_images = True
+        # D-OPSD: a no-grad teacher pass with the target as its own reference
+        # becomes the training target for the reference-free student pass
+        self.dopsd = bool(self.model_config.model_kwargs.get("dopsd", False))
+        if self.dopsd:
+            self.dopsd_self_ref = True
+            self.require_pixel_tensor_cache = True
 
     def _dit_component(self) -> str:
         partition = str(
@@ -1319,6 +1325,10 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         # pixel area with its own aspect kept, then encoded on its own grid
         if batch is None:
             return None, None, (), ()
+        if getattr(batch, "dopsd_teacher_pass", False):
+            return self._build_dopsd_teacher_condition(
+                batch, latent_shape, device, dtype
+            )
         controls_per_item = None
         if batch.control_tensor_list is not None:
             controls_per_item = batch.control_tensor_list
@@ -1399,6 +1409,54 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
             return None, None, (), ()
         cond_audio = torch.cat(audio_rows, dim=1) if audio_rows else None
         return torch.cat(all_rows, dim=1), cond_audio, (), tuple(blocks)
+
+    def _build_dopsd_teacher_condition(self, batch, latent_shape, device, dtype):
+        """D-OPSD teacher: the target is its own (only) reference, built from
+        the batch's cached pixel tensors; its soundtrack rides as clean
+        reference audio rows."""
+        if batch.tensor is None:
+            raise ValueError(
+                "D-OPSD teacher pass needs pixel tensors on the batch; set "
+                "cache_tensors_to_disk: true on this dataset"
+            )
+        px = batch.tensor.detach().to(device, torch.float32)
+        if px.ndim == 4:
+            # image items: single-frame ref, or a static clip for image_refs_as_video
+            frames = px.unsqueeze(2)
+            as_video_frames = self._image_ref_video_frames()
+            if as_video_frames:
+                frames = frames.expand(-1, -1, as_video_frames, -1, -1).contiguous()
+        else:
+            # video items: (B, T, C, H, W) -> (B, C, T, H, W)
+            frames = px.permute(0, 2, 1, 3, 4).contiguous()
+        ref_latents = self.encode_keyframe_latents(frames)
+        ref_noise = torch.randn_like(ref_latents)
+        ref_latents = (
+            KEYFRAME_NOISE_AUG_T * ref_latents
+            + (1.0 - KEYFRAME_NOISE_AUG_T) * ref_noise
+        )
+        audio_rows = None
+        a_lat = 0
+        if (
+            batch.dataset_config is not None
+            and batch.dataset_config.do_audio
+            and batch.audio_latents is not None
+            and getattr(batch, "num_frames", 1) > 1
+        ):
+            a_lat = packing.audio_latent_num_frames(batch.num_frames)
+            audio_rows = torch.stack(
+                [
+                    self._fit_audio_rows(
+                        batch.audio_latents[b].detach().to(device, torch.float32),
+                        a_lat,
+                    )
+                    for b in range(batch.audio_latents.shape[0])
+                ]
+            ).to(dtype)
+        blocks = (
+            (ref_latents.shape[2], ref_latents.shape[3], ref_latents.shape[4], a_lat),
+        )
+        return patchify_video_latents(ref_latents).to(dtype), audio_rows, (), blocks
 
     @torch.no_grad()
     def _encode_ref_video_for_sampling(self, path: str, gen_config) -> torch.Tensor:

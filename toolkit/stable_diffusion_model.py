@@ -218,6 +218,10 @@ class StableDiffusion:
         # control files may be VIDEOS (paths exposed on the batch as
         # control_video_paths_list); see minimax_h3 ref2va
         self.supports_video_control_images = False
+        # D-OPSD: cache per-item teacher text embeds (item's own media as reference 1)
+        self.dopsd_self_ref = False
+        # forces cache_tensors_to_disk on latent-caching datasets (BaseSDTrainProcess)
+        self.require_pixel_tensor_cache = False
         # control images will come in as a list for encoding some things if true
         self.has_multiple_control_images = False
         # do not resize control images

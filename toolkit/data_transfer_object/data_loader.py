@@ -83,6 +83,8 @@ class FileItemDTO(
         self.encode_first_frame_in_text_embeddings = kwargs.get(
             "encode_first_frame_in_text_embeddings", False
         )
+        # D-OPSD: also cache teacher embeds with the item's own media as reference 1
+        self.dopsd_self_ref = kwargs.get("dopsd_self_ref", False)
         self.te_padding_side = kwargs.get("te_padding_side", "right")
         self.latent_space_version = kwargs.get("latent_space_version", "sd1")
         self.text_embedding_space_version = kwargs.get("text_embedding_space_version", "sd1")
@@ -265,6 +267,8 @@ class DataLoaderBatchDTO:
             # noisy/sigma bookkeeping) directly. The trainer sets this around
             # its prior / guidance-unconditional / preservation passes.
             self.audio_pred_slot: Union[str, None] = None
+            # set by the trainer around the D-OPSD teacher pass
+            self.dopsd_teacher_pass: bool = False
             # noisy audio rows and audio sigma of the primary pass, used to
             # rebuild the clean audio estimate for perceptual losses
             self.audio_noisy: Union[torch.Tensor, None] = None
@@ -325,6 +329,8 @@ class DataLoaderBatchDTO:
             self.prompt_embeds: Union[PromptEmbeds, None] = None
             # diff output preservation embeds (trigger word replaced with class)
             self.dop_prompt_embeds: Union[PromptEmbeds, None] = None
+            # D-OPSD teacher embeds (trigger word replaced with the self-reference token)
+            self.dopsd_prompt_embeds: Union[PromptEmbeds, None] = None
             # if self.file_items[0].control_tensor is not None:
             # if any have a control tensor, we concatenate them
             if any([x.control_tensor is not None for x in self.file_items]):
@@ -516,6 +522,24 @@ class DataLoaderBatchDTO:
                 padding_side = self.file_items[0].te_padding_side
 
                 self.dop_prompt_embeds = concat_prompt_embeds(dop_prompt_embeds_list, padding_side=padding_side)
+
+            if any([getattr(x, 'dopsd_prompt_embeds', None) is not None for x in self.file_items]):
+                # find one to use as a base
+                base_dopsd_prompt_embeds = None
+                for x in self.file_items:
+                    if x.dopsd_prompt_embeds is not None:
+                        base_dopsd_prompt_embeds = x.dopsd_prompt_embeds
+                        break
+                dopsd_prompt_embeds_list = []
+                for x in self.file_items:
+                    if x.dopsd_prompt_embeds is None:
+                        y = base_dopsd_prompt_embeds
+                    else:
+                        y = x.dopsd_prompt_embeds
+                    dopsd_prompt_embeds_list.append(y)
+                padding_side = self.file_items[0].te_padding_side
+
+                self.dopsd_prompt_embeds = concat_prompt_embeds(dopsd_prompt_embeds_list, padding_side=padding_side)
 
             if any([x.audio_tensor is not None for x in self.file_items]):
                 # find one to use as a base

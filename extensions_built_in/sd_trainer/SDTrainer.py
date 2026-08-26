@@ -309,6 +309,9 @@ class SDTrainer(BaseSDTrainProcess):
         
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
+        if getattr(self.sd, 'dopsd_self_ref', False):
+            # D-OPSD: the teacher (prior) prediction is the training target
+            self.do_prior_prediction = True
         # move vae to device if we did not cache latents
         if not self.is_latents_cached:
             self.sd.vae.eval()
@@ -1995,6 +1998,19 @@ class SDTrainer(BaseSDTrainProcess):
                                 [blank_embeds] * noisy_latents.shape[0]
                             )
                         
+                        is_dopsd = getattr(self.sd, 'dopsd_self_ref', False)
+                        if is_dopsd:
+                            # teacher embeds: caption + vision block naming the item as its own reference
+                            if batch.dopsd_prompt_embeds is None:
+                                raise ValueError(
+                                    "D-OPSD requires cached text embeddings; enable "
+                                    "train.cache_text_embeddings"
+                                )
+                            prior_embeds_to_use = batch.dopsd_prompt_embeds.clone().detach().to(
+                                self.device_torch, dtype=dtype
+                            )
+                            batch.dopsd_teacher_pass = True
+
                         # joint audio models stash their audio pred on the batch.
                         # Give this pass its own slot so the preservation loss
                         # can pair it with the preservation pass below.
@@ -2012,6 +2028,11 @@ class SDTrainer(BaseSDTrainProcess):
                             conditioned_prompts=conditioned_prompts
                         )
                         batch.audio_pred_slot = None
+                        if is_dopsd:
+                            batch.dopsd_teacher_pass = False
+                            if batch.audio_pred_prior is not None:
+                                # the teacher's audio prediction is the audio target too
+                                batch.audio_target = batch.audio_pred_prior.detach()
                         if prior_pred is not None:
                             prior_pred = prior_pred.detach()
 

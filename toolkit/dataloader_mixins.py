@@ -324,6 +324,8 @@ class CaptionProcessingDTOMixin:
             self.caption_short: str = None
             # caption with the trigger word replaced by the diff output preservation class
             self.caption_dop: str = None
+            # D-OPSD teacher caption (trigger word replaced by <Picture 1>/<Video 1>)
+            self.caption_dopsd: str = None
 
             dataset_config: DatasetConfig = kwargs.get('dataset_config', None)
             self.extra_values: List[float] = dataset_config.extra_values
@@ -378,6 +380,19 @@ class CaptionProcessingDTOMixin:
                 self.caption_dop = self.caption.replace(
                     self.trigger_word, self.dataset_config.diff_output_preservation_class
                 )
+        if getattr(self, 'dopsd_self_ref', False):
+            # trigger word -> the self-reference token, or the token prepended
+            # when there is no trigger word
+            if self.trigger_word is not None:
+                self.caption_dopsd = self.caption.replace(
+                    self.trigger_word, self.get_dopsd_ref_token()
+                )
+            else:
+                self.caption_dopsd = f"{self.get_dopsd_ref_token()} {self.caption}".strip()
+
+    def get_dopsd_ref_token(self: 'FileItemDTO') -> str:
+        # the item is always the only reference in D-OPSD mode
+        return "<Video 1>" if self.is_video else "<Picture 1>"
 
     def get_caption(
             self: 'FileItemDTO',
@@ -2111,13 +2126,18 @@ class TextEmbeddingFileItemDTOMixin:
         self._blank_text_embedding_path: Union[str, None] = None
         # DOP embeds for dropout steps (dropout caption with trigger replaced by class)
         self._dop_blank_text_embedding_path: Union[str, None] = None
+        # D-OPSD teacher embeds (caption with trigger replaced by the self-reference
+        # token, encoded WITH the item's own image/video as the vision reference)
+        self.dopsd_prompt_embeds: Union[PromptEmbeds, None] = None
+        self._dopsd_text_embedding_path: Union[str, None] = None
+        self._dopsd_blank_text_embedding_path: Union[str, None] = None
         self._loaded_text_embedding_path: Union[str, None] = None
         self._caption_was_dropped = False
         self.is_text_embedding_cached = False
         self.text_embedding_load_device = 'cpu'
         self.text_embedding_version = 1
 
-    def get_text_embedding_info_dict(self: 'FileItemDTO', caption_override=None, text_only=False):
+    def get_text_embedding_info_dict(self: 'FileItemDTO', caption_override=None, text_only=False, dopsd_self_ref=False):
         # make sure the caption is loaded here
         # TODO: we need a way to cache all the other features like trigger words, DOP, etc. For now, we need to throw an error if not compatible.
         if self.caption is None:
@@ -2127,6 +2147,10 @@ class TextEmbeddingFileItemDTOMixin:
             ("text_embedding_space_version", self.text_embedding_space_version),
             ("text_embedding_version", self.text_embedding_version),
         ])
+        if dopsd_self_ref:
+            # teacher embeds carry the item's own media as the vision reference
+            item["dopsd_self_ref"] = True
+            return item
         # dropout embeds are encoded as plain text, keep control conditioning
         # out of their cache key
         if text_only:
@@ -2150,11 +2174,11 @@ class TextEmbeddingFileItemDTOMixin:
             item["first_frame_in_te"] = True
         return item
 
-    def _build_text_embedding_path(self: 'FileItemDTO', caption_override=None, text_only=False):
+    def _build_text_embedding_path(self: 'FileItemDTO', caption_override=None, text_only=False, dopsd_self_ref=False):
         # we store text embeddings in a folder in same path as image called _text_embedding_cache
         img_dir = os.path.dirname(self.path)
         te_dir = os.path.join(img_dir, '_t_e_cache')
-        hash_dict = self.get_text_embedding_info_dict(caption_override=caption_override, text_only=text_only)
+        hash_dict = self.get_text_embedding_info_dict(caption_override=caption_override, text_only=text_only, dopsd_self_ref=dopsd_self_ref)
         filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
         # get base64 hash of md5 checksum of hash_dict
         hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
@@ -2215,6 +2239,35 @@ class TextEmbeddingFileItemDTOMixin:
 
         return self._dop_blank_text_embedding_path
 
+    def get_dopsd_text_embedding_path(self: 'FileItemDTO', recalculate=False):
+        if self._dopsd_text_embedding_path is not None and not recalculate:
+            return self._dopsd_text_embedding_path
+        # make sure the caption is loaded so caption_dopsd is built
+        if self.caption is None:
+            self.load_caption()
+        self._dopsd_text_embedding_path = self._build_text_embedding_path(
+            caption_override=self.caption_dopsd, dopsd_self_ref=True
+        )
+        return self._dopsd_text_embedding_path
+
+    def get_dopsd_dropout_caption(self: 'FileItemDTO'):
+        # dropout caption with the trigger word swapped for the self-reference token
+        dropout_caption = self.get_dropout_caption()
+        if self.trigger_word is not None:
+            return dropout_caption.replace(
+                self.trigger_word, self.get_dopsd_ref_token()
+            )
+        return f"{self.get_dopsd_ref_token()} {dropout_caption}".strip()
+
+    def get_dopsd_blank_text_embedding_path(self: 'FileItemDTO', recalculate=False):
+        if self._dopsd_blank_text_embedding_path is not None and not recalculate:
+            return self._dopsd_blank_text_embedding_path
+        # unlike DOP, dropout embeds keep the vision reference
+        self._dopsd_blank_text_embedding_path = self._build_text_embedding_path(
+            caption_override=self.get_dopsd_dropout_caption(), dopsd_self_ref=True
+        )
+        return self._dopsd_blank_text_embedding_path
+
     def get_blank_text_embedding_path(self: 'FileItemDTO', recalculate=False):
         if self._blank_text_embedding_path is not None and not recalculate:
             return self._blank_text_embedding_path
@@ -2235,6 +2288,8 @@ class TextEmbeddingFileItemDTOMixin:
             self.prompt_embeds = None
         if self.dop_prompt_embeds is not None:
             self.dop_prompt_embeds = None
+        if self.dopsd_prompt_embeds is not None:
+            self.dopsd_prompt_embeds = None
 
     def load_prompt_embedding(self, device=None):
         if not self.is_text_embedding_cached:
@@ -2264,6 +2319,12 @@ class TextEmbeddingFileItemDTOMixin:
                 self.dop_prompt_embeds = self.prompt_embeds
             else:
                 self.dop_prompt_embeds = PromptEmbeds.load(dop_path)
+        if getattr(self, 'dopsd_self_ref', False) and self.dopsd_prompt_embeds is None:
+            if self._caption_was_dropped:
+                dopsd_path = self.get_dopsd_blank_text_embedding_path()
+            else:
+                dopsd_path = self.get_dopsd_text_embedding_path()
+            self.dopsd_prompt_embeds = PromptEmbeds.load(dopsd_path)
 
 class TextEmbeddingCachingMixin:
     def __init__(self: 'AiToolkitDataset', **kwargs):
@@ -2400,6 +2461,50 @@ class TextEmbeddingCachingMixin:
                     else:
                         for path, caption in encode_targets:
                             prompt_embeds: PromptEmbeds = self.sd.encode_prompt(caption)
+                            prompt_embeds.save(path)
+                            del prompt_embeds
+                if getattr(file_item, 'dopsd_self_ref', False):
+                    # D-OPSD teacher embeds encode with the item's own media as the reference
+                    control_video_paths = getattr(file_item, 'control_video_paths', None) or []
+                    if file_item.control_path is not None or len(control_video_paths) > 0:
+                        raise ValueError(
+                            "D-OPSD self-reference training cannot be combined with "
+                            "control images/videos: the item itself must be the only "
+                            f"reference. Offending item: {file_item.path}"
+                        )
+                    dopsd_targets = [(
+                        file_item.get_dopsd_text_embedding_path(recalculate=True),
+                        file_item.caption_dopsd,
+                    )]
+                    if self.dataset_config.caption_dropout_rate > 0:
+                        dopsd_blank_path = file_item.get_dopsd_blank_text_embedding_path(recalculate=True)
+                        if dopsd_blank_path != dopsd_targets[0][0]:
+                            dopsd_targets.append((dopsd_blank_path, file_item.get_dopsd_dropout_caption()))
+                    dopsd_targets = [t for t in dopsd_targets if not os.path.exists(t[0])]
+                    if len(dopsd_targets) > 0:
+                        if not did_move:
+                            self.sd.set_device_state_preset('cache_text_encoder')
+                            did_move = True
+                        if file_item.is_video:
+                            # own path rides through the video-ref presentation
+                            ctrl_img = [file_item.path]
+                            self.sd._ref_video_dataset_config = self.dataset_config
+                        else:
+                            # own bucketed pixels as the reference image
+                            file_item.load_and_process_image(self.transform, only_load_latents=True)
+                            img = file_item.tensor  # (C, H, W) in [-1, 1]
+                            ctrl_img = [
+                                ((img + 1.0) / 2.0)
+                                .clamp(0, 1)
+                                .unsqueeze(0)
+                                .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            ]
+                            # release the cached latent/pixels the load pulled in
+                            file_item.cleanup()
+                        if not self.sd.has_multiple_control_images:
+                            ctrl_img = ctrl_img[0]
+                        for path, caption in dopsd_targets:
+                            prompt_embeds: PromptEmbeds = self.sd.encode_prompt(caption, control_images=ctrl_img)
                             prompt_embeds.save(path)
                             del prompt_embeds
                 file_item.is_text_embedding_cached = True
