@@ -5,8 +5,8 @@ import torch
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
 from toolkit.basic import flush
-from diffusers import AutoencoderKL
 # from toolkit.pixel_shuffle_encoder import AutoencoderPixelMixer
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
@@ -14,7 +14,6 @@ from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
 from .pipeline import ChromaPipeline, prepare_latent_image_ids
 from einops import rearrange, repeat
 import random
@@ -152,38 +151,16 @@ class ChromaRadianceModel(BaseModel):
         
         if model_path.endswith('.pth') or model_path.endswith('.pt'):
             chroma_state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+            transformer = Chroma.load_from_state_dict(chroma_state_dict, dtype)
         else:
-            chroma_state_dict = load_file(model_path, 'cpu')
-        
-        # determine number of double and single blocks
-        double_blocks = 0
-        single_blocks = 0
-        for key in chroma_state_dict.keys():
-            if "double_blocks" in key:
-                block_num = int(key.split(".")[1]) + 1
-                if block_num > double_blocks:
-                    double_blocks = block_num
-            elif "single_blocks" in key:
-                block_num = int(key.split(".")[1]) + 1
-                if block_num > single_blocks:
-                    single_blocks = block_num
-        print(f"Double Blocks: {double_blocks}")
-        print(f"Single Blocks: {single_blocks}")
-
-        chroma_params.depth = double_blocks
-        chroma_params.depth_single_blocks = single_blocks
-        transformer = Chroma(chroma_params)
-        
+            transformer = Chroma.load_model(model_path, dtype=dtype)
         # add dtype, not sure why it doesnt have it
         transformer.dtype = dtype
-        # load the state dict into the model
-        transformer.load_state_dict(chroma_state_dict)
-        
         transformer.to(self.quantize_device, dtype=dtype)
-        
+
         transformer.config = FakeConfig()
-        transformer.config.num_layers = double_blocks
-        transformer.config.num_single_layers = single_blocks
+        transformer.config.num_layers = transformer.params.depth
+        transformer.config.num_single_layers = transformer.params.depth_single_blocks
 
         if self.model_config.quantize:
             # patch the state dict method
@@ -200,21 +177,9 @@ class ChromaRadianceModel(BaseModel):
         flush()
 
         self.print_and_status_update("Loading T5")
-        tokenizer_2 = T5TokenizerFast.from_pretrained(
-            extras_path, subfolder="tokenizer_2", torch_dtype=dtype
-        )
-        text_encoder_2 = T5EncoderModel.from_pretrained(
-            extras_path, subfolder="text_encoder_2", torch_dtype=dtype
-        )
-        text_encoder_2.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantize(text_encoder_2, weights=get_qtype(
-                self.model_config.qtype))
-            freeze(text_encoder_2)
-            flush()
+        tokenizer_2 = T5TextEncoder.load_tokenizer(extras_path)
+        text_encoder_2 = T5TextEncoder.load_model(extras_path, dtype=dtype)
+        self.prepare_text_encoder(text_encoder_2, dtype=dtype)
 
         # self.print_and_status_update("Loading CLIP")
         text_encoder = FakeCLIP()

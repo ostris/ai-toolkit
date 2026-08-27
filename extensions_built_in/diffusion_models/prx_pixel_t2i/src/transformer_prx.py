@@ -40,6 +40,8 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.embeddings import get_timestep_embedding
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 from diffusers.models.normalization import RMSNorm
 
 
@@ -666,7 +668,7 @@ def seq2img(seq: torch.Tensor, patch_size: int, shape: torch.Tensor) -> torch.Te
     return seq
 
 
-class PRXTransformer2DModel(ModelMixin, ConfigMixin, AttentionMixin):
+class PRXTransformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, OstrisModelMixin):
     r"""
     Transformer-based 2D model for text to image generation.
 
@@ -701,6 +703,12 @@ class PRXTransformer2DModel(ModelMixin, ConfigMixin, AttentionMixin):
             Whether to condition the timestep modulation on the latent resolution `(H, W)` via a
             `PRXResolutionEmbedder`. Used by the PRX-7B variant.
     """
+
+    aitk_subfolder = "transformer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["blocks"]
 
     config_name = "config.json"
     _supports_gradient_checkpointing = True

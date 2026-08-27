@@ -12,7 +12,7 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import BaseOutput
-from .autoencoder import AutoEncoder
+from toolkit.models.v2.vae.flux2_kl import AutoEncoder
 from .model import Flux2
 from einops import rearrange
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration

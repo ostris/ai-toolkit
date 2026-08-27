@@ -7,7 +7,7 @@ from toolkit.accelerator import unwrap_model
 import torch
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.config_modules import GenerateImageConfig
-from diffusers.models import HiDreamImageTransformer2DModel
+from toolkit.models.v2.diffusion_models.hidream import HiDreamImageTransformer2DModel
 
 import torch.nn.functional as F
 from PIL import Image

@@ -26,7 +26,11 @@ from huggingface_hub.errors import EntryNotFoundError
 from transformers import AutoModel, AutoTokenizer
 
 from .src.transformer import Ideogram4Config, Ideogram4Transformer2DModel
-from .src.vae import AutoEncoder, AutoEncoderParams, convert_diffusers_state_dict
+from toolkit.models.v2.vae.flux2_kl import (
+    AutoEncoder,
+    AutoEncoderParams,
+    convert_diffusers_state_dict,
+)
 from .src.latent_norm import get_latent_norm
 from .src.pipeline import (
     Ideogram4Pipeline,

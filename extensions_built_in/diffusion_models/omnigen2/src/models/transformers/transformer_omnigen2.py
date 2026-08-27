@@ -15,6 +15,8 @@ from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 
+from toolkit.models.v2._mixin import OstrisModelMixin
+
 from ..attention_processor import OmniGen2AttnProcessorFlash2Varlen, OmniGen2AttnProcessor
 from .repo import OmniGen2RotaryPosEmbed
 from .block_lumina2 import LuminaLayerNormContinuous, LuminaRMSNormZero, LuminaFeedForward, Lumina2CombinedTimestepCaptionEmbedding
@@ -177,7 +179,15 @@ class OmniGen2TransformerBlock(nn.Module):
         return hidden_states
 
 
-class OmniGen2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class OmniGen2Transformer2DModel(
+    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, OstrisModelMixin
+):
+    aitk_subfolder = "transformer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["noise_refiner", "ref_image_refiner", "context_refiner", "layers"]
+
     """
     OmniGen2 Transformer 2D Model.
     

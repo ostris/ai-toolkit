@@ -79,20 +79,14 @@ class ErnieImageModel(BaseModel):
 
         self.print_and_status_update("Loading transformer")
 
-        transformer_path = model_path
-        transformer_subfolder = "transformer"
-        if os.path.exists(transformer_path):
-            transformer_subfolder = None
-            transformer_path = os.path.join(transformer_path, "transformer")
+        if os.path.exists(model_path):
             # check if the path is a full checkpoint.
             te_folder_path = os.path.join(model_path, "text_encoder")
             # if we have the te, this folder is a full checkpoint, use it as the base
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
-        transformer = ErnieImageTransformer2DModel.from_pretrained(
-            transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
-        )
+        transformer = ErnieImageTransformer2DModel.load_model(model_path, dtype=dtype)
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")

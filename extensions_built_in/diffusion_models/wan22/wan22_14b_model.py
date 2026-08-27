@@ -17,7 +17,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.util.quantize import quantize_model
 from .wan22_pipeline import Wan22Pipeline
-from diffusers import WanTransformer3DModel
+from toolkit.models.v2.diffusion_models.wan import WanTransformer3DModel
 
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from torchvision.transforms import functional as TF
@@ -287,11 +287,9 @@ class Wan2214bModel(Wan21):
 
         self.print_and_status_update("Loading transformer 1")
         dtype = self.torch_dtype
-        transformer_1 = WanTransformer3DModel.from_pretrained(
-            transformer_path_1,
-            subfolder=subfolder_1,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        transformer_1 = WanTransformer3DModel.load_model(
+            transformer_path_1, dtype=dtype, subfolder=subfolder_1
+        )
 
         flush()
 
@@ -317,11 +315,9 @@ class Wan2214bModel(Wan21):
 
         self.print_and_status_update("Loading transformer 2")
         dtype = self.torch_dtype
-        transformer_2 = WanTransformer3DModel.from_pretrained(
-            transformer_path_2,
-            subfolder=subfolder_2,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        transformer_2 = WanTransformer3DModel.load_model(
+            transformer_path_2, dtype=dtype, subfolder=subfolder_2
+        )
 
         flush()
 

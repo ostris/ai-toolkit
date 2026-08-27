@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.loaders.single_file_model import FromOriginalModelMixin
 from diffusers.models.attention_processor import Attention
@@ -490,9 +492,16 @@ class BooguImageDoubleStreamTransformerBlock(nn.Module):
 
 
 class BooguImageTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
+    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, OstrisModelMixin
 ):
     """Boogu-Image transformer with mixed double-stream -> single-stream topology."""
+
+    aitk_subfolder = "transformer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["double_stream_layers", "single_stream_layers"]
+
 
     _supports_gradient_checkpointing = True
     _no_split_modules = [

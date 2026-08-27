@@ -141,9 +141,13 @@ class OstrisModelMixin:
         they were.
         config_path: config source for single-file loads, overriding aitk_config_repo.
         device: move the finished model there before returning.
+        subfolder: overrides the class's aitk_subfolder; pass "" to explicitly
+        load from the checkpoint root (e.g. a raw hub repo).
         """
         if subfolder is None:
             subfolder = cls.aitk_subfolder
+        elif subfolder == "":
+            subfolder = None
 
         if name_or_path.endswith(".safetensors"):
             file_path = cls._resolve_single_file(name_or_path)
@@ -213,11 +217,34 @@ class OstrisModelMixin:
         config_path: Optional[str] = None,
         subfolder: Optional[str] = None,
     ):
-        config = cls._load_single_file_config(config_path, subfolder)
-
         state_dict = load_file(file_path)
+        return cls.load_from_state_dict(
+            state_dict, dtype, config_path=config_path, subfolder=subfolder
+        )
+
+    @classmethod
+    def aitk_config_from_state_dict(cls, state_dict: Dict[str, torch.Tensor]):
+        """Derive the model config from the checkpoint itself (e.g. sniffing
+        block counts from key indices). Return None (the default) to load the
+        config from config_path / aitk_config_repo instead."""
+        return None
+
+    @classmethod
+    def load_from_state_dict(
+        cls,
+        state_dict: Dict[str, torch.Tensor],
+        dtype: torch.dtype,
+        config_path: Optional[str] = None,
+        subfolder: Optional[str] = None,
+    ):
+        """Build the model and load an already-read single-file state dict
+        (the tail of the single-file path; also callable directly for
+        checkpoints read from non-safetensors sources)."""
         state_dict = cls.convert_state_dict_on_load(state_dict)
         has_quant_markers = any(k.endswith(".comfy_quant") for k in state_dict)
+        config = cls.aitk_config_from_state_dict(state_dict)
+        if config is None:
+            config = cls._load_single_file_config(config_path, subfolder)
         model = cls.aitk_from_config(config)
 
         if has_quant_markers:
@@ -290,23 +317,51 @@ class OstrisModelMixin:
     # ------------------------------------------------------------------
 
     @classmethod
-    def load_tokenizer(cls, **kwargs):
+    def load_tokenizer(
+        cls,
+        name_or_path: Optional[str] = None,
+        subfolder: Optional[str] = None,
+        **kwargs,
+    ):
+        """Load the tokenizer from ``name_or_path`` (a checkpoint dir or repo
+        holding it at aitk_tokenizer_subfolder), falling back to the class's
+        aitk_tokenizer_repo. subfolder overrides the class default; "" loads
+        from the checkpoint root."""
         from transformers import AutoTokenizer
 
-        if cls.aitk_tokenizer_repo is None:
+        source = name_or_path if name_or_path is not None else cls.aitk_tokenizer_repo
+        if source is None:
             raise ValueError(f"{cls.__name__} does not declare aitk_tokenizer_repo")
+        if subfolder is None:
+            subfolder = cls.aitk_tokenizer_subfolder
+        if subfolder and os.path.isdir(source) and not os.path.isdir(
+            os.path.join(source, subfolder)
+        ):
+            subfolder = None
         return AutoTokenizer.from_pretrained(
-            cls.aitk_tokenizer_repo, subfolder=cls.aitk_tokenizer_subfolder, **kwargs
+            source, subfolder=subfolder or "", **kwargs
         )
 
     @classmethod
-    def load_processor(cls, **kwargs):
+    def load_processor(
+        cls,
+        name_or_path: Optional[str] = None,
+        subfolder: Optional[str] = None,
+        **kwargs,
+    ):
         from transformers import AutoProcessor
 
-        if cls.aitk_processor_repo is None:
+        source = name_or_path if name_or_path is not None else cls.aitk_processor_repo
+        if source is None:
             raise ValueError(f"{cls.__name__} does not declare aitk_processor_repo")
+        if subfolder is None:
+            subfolder = cls.aitk_processor_subfolder
+        if subfolder and os.path.isdir(source) and not os.path.isdir(
+            os.path.join(source, subfolder)
+        ):
+            subfolder = None
         return AutoProcessor.from_pretrained(
-            cls.aitk_processor_repo, subfolder=cls.aitk_processor_subfolder, **kwargs
+            source, subfolder=subfolder or "", **kwargs
         )
 
     # ------------------------------------------------------------------
@@ -403,3 +458,26 @@ class OstrisModelMixin:
         self.aitk_qtype = qtype
         flush()
         return self
+
+
+class OstrisTransformersMixin(OstrisModelMixin):
+    """OstrisModelMixin with the backend hooks speaking the transformers-lib
+    API (PreTrainedModel / AutoConfig) instead of diffusers ModelMixin. Base
+    for text-encoder and vision-encoder modules."""
+
+    @classmethod
+    def aitk_from_pretrained(cls, path, subfolder=None, dtype=None, **kwargs):
+        return cls.from_pretrained(
+            path, subfolder=subfolder or "", torch_dtype=dtype, **kwargs
+        )
+
+    @classmethod
+    def aitk_load_config(cls, path, subfolder=None):
+        from transformers import AutoConfig
+
+        return AutoConfig.from_pretrained(path, subfolder=subfolder or "")
+
+    @classmethod
+    def aitk_from_config(cls, config):
+        with torch.device("meta"):
+            return cls(config)

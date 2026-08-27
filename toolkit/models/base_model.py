@@ -1627,7 +1627,39 @@ class BaseModel:
                 encoder.to(*args, **kwargs)
         else:
             self.text_encoder.to(*args, **kwargs)
-    
+
+    def prepare_text_encoder(self, text_encoder, dtype=None):
+        """Standard post-load text-encoder policy: layer offloading, device
+        placement, then quantize_te. Skips quantization when the checkpoint
+        loaded pre-quantized."""
+        from optimum.quanto import freeze
+        from toolkit.memory_management import MemoryManager
+        from toolkit.util.quantize import get_qtype, quantize
+
+        dtype = dtype if dtype is not None else self.torch_dtype
+        if (
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_text_encoder_percent > 0
+        ):
+            MemoryManager.attach(
+                text_encoder,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
+            )
+
+        text_encoder.to(self.device_torch, dtype=dtype)
+        flush()
+
+        if self.model_config.quantize_te and not getattr(
+            text_encoder, "aitk_is_quantized", False
+        ):
+            self.print_and_status_update("Quantizing Text Encoder")
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+            freeze(text_encoder)
+            flush()
+        return text_encoder
+
+
     def convert_lora_weights_before_save(self, state_dict):
         # can be overridden in child classes to convert weights before saving
         if self.lora_keys_use_comfy_prefix:

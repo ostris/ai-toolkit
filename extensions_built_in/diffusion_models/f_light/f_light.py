@@ -6,15 +6,15 @@ import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from toolkit.basic import flush
-from diffusers import AutoencoderKL
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel
 from .src import FLitePipeline, DiT
 
 if TYPE_CHECKING:
@@ -74,11 +74,7 @@ class FLiteModel(BaseModel):
 
         self.print_and_status_update("Loading transformer")
 
-        transformer = DiT.from_pretrained(
-            model_path,
-            subfolder="dit_model",
-            torch_dtype=dtype,
-        )
+        transformer = DiT.load_model(model_path, dtype=dtype)
         
         transformer.to(self.quantize_device, dtype=dtype)
 
@@ -97,31 +93,16 @@ class FLiteModel(BaseModel):
         flush()
 
         self.print_and_status_update("Loading T5")
-        tokenizer = T5TokenizerFast.from_pretrained(
-            extras_path, subfolder="tokenizer", torch_dtype=dtype
+        tokenizer = T5TextEncoder.load_tokenizer(extras_path, subfolder="tokenizer")
+        text_encoder = T5TextEncoder.load_model(
+            extras_path, dtype=dtype, subfolder="text_encoder"
         )
-        text_encoder = T5EncoderModel.from_pretrained(
-            extras_path, subfolder="text_encoder", torch_dtype=dtype
-        )
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantize(text_encoder, weights=get_qtype(
-                self.model_config.qtype))
-            freeze(text_encoder)
-            flush()
+        self.prepare_text_encoder(text_encoder, dtype=dtype)
 
         self.noise_scheduler = FLiteModel.get_train_scheduler()
         
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            extras_path,
-            subfolder="vae",
-            torch_dtype=dtype
-        )
-        vae = vae.to(self.device_torch, dtype=dtype)
+        vae = KLVAE.load_model(extras_path, dtype=dtype, device=self.device_torch)
 
         self.print_and_status_update("Making pipe")
 

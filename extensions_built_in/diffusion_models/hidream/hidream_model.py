@@ -9,7 +9,10 @@ from toolkit import train_tools
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
-from diffusers import AutoencoderKL, TorchAoConfig
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
+from toolkit.models.v2.text_encoders.clip import CLIPTextEncoderWithProjection
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
+from diffusers import TorchAoConfig
 from toolkit.basic import flush
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
@@ -19,7 +22,6 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
 from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer, TorchAoConfig as TorchAoConfigTransformers
 from .src.pipelines.hidream_image.pipeline_hidream_image import HiDreamImagePipeline
 from .src.models.transformers.transformer_hidream_image import HiDreamImageTransformer2DModel
 from .src.schedulers.fm_solvers_unipc import FlowUniPCMultistepScheduler
@@ -28,15 +30,6 @@ from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
 from tqdm import tqdm
-from transformers import (
-    CLIPTextModelWithProjection,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5Tokenizer,
-    LlamaForCausalLM,
-    PreTrainedTokenizerFast
-)
-
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
@@ -125,10 +118,8 @@ class HidreamModel(BaseModel):
         
         self.print_and_status_update("Loading transformer")
             
-        transformer = self.hidream_transformer_class.from_pretrained(
-            model_path, 
-            subfolder="transformer", 
-            torch_dtype=torch.bfloat16
+        transformer = self.hidream_transformer_class.load_model(
+            model_path, dtype=torch.bfloat16
         )
         
         if not self.low_vram:
@@ -164,44 +155,34 @@ class HidreamModel(BaseModel):
         
         self.print_and_status_update("Loading vae")
         
-        vae = AutoencoderKL.from_pretrained(
-            extras_path,
-            subfolder="vae",
-            torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        vae = KLVAE.load_model(extras_path, dtype=torch.bfloat16).to(
+            self.device_torch, dtype=dtype
+        )
         
         
         self.print_and_status_update("Loading clip encoders")
         
-        text_encoder = CLIPTextModelWithProjection.from_pretrained(
-            extras_path,
-            subfolder="text_encoder",
-            torch_dtype=torch.bfloat16
+        text_encoder = CLIPTextEncoderWithProjection.load_model(
+            extras_path, dtype=torch.bfloat16
         ).to(self.device_torch, dtype=dtype)
-        
-        tokenizer = CLIPTokenizer.from_pretrained(
-            extras_path,
-            subfolder="tokenizer"
+
+        tokenizer = CLIPTextEncoderWithProjection.load_tokenizer(
+            extras_path, use_fast=False
         )
-        
-        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(
-            extras_path,
-            subfolder="text_encoder_2",
-            torch_dtype=torch.bfloat16
+
+        text_encoder_2 = CLIPTextEncoderWithProjection.load_model(
+            extras_path, dtype=torch.bfloat16, subfolder="text_encoder_2"
         ).to(self.device_torch, dtype=dtype)
-        
-        tokenizer_2 = CLIPTokenizer.from_pretrained(
-            extras_path,
-            subfolder="tokenizer_2"
+
+        tokenizer_2 = CLIPTextEncoderWithProjection.load_tokenizer(
+            extras_path, subfolder="tokenizer_2", use_fast=False
         )
         
         flush()
         self.print_and_status_update("Loading T5 encoders")
         
-        text_encoder_3 = T5EncoderModel.from_pretrained(
-            extras_path,
-            subfolder="text_encoder_3",
-            torch_dtype=torch.bfloat16
+        text_encoder_3 = T5TextEncoder.load_model(
+            extras_path, dtype=torch.bfloat16, subfolder="text_encoder_3"
         ).to(self.device_torch, dtype=dtype)
         
         if self.model_config.quantize_te:
@@ -211,9 +192,8 @@ class HidreamModel(BaseModel):
             freeze(text_encoder_3)
             flush()
         
-        tokenizer_3 = T5Tokenizer.from_pretrained(
-            extras_path,
-            subfolder="tokenizer_3"
+        tokenizer_3 = T5TextEncoder.load_tokenizer(
+            extras_path, subfolder="tokenizer_3", use_fast=False
         )
         flush()
         

@@ -9,11 +9,10 @@ import torch.nn.functional as F
 import yaml
 from toolkit.basic import flush
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.quantize import quantize_model
 from toolkit.memory_management import MemoryManager
 
-from transformers import AutoTokenizer, Qwen3ForCausalLM
+from toolkit.models.v2.text_encoders.qwen3 import Qwen3TextEncoder
 from toolkit.models.FakeVAE import FakeVAE
 from toolkit.paths import MODELS_PATH
 from safetensors.torch import load_file, save_file
@@ -468,31 +467,9 @@ class ZImageL2PModel(ZImageModel):
         flush()
 
         self.print_and_status_update("Text Encoder")
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
-        )
-        text_encoder = Qwen3ForCausalLM.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
-        )
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
+        tokenizer = Qwen3TextEncoder.load_tokenizer(base_model_path)
+        text_encoder = Qwen3TextEncoder.load_model(base_model_path, dtype=dtype)
+        self.prepare_text_encoder(text_encoder, dtype=dtype)
 
         self.print_and_status_update("Loading VAE")
         # vae = AutoencoderKL.from_pretrained(

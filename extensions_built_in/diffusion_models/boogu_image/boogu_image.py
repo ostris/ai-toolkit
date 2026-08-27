@@ -30,6 +30,7 @@ from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.qwen3_vl import patch_qwen_vl_patch_embed
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -69,33 +70,6 @@ SYSTEM_PROMPT_T2I = (
 )
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
-
-
-def patch_qwen_vl_patch_embed(model) -> int:
-    """Swap Qwen-VL's vision ``patch_embed`` Conv3d for the equivalent ``F.linear``.
-
-    Qwen-VL's patch_embed is a Conv3d whose kernel == stride, i.e. just a linear
-    projection of each flattened patch. bf16 Conv3d has no fast cuDNN kernel and
-    falls back to a slow path that effectively locks up image caching for the edit
-    (TI2I) model. The weight is read lazily so this survives later ``.to()`` moves.
-    Returns the number of patch_embed modules patched. (Vendored from
-    extensions_built_in/captioner/Qwen3VLCaptioner.py.)
-    """
-    patched = 0
-    for module in model.modules():
-        proj = getattr(module, "proj", None)
-        if isinstance(proj, torch.nn.Conv3d) and tuple(proj.kernel_size) == tuple(
-            proj.stride
-        ):
-
-            def fast_forward(hidden_states, _proj=proj):
-                w = _proj.weight.reshape(_proj.weight.shape[0], -1)
-                x = hidden_states.view(-1, w.shape[1]).to(w.dtype)
-                return F.linear(x, w, _proj.bias)
-
-            module.forward = fast_forward
-            patched += 1
-    return patched
 
 
 class BooguImageModel(BaseModel):
@@ -167,8 +141,8 @@ class BooguImageModel(BaseModel):
         # deserialize -- use the bf16 repo and let ai-toolkit quantize if wanted.
         self.print_and_status_update("Loading transformer")
         try:
-            transformer = BooguImageTransformer2DModel.from_pretrained(
-                base, subfolder="transformer", torch_dtype=dtype, token=HF_TOKEN
+            transformer = BooguImageTransformer2DModel.load_model(
+                base, dtype=dtype, token=HF_TOKEN
             )
         except OSError as e:
             raise OSError(

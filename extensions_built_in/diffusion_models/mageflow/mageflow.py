@@ -34,7 +34,8 @@ from torchvision.transforms.functional import to_tensor
 from safetensors.torch import load_file, save_file
 
 import huggingface_hub
-from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
+from transformers import AutoProcessor, AutoTokenizer
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextEncoder
 from optimum.quanto import freeze
 
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
@@ -209,8 +210,11 @@ class MageFlowModel(BaseModel):
         self.print_and_status_update(f"Loading Qwen3-VL text encoder from {te_path}")
 
         tokenizer = AutoTokenizer.from_pretrained(te_path, token=HF_TOKEN, **te_kwargs)
-        text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
-            te_path, torch_dtype=dtype, token=HF_TOKEN, **te_kwargs
+        text_encoder = Qwen3VLTextEncoder.load_model(
+            te_path,
+            dtype=dtype,
+            subfolder=te_kwargs.get("subfolder", ""),
+            token=HF_TOKEN,
         )
         vl_processor = None
         if self.is_edit:
@@ -224,8 +228,7 @@ class MageFlowModel(BaseModel):
         else:
             # We only ever encode text, so the vision tower is dead weight --
             # drop it to free VRAM.
-            if getattr(text_encoder.model, "visual", None) is not None:
-                text_encoder.model.visual = None
+            text_encoder.drop_vision_tower()
         text_encoder.eval()
         text_encoder.requires_grad_(False)
         flush()

@@ -21,7 +21,11 @@ from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
-from .src.autoencoder import AutoEncoder, AutoEncoderParams, AutoEncoderSmallDecoderParams
+from toolkit.models.v2.vae.flux2_kl import (
+    AutoEncoder,
+    AutoEncoderParams,
+    AutoEncoderSmallDecoderParams,
+)
 from safetensors.torch import load_file, save_file
 from PIL import Image
 import torch.nn.functional as F

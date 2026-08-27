@@ -8,7 +8,11 @@ from toolkit import train_tools
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
-from diffusers import FluxTransformer2DModel, AutoencoderKL, FluxKontextPipeline
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
+from toolkit.models.v2.text_encoders.clip import CLIPTextEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
+from diffusers import FluxKontextPipeline
+from toolkit.models.v2.diffusion_models.flux import FluxTransformer2DModel
 from toolkit.basic import flush
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
@@ -18,7 +22,6 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
 from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
 from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
@@ -80,11 +83,7 @@ class FluxKontextModel(BaseModel):
         # so we need this for the VAE, te, etc
         base_model_path = self.model_config.extras_name_or_path
 
-        transformer_path = model_path
-        transformer_subfolder = 'transformer'
-        if os.path.exists(transformer_path):
-            transformer_subfolder = None
-            transformer_path = os.path.join(transformer_path, 'transformer')
+        if os.path.exists(model_path):
             # check if the path is a full checkpoint.
             te_folder_path = os.path.join(model_path, 'text_encoder')
             # if we have the te, this folder is a full checkpoint, use it as the base
@@ -92,11 +91,7 @@ class FluxKontextModel(BaseModel):
                 base_model_path = model_path
 
         self.print_and_status_update("Loading transformer")
-        transformer = FluxTransformer2DModel.from_pretrained(
-            transformer_path,
-            subfolder=transformer_subfolder,
-            torch_dtype=dtype
-        )
+        transformer = FluxTransformer2DModel.load_model(model_path, dtype=dtype)
         transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
@@ -114,32 +109,18 @@ class FluxKontextModel(BaseModel):
         flush()
 
         self.print_and_status_update("Loading T5")
-        tokenizer_2 = T5TokenizerFast.from_pretrained(
-            base_model_path, subfolder="tokenizer_2", torch_dtype=dtype
-        )
-        text_encoder_2 = T5EncoderModel.from_pretrained(
-            base_model_path, subfolder="text_encoder_2", torch_dtype=dtype
-        )
-        text_encoder_2.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantize(text_encoder_2, weights=get_qtype(
-                self.model_config.qtype))
-            freeze(text_encoder_2)
-            flush()
+        tokenizer_2 = T5TextEncoder.load_tokenizer(base_model_path)
+        text_encoder_2 = T5TextEncoder.load_model(base_model_path, dtype=dtype)
+        self.prepare_text_encoder(text_encoder_2, dtype=dtype)
 
         self.print_and_status_update("Loading CLIP")
-        text_encoder = CLIPTextModel.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype)
-        tokenizer = CLIPTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype)
-        text_encoder.to(self.device_torch, dtype=dtype)
+        text_encoder = CLIPTextEncoder.load_model(
+            base_model_path, dtype=dtype, device=self.device_torch
+        )
+        tokenizer = CLIPTextEncoder.load_tokenizer(base_model_path, use_fast=False)
 
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype)
+        vae = KLVAE.load_model(base_model_path, dtype=dtype)
 
         self.noise_scheduler = FluxKontextModel.get_train_scheduler()
 

@@ -25,18 +25,21 @@ from safetensors.torch import load_file, save_file
 
 import huggingface_hub
 from huggingface_hub.errors import EntryNotFoundError
-from diffusers import AutoencoderKLQwenImage
 from transformers import (
     AutoProcessor,
     AutoTokenizer,
     Qwen2TokenizerFast,
-    Qwen3VLForConditionalGeneration,
 )
 from optimum.quanto import freeze
 
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.vae.qwen_image import QwenImageVAE, QwenImageVAEHolderMixin
+from toolkit.models.v2.text_encoders.qwen3_vl import (
+    Qwen3VLTextEncoder,
+    patch_qwen_vl_patch_embed,
+)
 from toolkit.basic import flush
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
@@ -100,30 +103,6 @@ QWEN_IMAGE_VAE_PATH = "Qwen/Qwen-Image"
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
 
-def patch_qwen_vl_patch_embed(model):
-    """Qwen-VL's vision patch_embed is a Conv3d whose kernel == stride, i.e. a plain
-    linear projection of each flattened patch. bf16 Conv3d has no fast cuDNN kernel and
-    falls back to a slow, GPU-underutilizing path. Swap it for the equivalent F.linear
-    (a GEMM). The weight is read lazily so this survives later .to(device)/dtype moves.
-    Returns the number of patch_embed modules patched. (Same patch as the
-    Qwen3VLCaptioner extension.)"""
-    patched = 0
-    for module in model.modules():
-        proj = getattr(module, "proj", None)
-        if isinstance(proj, torch.nn.Conv3d) and tuple(proj.kernel_size) == tuple(
-            proj.stride
-        ):
-
-            def fast_forward(hidden_states, _proj=proj):
-                w = _proj.weight.reshape(_proj.weight.shape[0], -1)
-                x = hidden_states.view(-1, w.shape[1]).to(w.dtype)
-                return F.linear(x, w, _proj.bias)
-
-            module.forward = fast_forward
-            patched += 1
-    return patched
-
-
 def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
     """Load the MMDiT weights from a local safetensors file/dir or the HF hub.
 
@@ -163,7 +142,7 @@ def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
     return load_file(path)
 
 
-class Krea2Model(BaseModel):
+class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
     arch = "krea2"
 
     def __init__(
@@ -268,8 +247,8 @@ class Krea2Model(BaseModel):
         processor = Qwen2TokenizerFast.from_pretrained(
             te_path, max_length=self.max_text_length, token=HF_TOKEN
         )
-        text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
-            te_path, torch_dtype=dtype, token=HF_TOKEN
+        text_encoder = Qwen3VLTextEncoder.load_model(
+            te_path, dtype=dtype, subfolder="", token=HF_TOKEN
         )
         vl_processor = None
         if self.is_edit:
@@ -281,8 +260,7 @@ class Krea2Model(BaseModel):
         else:
             # We only ever encode text, so the vision tower is dead weight -- drop it to
             # free VRAM and skip loading its (bf16-slow) Conv3d patch_embed onto the GPU.
-            if getattr(text_encoder.model, "visual", None) is not None:
-                text_encoder.model.visual = None
+            text_encoder.drop_vision_tower()
         text_encoder.eval()
         text_encoder.requires_grad_(False)
         flush()
@@ -291,8 +269,8 @@ class Krea2Model(BaseModel):
     def _load_vae(self):
         vae_path = self.model_config.model_kwargs.get("vae_path", QWEN_IMAGE_VAE_PATH)
         self.print_and_status_update(f"Loading Qwen-Image VAE from {vae_path}")
-        vae = AutoencoderKLQwenImage.from_pretrained(
-            vae_path, subfolder="vae", torch_dtype=self.vae_torch_dtype, token=HF_TOKEN
+        vae = QwenImageVAE.load_model(
+            vae_path, dtype=self.vae_torch_dtype, token=HF_TOKEN
         )
         vae.eval()
         vae.requires_grad_(False)
@@ -772,76 +750,9 @@ class Krea2Model(BaseModel):
         return False
 
     # ------------------------------------------------------------------
-    # VAE (Qwen-Image AutoencoderKLQwenImage -- same handling as qwen_image arch)
+    # VAE (Qwen-Image AutoencoderKLQwenImage -- shared QwenImageVAEHolderMixin)
     # ------------------------------------------------------------------
-    def encode_images(self, image_list: List[torch.Tensor], device=None, dtype=None):
-        if device is None:
-            device = self.vae_device_torch
-        if dtype is None:
-            dtype = self.vae_torch_dtype
-
-        if self.vae.device == torch.device("cpu"):
-            self.vae.to(device)
-        self.vae.eval()
-        self.vae.requires_grad_(False)
-
-        image_list = [image.to(device, dtype=dtype) for image in image_list]
-        images = torch.stack(image_list).to(device, dtype=dtype)
-
-        # AutoencoderKLQwenImage is a video VAE: add a frame dim.
-        images = images.unsqueeze(2)
-        latents = self.vae.encode(images).latent_dist.sample()
-
-        latents_mean = (
-            torch.tensor(self.vae.config.latents_mean)
-            .view(1, self.vae.config.z_dim, 1, 1, 1)
-            .to(latents.device, latents.dtype)
-        )
-        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-            1, self.vae.config.z_dim, 1, 1, 1
-        ).to(latents.device, latents.dtype)
-
-        latents = (latents - latents_mean) * latents_std
-        latents = latents.squeeze(2)  # drop frame dim
-        return latents.to(device, dtype=dtype)
-
-    def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
-        if device is None:
-            device = self.vae_device_torch
-        if dtype is None:
-            dtype = self.vae_torch_dtype
-
-        if self.vae.device == torch.device("cpu"):
-            self.vae.to(device)
-
-        latents = latents.to(device, dtype=dtype)
-        latents = latents.unsqueeze(2)  # add frame dim
-
-        latents_mean = (
-            torch.tensor(self.vae.config.latents_mean)
-            .view(1, self.vae.config.z_dim, 1, 1, 1)
-            .to(latents.device, latents.dtype)
-        )
-        latents_std = (
-            torch.tensor(self.vae.config.latents_std)
-            .view(1, self.vae.config.z_dim, 1, 1, 1)
-            .to(latents.device, latents.dtype)
-        )
-        latents = latents * latents_std + latents_mean
-
-        # Full-resolution decode spikes VRAM; tile it when low on VRAM (decode
-        # only -- encode stays untiled).
-        tiled = self.model_config.low_vram
-        if tiled:
-            self.vae.enable_tiling()
-        try:
-            images = self.vae.decode(latents).sample
-        finally:
-            if tiled:
-                self.vae.disable_tiling()
-        images = images.squeeze(2)  # drop frame dim
-        return images.to(device, dtype=dtype)
-
+    vae_decode_tiled_on_low_vram = True
     # ------------------------------------------------------------------
     # Saving / bookkeeping
     # ------------------------------------------------------------------

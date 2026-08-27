@@ -166,21 +166,88 @@ Every arch's components become v2 classes; if `name_or_path` is diffusers, it st
 loads via diffusers. Nothing about sources or outputs changes yet. Suggested order
 (worst duplication first), each including its loading test (see Testing):
 
-- [ ] Shared TEs: `text_encoders/qwen3_vl.py`, `text_encoders/qwen3.py`,
-      `text_encoders/t5.py`, `text_encoders/clip.py`
-- [ ] Shared VAEs: `vae/flux_kl.py` (kills flux2 + ideogram4 copies and the 4
-      scattered `AutoencoderKL` loads), `vae/qwen_image.py` (mean/std handling
-      built in)
-- [ ] z_image / z_image_l2p (already half-migrated)
-- [ ] qwen_image family (qwen_image, qwen_image_edit, qwen_image_edit_plus)
-- [ ] nucleus_image, krea2, ideogram4, mageflow
-- [ ] chroma, chroma_radiance, zeta_chroma
-- [ ] flux2, flux_kontext
-- [ ] minimax_h3 (+ ref2va), ltx2 family
-- [ ] wan21 / wan22 family
-- [ ] hidream family, omnigen2
-- [ ] anima, boogu_image, ernie_image, f_light, prx_pixel_t2i
-- [ ] audio_models (ace_step)
+- [x] `text_encoders/qwen3.py` — Qwen3TextEncoder + `OstrisTransformersMixin`
+      backend + `BaseModel.prepare_text_encoder` policy helper; the 3 verbatim
+      TE stanzas (z_image, z_image_l2p, zeta_chroma) replaced. Verified with
+      real Z-Image weights (load + encode on GPU).
+- [x] `text_encoders/qwen3_vl.py` — Qwen3VLTextEncoder with
+      `drop_vision_tower` / `patch_vision_patch_embed`; the 4 identical
+      `patch_qwen_vl_patch_embed` copies (krea2, mageflow, boogu_image,
+      Qwen3VLCaptioner) consolidated; TE loads migrated in krea2, mageflow,
+      nucleus_image. Still on their own paths: ideogram4 (loads via AutoModel),
+      minimax_h3 (custom truncated/prequantized comfy load — port later),
+      qwen_image (Qwen2.5-VL, needs its own class)
+- [x] `text_encoders/t5.py`, `text_encoders/clip.py` — T5TextEncoder,
+      CLIPTextEncoder, CLIPTextEncoderWithProjection; migrated chroma ×2,
+      flux_kontext, f_light (T5 stanzas → `prepare_text_encoder`, fixing their
+      `qtype` → `qtype_te` bug) and hidream (CLIP ×2 + T5 with subfolder
+      overrides; slow-tokenizer classes preserved via `use_fast=False`)
+- [x] `vae/qwen_image.py` — QwenImageVAE + QwenImageVAEHolderMixin (frame-dim +
+      latents mean/std handling built in, tiling opt-in via
+      `vae_decode_tiled_on_low_vram`); the triplicated encode/decode deleted
+      from qwen_image, nucleus_image, krea2 and all three VAE loads routed
+      through the v2 loader
+- [x] `vae/autoencoder_kl.py` — KLVAE (diffusers AutoencoderKL through the
+      universal loader); migrated the scattered loads in chroma, flux_kontext,
+      f_light, hidream, z_image
+- [x] `vae/flux2_kl.py` — the BFL-style Flux2 KL autoencoder unified from the
+      flux2 + ideogram4 copies (both files deleted; flux2's
+      encode/decode/small-decoder superset + ideogram4's diffusers key
+      converter). Verified bit-identical to both originals (weights, encode/
+      decode outputs, converter mapping) and round-tripped real ae.safetensors
+      weights on GPU. Packing/normalization stays per-model — flux2 packs
+      `(c pi pj)` with BatchNorm running stats, ideogram4 packs `(ph pw c)`
+      with its latent_norm tables; the conventions are incompatible.
+- [x] z_image — transformer, TE (qwen3), and VAE (KLVAE) all on v2 modules.
+      z_image_l2p still has its local progressive-transformer subclass
+      (rebasing it onto the v2 class deferred; its TE is migrated)
+- [x] qwen_image family — `v2/diffusion_models/qwen_image.py` (single-file
+      loads stay on diffusers' from_single_file until the comfy flip) +
+      `v2/text_encoders/qwen25_vl.py` (slow tokenizer preserved); edit
+      variants inherit
+- [x] nucleus_image — `v2/diffusion_models/nucleus_image.py`, TE stanza
+      collapsed to prepare_text_encoder
+- [ ] krea2, ideogram4, mageflow — TE/VAE migrated; their custom local DiT
+      classes still to be rebased onto the mixin
+- [x] chroma, chroma_radiance — both vendored Chroma classes now carry
+      `OstrisModelMixin` with the block-count sniff moved into a new
+      `aitk_config_from_state_dict` hook (mixin now supports checkpoint-derived
+      configs + `load_from_state_dict` for non-safetensors sources, used by
+      radiance's .pth path). zeta_chroma transformer left as-is: its config
+      depends on holder state (patch_size), not the checkpoint
+- [x] flux_kontext — `v2/diffusion_models/flux.py` (FluxTransformer2DModel);
+      whole model now loads through v2 (transformer, T5, CLIP, KLVAE)
+- [ ] flux2 — TE/VAE partially migrated (flux2_kl); custom DiT still local.
+      krea2/mageflow/ideogram4/zeta_chroma DiTs stay model-specific: their
+      configs come from model_kwargs / holder state, so the mixin adds nothing
+      until the comfy-weights flip (Phase 2)
+- [ ] minimax_h3 (+ ref2va), ltx2 family — already on the shared resolver +
+      comfy_quant_import; the full mixin port waits for Phase 2, when the
+      mixin's single-file precision policy (stored-precision loading, fp32-key
+      protection) is settled to match their deliberate behavior
+- [x] wan21 / wan22 family — `v2/diffusion_models/wan.py`
+      (WanTransformer3DModel, both wan22 dual loads included) +
+      `v2/text_encoders/umt5.py` (UMT5TextEncoder + PatchedT5Tokenizer;
+      `loaders/umt5.py` is now a thin compat shim, `comfy_files` still
+      reserved for Phase 2 — no local comfy umt5 file to verify the key
+      conversion against). wan21's TE `qtype` → `qtype_te` bug fixed via
+      prepare_text_encoder
+- [x] hidream family — vendored transformer carries the mixin;
+      `v2/diffusion_models/hidream.py` wraps the diffusers class for
+      hidream_e1; both load via the switchable `hidream_transformer_class`
+      through `load_model`
+- [x] omnigen2 — vendored transformer carries the mixin, load migrated
+- [x] boogu_image, ernie_image, prx_pixel_t2i — their vendored diffusers-style
+      DiT classes now carry OstrisModelMixin (subfolder + block names on the
+      class) and the holders load via `load_model`
+- [x] f_light — DiT class carries the mixin (`aitk_subfolder="dit_model"`),
+      load migrated
+- [ ] anima — loads through diffusers modular pipelines (AnimaModularPipeline);
+      not a mixin fit, revisit at Phase 2
+- [ ] flux2 DiT — holder-config params classes (Flux2/Klein variants), defer
+      like krea2/mageflow
+- [ ] ace_step — one bundled safetensors holds model+TE+VAE+tokenizer via its
+      own load_models; decomposing into v2 components is its own task
 - [ ] Per-model fixes folded in as each migrates: `qtype_te` bug, dequant-on-save
       (`dequantize_if_quantized` everywhere), raw-`quantize()` → `quantize_model()`
 

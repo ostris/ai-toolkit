@@ -96,8 +96,8 @@ class OmniGen2Model(BaseModel):
 
         self.print_and_status_update("Loading transformer")
 
-        transformer = OmniGen2Transformer2DModel.from_pretrained(
-            model_path, subfolder="transformer", torch_dtype=torch.bfloat16
+        transformer = OmniGen2Transformer2DModel.load_model(
+            model_path, dtype=torch.bfloat16
         )
 
         if not self.low_vram:

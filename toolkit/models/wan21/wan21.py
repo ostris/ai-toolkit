@@ -10,7 +10,8 @@ from toolkit.memory_management.manager import MemoryManager
 from toolkit.models.base_model import BaseModel
 from toolkit.prompt_utils import PromptEmbeds
 from transformers import AutoTokenizer, UMT5EncoderModel
-from diffusers import  WanPipeline, WanTransformer3DModel, AutoencoderKL
+from diffusers import  WanPipeline, AutoencoderKL
+from toolkit.models.v2.diffusion_models.wan import WanTransformer3DModel
 from .autoencoder_kl_wan import AutoencoderKLWan
 import os
 import sys
@@ -29,8 +30,6 @@ import os
 import copy
 from toolkit.config_modules import ModelConfig, GenerateImageConfig, ModelArch
 import torch
-from optimum.quanto import freeze, qfloat8, QTensor, qint4
-from toolkit.util.quantize import quantize, get_qtype
 from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 from typing import TYPE_CHECKING, List
 from toolkit.accelerator import unwrap_model
@@ -44,7 +43,7 @@ from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from typing import Any, Callable, Dict, List, Optional, Union
 from toolkit.models.wan21.wan_lora_convert import convert_to_diffusers, convert_to_original
 from toolkit.util.quantize import quantize_model
-from toolkit.models.loaders.umt5 import get_umt5_encoder
+from toolkit.models.v2.text_encoders.umt5 import UMT5TextEncoder
 
 # for generation only?
 scheduler_configUniPC = {
@@ -344,11 +343,9 @@ class Wan21(BaseModel):
     def load_wan_transformer(self, transformer_path, subfolder=None):
         self.print_and_status_update("Loading transformer")
         dtype = self.torch_dtype
-        transformer = WanTransformer3DModel.from_pretrained(
-            transformer_path,
-            subfolder=subfolder,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        transformer = WanTransformer3DModel.load_model(
+            transformer_path, dtype=dtype, subfolder=subfolder
+        )
 
         if self.model_config.split_model_over_gpus:
             raise ValueError(
@@ -418,29 +415,9 @@ class Wan21(BaseModel):
 
         self.print_and_status_update("Loading UMT5EncoderModel")
         
-        tokenizer, text_encoder = get_umt5_encoder(
-            model_path=te_path,
-            tokenizer_subfolder="tokenizer",
-            encoder_subfolder="text_encoder",
-            torch_dtype=dtype,
-            comfy_files=self._comfy_te_file
-        )
-
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing UMT5EncoderModel")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
-            freeze(text_encoder)
-            flush()
-        
-        if self.model_config.layer_offloading and self.model_config.layer_offloading_text_encoder_percent > 0:
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent
-            )
+        tokenizer = UMT5TextEncoder.load_tokenizer(te_path)
+        text_encoder = UMT5TextEncoder.load_model(te_path, dtype=dtype)
+        self.prepare_text_encoder(text_encoder, dtype=dtype)
 
         if self.model_config.low_vram:
             print("Moving transformer back to GPU")

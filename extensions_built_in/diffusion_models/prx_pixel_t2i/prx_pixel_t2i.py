@@ -126,9 +126,7 @@ class PRXPixelT2IModel(BaseModel):
         self.print_and_status_update("Loading transformer")
         # from_pretrained reads config.json (bottleneck_size, resolution_embeds,
         # in_channels=3, ...) and the safetensors in one shot.
-        transformer = PRXTransformer2DModel.from_pretrained(
-            model_path, subfolder="transformer", torch_dtype=dtype
-        )
+        transformer = PRXTransformer2DModel.load_model(model_path, dtype=dtype)
         transformer.to(dtype=dtype)
         flush()
 
