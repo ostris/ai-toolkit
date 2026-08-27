@@ -1191,23 +1191,17 @@ class LTX2Model(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["transformer_blocks"]
 
+    lora_keys_use_comfy_prefix = True
+
     def convert_lora_weights_before_save(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        new_sd = convert_lora_diffusers_to_original(new_sd, version=self.ltx_version)
-        return new_sd
+        state_dict = super().convert_lora_weights_before_save(state_dict)
+        return convert_lora_diffusers_to_original(state_dict, version=self.ltx_version)
 
     def convert_lora_weights_before_load(self, state_dict):
         state_dict = convert_lora_original_to_diffusers(
             state_dict, version=self.ltx_version
         )
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
+        return super().convert_lora_weights_before_load(state_dict)
 
 
 class LTX23Model(LTX2Model):
@@ -1239,88 +1233,30 @@ class LTX25Model(LTX2Model):
     ltx_te_path = None
 
     # ------------------------------------------------------------------
-    # ComfyUI-style file resolution (mirrors MinimaxH3Model)
+    # ComfyUI-style file resolution (toolkit/models/v2/resolver.py)
     # ------------------------------------------------------------------
-    @staticmethod
-    def _find_file_recursive(root_dir: str, filename: str) -> Optional[str]:
-        if not os.path.isdir(root_dir):
-            return None
-        for dirpath, dirnames, filenames in os.walk(root_dir):
-            dirnames.sort()
-            if filename in filenames:
-                return os.path.join(dirpath, filename)
-        return None
-
     def _resolve_comfy_file(self, component: str) -> str:
-        """Find a weight file at its local location, or download it there
-        when (and only when) it is missing.
-
-        Search order: model_kwargs override, the repo-relative path under
-        MODELS_PATH (diffusion_models/, text_encoders/, vae/), the bare
-        filename at the root, any subfolder of the component's category
-        folder (recursive), then the hub — downloaded to the repo-relative
-        path under MODELS_PATH.
-        """
-        override = self.model_config.model_kwargs.get(f"{component}_path", None)
-        if override is not None:
-            if not os.path.exists(override):
-                raise FileNotFoundError(
-                    f"model_kwargs.{component}_path does not exist: {override}"
-                )
-            return override
-
-        rel_path = COMFY_LTX25_FILES[component]
-        filename = os.path.basename(rel_path)
-        category = os.path.dirname(rel_path)
-        for rel in (rel_path, filename):
-            candidate = os.path.join(MODELS_PATH, rel)
-            if os.path.exists(candidate):
-                return candidate
-        found = self._find_file_recursive(os.path.join(MODELS_PATH, category), filename)
-        if found is not None:
-            return found
-
-        repo_id = COMFY_LTX25_REPO
-        name_or_path = self.model_config.name_or_path
-        if (
-            name_or_path
-            and not os.path.exists(name_or_path)
-            and not name_or_path.endswith(".safetensors")
-            and "/" in name_or_path
-        ):
-            repo_id = name_or_path
-        self.print_and_status_update(
-            f"Downloading {rel_path} from {repo_id} into {MODELS_PATH}"
+        from toolkit.models.v2.resolver import (
+            repo_id_from_name_or_path,
+            resolve_comfy_file,
         )
-        return huggingface_hub.hf_hub_download(
-            repo_id=repo_id, filename=rel_path, token=HF_TOKEN, local_dir=MODELS_PATH
+
+        return resolve_comfy_file(
+            COMFY_LTX25_FILES[component],
+            repo_id=repo_id_from_name_or_path(
+                self.model_config.name_or_path, COMFY_LTX25_REPO
+            ),
+            override_path=self.model_config.model_kwargs.get(
+                f"{component}_path", None
+            ),
+            hf_token=HF_TOKEN,
+            status_fn=self.print_and_status_update,
         )
 
     def _resolve_named_file(self, path: str, component: str) -> str:
-        """Resolve an explicit .safetensors path: local file, models-folder
-        file, or an 'org/repo/path/file.safetensors' hub path (downloaded
-        into the models folder)."""
-        if os.path.exists(path):
-            return path
-        splits = path.split("/")
-        if len(splits) < 3:
-            raise ValueError(
-                f"Invalid {component} path: {path}. Must be a local file or "
-                "'repo_id/repo/filename.safetensors' to download from the Hugging Face Hub."
-            )
-        rel_path = "/".join(splits[2:])
-        for candidate in (
-            os.path.join(MODELS_PATH, rel_path),
-            os.path.join(MODELS_PATH, splits[-1]),
-        ):
-            if os.path.exists(candidate):
-                return candidate
-        return huggingface_hub.hf_hub_download(
-            repo_id="/".join(splits[:2]),
-            filename=rel_path,
-            token=HF_TOKEN,
-            local_dir=MODELS_PATH,
-        )
+        from toolkit.models.v2.resolver import resolve_named_file
+
+        return resolve_named_file(path, component=component, hf_token=HF_TOKEN)
 
     def _resolve_dit_path(self) -> str:
         name_or_path = self.model_config.name_or_path

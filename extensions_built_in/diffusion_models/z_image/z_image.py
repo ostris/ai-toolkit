@@ -31,8 +31,8 @@ try:
     from diffusers import ZImagePipeline
 
     # our subclass of the diffusers transformer with the universal loading /
-    # quantization mixin (see toolkit/models/classes/_mixin.py)
-    from toolkit.models.v2.z_image import ZImageTransformer2DModel
+    # quantization mixin (see toolkit/models/v2/_mixin.py)
+    from toolkit.models.v2.diffusion_models.z_image import ZImageTransformer2DModel
 except ImportError:
     raise ImportError(
         "Diffusers is out of date. Update diffusers to the latest version by doing pip uninstall diffusers and then pip install -r requirements.txt"
@@ -464,16 +464,5 @@ class ZImageModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd

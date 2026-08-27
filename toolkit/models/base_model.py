@@ -98,6 +98,9 @@ UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも
 class BaseModel:
     # override these in child classes
     arch = None
+    # rename LoRA keys transformer. <-> diffusion_model. (the ComfyUI-standard
+    # prefix) on save/load
+    lora_keys_use_comfy_prefix = False
 
     def __init__(
             self,
@@ -1627,10 +1630,20 @@ class BaseModel:
     
     def convert_lora_weights_before_save(self, state_dict):
         # can be overridden in child classes to convert weights before saving
+        if self.lora_keys_use_comfy_prefix:
+            return {
+                k.replace("transformer.", "diffusion_model."): v
+                for k, v in state_dict.items()
+            }
         return state_dict
-    
+
     def convert_lora_weights_before_load(self, state_dict):
         # can be overridden in child classes to convert weights before loading
+        if self.lora_keys_use_comfy_prefix:
+            return {
+                k.replace("diffusion_model.", "transformer."): v
+                for k, v in state_dict.items()
+            }
         return state_dict
     
     def condition_noisy_latents(self, latents: torch.Tensor, batch:'DataLoaderBatchDTO'):

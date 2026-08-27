@@ -3,7 +3,7 @@ from diffusers.models.transformers import (
     ZImageTransformer2DModel as DiffusersZImageTransformer2DModel,
 )
 
-from ._mixin import OstrisModelMixin
+from .._mixin import OstrisModelMixin
 
 
 class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMixin):
@@ -12,7 +12,7 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
     aitk_config_repo = "Tongyi-MAI/Z-Image-Turbo"
 
     @classmethod
-    def get_quantization_block_names(cls):
+    def get_transformer_block_names(cls):
         return ["layers"]
 
     @classmethod

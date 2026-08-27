@@ -343,21 +343,7 @@ class OmniGen2Model(BaseModel):
             return ["noise_refiner", "context_refiner", "ref_image_refiner", "layers"]
         return ["noise_refiner", "context_refiner", "layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        # currently starte with transformer. but needs to start with diffusion_model. for comfyui
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
-
-    def convert_lora_weights_before_load(self, state_dict):
-        # saved as diffusion_model. but needs to be transformer. for ai-toolkit
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
     def get_base_model_version(self):
         return "omnigen2"

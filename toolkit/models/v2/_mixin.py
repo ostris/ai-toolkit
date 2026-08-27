@@ -9,7 +9,11 @@ digests any of:
   - a HuggingFace repo id ("org/repo")
   - a local single .safetensors file in the model's original key layout
   - a remote single .safetensors file ("org/repo/path/file.safetensors")
-plus optional automatic quantization of the loaded weights (`qtype=...`).
+plus optional automatic quantization of the loaded weights (`qtype=...`). A
+single-file checkpoint carrying ComfyUI `comfy_quant` markers loads with its
+pre-quantized layers attached to the toolkit's quantization backends
+(convrot8 / nvfp4) automatically. `save_model` writes a single-file
+.safetensors back in the original (comfy) key layout.
 
 Model specific behavior lives in small overridable hooks (key conversion, config
 source, block names, backend loading), so subclassing for a new model usually means
@@ -47,6 +51,19 @@ class OstrisModelMixin:
     # .safetensors file and no config_path is given
     aitk_config_repo: Optional[str] = None
 
+    # ---- comfy weight sources (Phase 2 flips the loading default to these) ----
+    # hub repo the comfy-format weight files are published in
+    aitk_comfy_repo: Optional[str] = None
+    # standard name_or_path (hub repo id) -> repo-relative comfy weight file
+    # (ComfyUI folder layout: diffusion_models/, text_encoders/, vae/, ...)
+    aitk_comfy_weight_names: Dict[str, str] = {}
+
+    # ---- tokenizer/processor source, for text-encoder modules ----
+    aitk_tokenizer_repo: Optional[str] = None
+    aitk_tokenizer_subfolder: Optional[str] = None
+    aitk_processor_repo: Optional[str] = None
+    aitk_processor_subfolder: Optional[str] = None
+
     # ---- state set by the loader / quantizer ----
     aitk_is_quantized: bool = False
     aitk_qtype: Optional[str] = None
@@ -68,7 +85,7 @@ class OstrisModelMixin:
         return state_dict
 
     @classmethod
-    def get_quantization_block_names(cls) -> Optional[List[str]]:
+    def get_transformer_block_names(cls) -> Optional[List[str]]:
         """Names (dotted paths allowed) of the repeated block lists to quantize one
         block at a time so the whole model never has to sit on the gpu at once."""
         return None
@@ -200,15 +217,131 @@ class OstrisModelMixin:
 
         state_dict = load_file(file_path)
         state_dict = cls.convert_state_dict_on_load(state_dict)
-        for key, value in state_dict.items():
-            state_dict[key] = value.to(dtype=dtype)
-
+        has_quant_markers = any(k.endswith(".comfy_quant") for k in state_dict)
         model = cls.aitk_from_config(config)
-        model.load_state_dict(state_dict, assign=True)
-        model.to(dtype=dtype)
+
+        if has_quant_markers:
+            # pre-quantized comfy checkpoint: attach the quantized linears onto
+            # the toolkit's backends, load the rest at its stored precision
+            # (the checkpoint's bf16/fp16/fp32 mix is deliberate)
+            from toolkit.util.comfy_quant_import import import_comfy_quantized_layers
+
+            state_dict, num_quantized = import_comfy_quantized_layers(
+                model, state_dict, orig_dtype=dtype
+            )
+            cls._load_state_dict_with_quantized(model, state_dict)
+            model.aitk_is_quantized = True
+        else:
+            for key, value in state_dict.items():
+                state_dict[key] = value.to(dtype=dtype)
+            model.load_state_dict(state_dict, assign=True)
+            model.to(dtype=dtype)
         del state_dict
         flush()
         return model
+
+    @staticmethod
+    def _load_state_dict_with_quantized(model, state_dict):
+        """Load a state dict onto a (meta-built) model whose quantized linears
+        were already attached by import_comfy_quantized_layers: their weight
+        (and importer-assigned bias) legitimately report as missing keys."""
+        from toolkit.util.ostris_quant import OstrisLinear
+
+        result = model.load_state_dict(state_dict, assign=True, strict=False)
+        quantized_param_keys = set()
+        for name, m in model.named_modules():
+            if isinstance(m, OstrisLinear):
+                quantized_param_keys.add(f"{name}.weight")
+                if m.bias is not None:
+                    quantized_param_keys.add(f"{name}.bias")
+        bad_missing = [k for k in result.missing_keys if k not in quantized_param_keys]
+        if bad_missing or result.unexpected_keys:
+            raise ValueError(
+                f"{type(model).__name__} load mismatch: missing {bad_missing[:8]}, "
+                f"unexpected {result.unexpected_keys[:8]}"
+            )
+        leftover_meta = [n for n, p in model.named_parameters() if p.is_meta]
+        if leftover_meta:
+            raise ValueError(
+                f"{type(model).__name__} load left meta parameters: "
+                f"{leftover_meta[:8]}"
+            )
+
+    # ------------------------------------------------------------------
+    # comfy weight sources
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def find_comfy_weights(cls, name_or_path: str) -> Optional[str]:
+        """Local comfy-format weight file registered for a standard
+        ``name_or_path``, or None. Never downloads — Phase 2 flips the loading
+        default to comfy sources; until then callers opt in explicitly."""
+        from toolkit.models.v2.resolver import resolve_comfy_file
+
+        rel_path = cls.aitk_comfy_weight_names.get(name_or_path)
+        if rel_path is None:
+            return None
+        return resolve_comfy_file(
+            rel_path, repo_id=cls.aitk_comfy_repo, local_only=True
+        )
+
+    # ------------------------------------------------------------------
+    # tokenizer / processor (text-encoder modules)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def load_tokenizer(cls, **kwargs):
+        from transformers import AutoTokenizer
+
+        if cls.aitk_tokenizer_repo is None:
+            raise ValueError(f"{cls.__name__} does not declare aitk_tokenizer_repo")
+        return AutoTokenizer.from_pretrained(
+            cls.aitk_tokenizer_repo, subfolder=cls.aitk_tokenizer_subfolder, **kwargs
+        )
+
+    @classmethod
+    def load_processor(cls, **kwargs):
+        from transformers import AutoProcessor
+
+        if cls.aitk_processor_repo is None:
+            raise ValueError(f"{cls.__name__} does not declare aitk_processor_repo")
+        return AutoProcessor.from_pretrained(
+            cls.aitk_processor_repo, subfolder=cls.aitk_processor_subfolder, **kwargs
+        )
+
+    # ------------------------------------------------------------------
+    # saving
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def save_model(
+        self,
+        output_path: str,
+        dtype: Optional[torch.dtype] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ):
+        """Save as a single-file .safetensors in the model's original (comfy)
+        key layout, via convert_state_dict_on_save. Quantized weights are
+        dequantized to full precision; dtype, when given, casts the floating
+        point tensors. (Quantized-storage saves — comfy_quant markers — come
+        with Phase 2.)"""
+        from safetensors.torch import save_file
+        from toolkit.util.quantize import dequantize_if_quantized
+
+        state_dict = {}
+        for key, value in self.state_dict().items():
+            value = dequantize_if_quantized(value)
+            if dtype is not None and value.is_floating_point():
+                value = value.to(dtype=dtype)
+            state_dict[key] = value.detach().to("cpu").contiguous()
+        state_dict = self.convert_state_dict_on_save(state_dict)
+
+        parent = os.path.dirname(output_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        save_file(state_dict, output_path, metadata=metadata)
+        del state_dict
+        flush()
 
     # ------------------------------------------------------------------
     # quantization
@@ -222,7 +355,7 @@ class OstrisModelMixin:
         exclude: Optional[List[str]] = None,
     ):
         """Quantize the model weights in place. When device is given, the repeated
-        blocks (get_quantization_block_names) are moved there one at a time for the
+        blocks (get_transformer_block_names) are moved there one at a time for the
         quantization math and returned to their original device, so the whole model
         never has to fit on the gpu in full precision."""
         from optimum.quanto import freeze
@@ -238,7 +371,7 @@ class OstrisModelMixin:
         )
 
         blocks: List[torch.nn.Module] = []
-        for name in self.get_quantization_block_names() or []:
+        for name in self.get_transformer_block_names() or []:
             # name may be a dotted path for models that nest their blocks
             block_list = self
             for part in name.split("."):

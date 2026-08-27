@@ -332,14 +332,5 @@ class PRXPixelT2IModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["blocks"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        return {
-            k.replace("transformer.", "diffusion_model."): v
-            for k, v in state_dict.items()
-        }
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        return {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in state_dict.items()
-        }

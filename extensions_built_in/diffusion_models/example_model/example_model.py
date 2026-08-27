@@ -504,19 +504,8 @@ class ExampleModel(BaseModel):
         attribute in src/model.py."""
         return ["blocks"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        """Map internal LoRA keys to the ecosystem-standard naming right before
-        the .safetensors is written. Most modern models ship LoRAs with a
-        ``diffusion_model.`` prefix (ComfyUI convention); internally ai-toolkit
-        uses ``transformer.``."""
-        return {
-            k.replace("transformer.", "diffusion_model."): v
-            for k, v in state_dict.items()
-        }
+    # LoRA keys save with the ecosystem-standard ``diffusion_model.`` prefix
+    # (ComfyUI convention) and load back to the internal ``transformer.``
+    # prefix; see BaseModel.convert_lora_weights_before_save/load
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        """Inverse of the above, applied when resuming from a saved LoRA."""
-        return {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in state_dict.items()
-        }

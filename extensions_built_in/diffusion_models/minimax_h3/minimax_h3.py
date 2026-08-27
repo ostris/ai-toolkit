@@ -52,6 +52,11 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.resolver import (
+    find_file_recursive,
+    repo_id_from_name_or_path,
+    resolve_comfy_file,
+)
 from toolkit.paths import MODELS_PATH
 from toolkit.util.comfy_quant_import import import_comfy_quantized_layers
 from toolkit.util.ostris_quant import OstrisLinear
@@ -233,64 +238,23 @@ class MinimaxH3Model(BaseModel):
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
-    @staticmethod
-    def _find_file_recursive(root_dir: str, filename: str) -> Optional[str]:
-        """First (breadth-stable, sorted) match of ``filename`` anywhere under
-        ``root_dir``."""
-        if not os.path.isdir(root_dir):
-            return None
-        for dirpath, dirnames, filenames in os.walk(root_dir):
-            dirnames.sort()
-            if filename in filenames:
-                return os.path.join(dirpath, filename)
-        return None
-
     def _resolve_comfy_file(self, component: str) -> str:
-        """Find a weight file at its local location, or download it there
-        when (and only when) it is missing.
-
-        Search order: model_kwargs override, the repo-relative path under
-        MODELS_PATH (diffusion_models/, text_encoders/, vae/), the bare
-        filename at the root, any subfolder of the component's category
-        folder (recursive — e.g. diffusion_models/my_custom_sub/), the same
-        spots under name_or_path when it is a local folder, then the hub —
-        downloaded to the repo-relative path under MODELS_PATH.
-        """
-        override = self.model_config.model_kwargs.get(f"{component}_path", None)
-        if override is not None:
-            if not os.path.exists(override):
-                raise FileNotFoundError(
-                    f"model_kwargs.{component}_path does not exist: {override}"
-                )
-            return override
-
-        rel_path = COMFY_FILES[component]
-        filename = os.path.basename(rel_path)
-        category = os.path.dirname(rel_path)
-        roots = [MODELS_PATH]
+        """Find a weight file at its local location (model_kwargs override,
+        comfy layout under MODELS_PATH or a local name_or_path dir), or
+        download it there when (and only when) it is missing — see
+        toolkit/models/v2/resolver.py for the search order."""
         name_or_path = self.model_config.name_or_path
-        if name_or_path and os.path.isdir(name_or_path):
-            roots.append(name_or_path)
-        for root in roots:
-            for rel in (rel_path, filename):
-                candidate = os.path.join(root, rel)
-                if os.path.exists(candidate):
-                    return candidate
-        for root in roots:
-            found = self._find_file_recursive(os.path.join(root, category), filename)
-            if found is not None:
-                return found
-
-        import huggingface_hub
-
-        repo_id = COMFY_REPO
-        if name_or_path and not os.path.exists(name_or_path) and "/" in name_or_path:
-            repo_id = name_or_path
-        self.print_and_status_update(
-            f"Downloading {rel_path} from {repo_id} into {MODELS_PATH}"
+        extra_roots = (
+            [name_or_path] if name_or_path and os.path.isdir(name_or_path) else []
         )
-        return huggingface_hub.hf_hub_download(
-            repo_id=repo_id, filename=rel_path, local_dir=MODELS_PATH
+        return resolve_comfy_file(
+            COMFY_FILES[component],
+            repo_id=repo_id_from_name_or_path(name_or_path, COMFY_REPO),
+            override_path=self.model_config.model_kwargs.get(
+                f"{component}_path", None
+            ),
+            extra_roots=extra_roots,
+            status_fn=self.print_and_status_update,
         )
 
     def _dit_component(self) -> str:
@@ -322,7 +286,7 @@ class MinimaxH3Model(BaseModel):
         lora_path = self.model_config.assistant_lora_path
         if not os.path.exists(lora_path):
             filename = os.path.basename(lora_path)
-            found = self._find_file_recursive(
+            found = find_file_recursive(
                 os.path.join(MODELS_PATH, "loras"), filename
             )
             if found is not None:
@@ -1226,20 +1190,9 @@ class MinimaxH3Model(BaseModel):
             "*adaln_proj*",
         ]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        # ComfyUI's MiniMax-H3 keys are the original checkpoint keys, so the
-        # standard diffusion_model prefix maps directly
-        return {
-            k.replace("transformer.", "diffusion_model."): v
-            for k, v in state_dict.items()
-        }
-
-    def convert_lora_weights_before_load(self, state_dict):
-        return {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in state_dict.items()
-        }
-
+    # ComfyUI's MiniMax-H3 keys are the original checkpoint keys, so the
+    # standard diffusion_model prefix maps directly
+    lora_keys_use_comfy_prefix = True
 
 class MinimaxH3Ref2VAModel(MinimaxH3Model):
     """Reference-to-video (ref2va): the control images ride along as reference
