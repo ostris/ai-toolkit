@@ -760,6 +760,13 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         else:
             inputs = self._process_items(items)
         inputs = inputs.to(self.device_torch).to(self.torch_dtype)
+        # a generate that dies between static-cache creation and its first
+        # forward leaves model._cache with uninitialized layers; transformers
+        # then raises AttributeError reading cache.max_batch_size on every
+        # later call, masking the original error — drop the stale cache
+        stale_cache = getattr(self.model, "_cache", None)
+        if stale_cache is not None and not stale_cache.is_initialized:
+            del self.model._cache
         # under static cache, generate hands the forward a prepared 4D mask;
         # the true 2D padding mask is needed for the prefill rope index
         self.model._pad_mask_2d = inputs.get("attention_mask", None)
