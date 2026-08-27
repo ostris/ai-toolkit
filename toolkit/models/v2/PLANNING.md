@@ -382,8 +382,12 @@ Decisions:
       raw `quantize()` call sites and silently dropped by `quantize_model()`; the
       ARA path inside `quantize_model` hardcodes `uint8`. Decide the unified
       behavior when consolidating.
-- [ ] `toolkit/models/loaders/umt5.py` dead `comfy_files` param (wan21 comfy-TE
-      no-op) — fix when wan migrates.
+- [x] wan comfy-TE resolved for real: UMT5TextEncoder carries comfy
+      candidates (fp8_e4m3fn_scaled via the legacy importer, fp16), files
+      already in transformers key layout (spiece blob dropped, tied
+      embed_tokens materialized). Verified: wan21 samples with the local
+      comfy fp8 TE. The loaders/umt5.py `comfy_files` param stays as a
+      no-op shim for old callers.
 - [ ] Registry hardening: error (don't fall back to SD1) on unknown arch; lazy
       per-arch imports; single source of truth shared with the UI's
       `options.tsx` model list.

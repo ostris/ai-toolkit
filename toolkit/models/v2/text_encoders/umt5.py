@@ -33,10 +33,35 @@ class UMT5TextEncoder(UMT5EncoderModel, OstrisTransformersMixin):
 
     aitk_subfolder = "text_encoder"
     aitk_tokenizer_subfolder = "tokenizer"
+    aitk_config_repo = "ai-toolkit/umt5_xxl_encoder"
+
+    aitk_comfy_repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged"
+    # comfy umt5 files already use the transformers key layout; the
+    # fp8_e4m3fn_scaled variant is the legacy scaled-fp8 format (handled by
+    # the importer's float8 backend)
+    aitk_comfy_weight_names = {
+        "ai-toolkit/umt5_xxl_encoder": [
+            "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "split_files/text_encoders/umt5_xxl_fp16.safetensors",
+        ],
+    }
 
     @classmethod
     def get_transformer_block_names(cls):
         return ["encoder.block"]
+
+    @classmethod
+    def convert_state_dict_on_load(cls, state_dict):
+        # drop the embedded sentencepiece blob and materialize the tied
+        # embed_tokens reference
+        state_dict = dict(state_dict)
+        state_dict.pop("spiece_model", None)
+        if (
+            "encoder.embed_tokens.weight" not in state_dict
+            and "shared.weight" in state_dict
+        ):
+            state_dict["encoder.embed_tokens.weight"] = state_dict["shared.weight"]
+        return state_dict
 
     @classmethod
     def load_tokenizer(cls, name_or_path=None, subfolder=None, **kwargs):
