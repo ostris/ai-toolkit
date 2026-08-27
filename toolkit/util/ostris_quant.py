@@ -186,6 +186,7 @@ def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
     """Resolve a qtype string to a quantizer backend instance, or None if the qtype
     does not belong to a custom backend. Add new backends here."""
     from toolkit.util.convrot_quant import CONVROT_QTYPES, get_convrot_quantizer
+    from toolkit.util.float8_quant import FLOAT8_QTYPES, Float8Quantizer
     from toolkit.util.nvfp4_quant import NVFP4_QTYPES, Nvfp4Quantizer
     from toolkit.util.orbit_quant import ORBIT_QTYPES, OrbitQuantizer
     from toolkit.util.orbit_vq_quant import ORBIT_VQ_QTYPES, OrbitVQQuantizer
@@ -200,6 +201,8 @@ def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
         quantizer = get_convrot_quantizer(qtype)
     elif qtype in NVFP4_QTYPES:
         quantizer = Nvfp4Quantizer()
+    elif qtype in FLOAT8_QTYPES:
+        quantizer = Float8Quantizer()
     elif qtype in UINTX_QTYPES:
         quantizer = UIntXQuantizer(UINTX_QTYPES[qtype])
     if quantizer is not None:

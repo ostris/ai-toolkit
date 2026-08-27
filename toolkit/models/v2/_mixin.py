@@ -51,12 +51,15 @@ class OstrisModelMixin:
     # .safetensors file and no config_path is given
     aitk_config_repo: Optional[str] = None
 
-    # ---- comfy weight sources (Phase 2 flips the loading default to these) ----
-    # hub repo the comfy-format weight files are published in
+    # ---- comfy weight sources ----
+    # hub repo the comfy-format weight files are published in (Comfy-Org/...)
     aitk_comfy_repo: Optional[str] = None
     # standard name_or_path (hub repo id) -> repo-relative comfy weight file
-    # (ComfyUI folder layout: diffusion_models/, text_encoders/, vae/, ...)
-    aitk_comfy_weight_names: Dict[str, str] = {}
+    # candidates for this module: every precision variant the class can digest.
+    # Selection ranks them convrot8 > float8 mixed > float8 > bf16 > fp16
+    # (resolver.comfy_precision_rank); a locally-present candidate always wins
+    # over a download.
+    aitk_comfy_weight_names: Dict[str, List[str]] = {}
 
     # ---- tokenizer/processor source, for text-encoder modules ----
     aitk_tokenizer_repo: Optional[str] = None
@@ -110,7 +113,12 @@ class OstrisModelMixin:
 
     @classmethod
     def aitk_from_config(cls, config):
-        with torch.device("meta"):
+        # params on meta (materialized by the state-dict assign), buffers real:
+        # non-persistent buffers (e.g. rope tables) are computed at init and
+        # never appear in checkpoints
+        from accelerate import init_empty_weights
+
+        with init_empty_weights(include_buffers=False):
             return cls.from_config(config)
 
     # ------------------------------------------------------------------
@@ -128,6 +136,7 @@ class OstrisModelMixin:
         exclude_quant_modules: Optional[List[str]] = None,
         config_path: Optional[str] = None,
         subfolder: Optional[str] = None,
+        use_comfy_weights: bool = True,
         **kwargs,
     ):
         """Load a model universally from a given name or path.
@@ -135,6 +144,13 @@ class OstrisModelMixin:
         name_or_path can be a local diffusers directory, a hub repo id, a local
         single .safetensors file, or a remote single file
         ("org/repo/file.safetensors").
+
+        When name_or_path is a standard hub repo this class has comfy weight
+        candidates registered for (aitk_comfy_weight_names), the comfy file is
+        the preferred source: the best-ranked local candidate, or the
+        top-preference candidate downloaded into the comfy layout under
+        MODELS_PATH. The standard repo still supplies the config. Local dirs
+        and unregistered repos load as-is; use_comfy_weights=False opts out.
 
         qtype: quantize the weights after loading. quantize_device: where to run the
         quantization math; blocks are moved there one at a time and returned to where
@@ -148,6 +164,18 @@ class OstrisModelMixin:
             subfolder = cls.aitk_subfolder
         elif subfolder == "":
             subfolder = None
+
+        if (
+            use_comfy_weights
+            and not name_or_path.endswith(".safetensors")
+            and not os.path.exists(name_or_path)
+        ):
+            comfy_path = cls.resolve_comfy_weights(name_or_path, subfolder=subfolder)
+            if comfy_path is not None:
+                if config_path is None:
+                    # the standard repo supplies the config for the comfy file
+                    config_path = name_or_path
+                name_or_path = comfy_path
 
         if name_or_path.endswith(".safetensors"):
             file_path = cls._resolve_single_file(name_or_path)
@@ -241,7 +269,9 @@ class OstrisModelMixin:
         (the tail of the single-file path; also callable directly for
         checkpoints read from non-safetensors sources)."""
         state_dict = cls.convert_state_dict_on_load(state_dict)
-        has_quant_markers = any(k.endswith(".comfy_quant") for k in state_dict)
+        has_quant_markers = "scaled_fp8" in state_dict or any(
+            k.endswith(".comfy_quant") for k in state_dict
+        )
         config = cls.aitk_config_from_state_dict(state_dict)
         if config is None:
             config = cls._load_single_file_config(config_path, subfolder)
@@ -299,17 +329,42 @@ class OstrisModelMixin:
     # ------------------------------------------------------------------
 
     @classmethod
-    def find_comfy_weights(cls, name_or_path: str) -> Optional[str]:
-        """Local comfy-format weight file registered for a standard
-        ``name_or_path``, or None. Never downloads — Phase 2 flips the loading
-        default to comfy sources; until then callers opt in explicitly."""
-        from toolkit.models.v2.resolver import resolve_comfy_file
+    def resolve_comfy_weights(
+        cls,
+        name_or_path: str,
+        subfolder: Optional[str] = None,
+        local_only: bool = False,
+        hf_token: Optional[str] = None,
+        status_fn: Optional[callable] = None,
+    ) -> Optional[str]:
+        """The comfy-format weight file replacing a standard ``name_or_path``,
+        or None when this class has none registered for it. Best-ranked local
+        candidate wins; otherwise the top-preference candidate is downloaded
+        to the comfy layout under MODELS_PATH (unless local_only).
 
-        rel_path = cls.aitk_comfy_weight_names.get(name_or_path)
-        if rel_path is None:
+        Candidate keys may be plain repo ids or ``(repo_id, subfolder)``
+        tuples for checkpoints holding several of this component (e.g.
+        wan2.2's transformer / transformer_2)."""
+        from toolkit.models.v2.resolver import resolve_comfy_candidates
+
+        candidates = None
+        if subfolder is not None:
+            candidates = cls.aitk_comfy_weight_names.get((name_or_path, subfolder))
+        if candidates is None:
+            candidates = cls.aitk_comfy_weight_names.get(name_or_path)
+        repo_id = cls.aitk_comfy_repo
+        if isinstance(candidates, dict):
+            # entries may carry their own comfy repo ({"repo": ..., "files": [...]})
+            repo_id = candidates.get("repo", repo_id)
+            candidates = candidates.get("files")
+        if not candidates or repo_id is None:
             return None
-        return resolve_comfy_file(
-            rel_path, repo_id=cls.aitk_comfy_repo, local_only=True
+        return resolve_comfy_candidates(
+            candidates,
+            repo_id=repo_id,
+            hf_token=hf_token,
+            status_fn=status_fn,
+            local_only=local_only,
         )
 
     # ------------------------------------------------------------------
@@ -374,21 +429,47 @@ class OstrisModelMixin:
         output_path: str,
         dtype: Optional[torch.dtype] = None,
         metadata: Optional[Dict[str, str]] = None,
+        quantized: Optional[bool] = None,
     ):
         """Save as a single-file .safetensors in the model's original (comfy)
-        key layout, via convert_state_dict_on_save. Quantized weights are
-        dequantized to full precision; dtype, when given, casts the floating
-        point tensors. (Quantized-storage saves — comfy_quant markers — come
-        with Phase 2.)"""
+        key layout, via convert_state_dict_on_save.
+
+        quantized: None (auto) keeps quantized storage — comfy_quant markers,
+        loadable by ComfyUI and by this class — when the model holds quantized
+        layers whose backend has a comfy format (convrot8 / nvfp4 /
+        convrotcomfyw4a4), and saves dequantized full precision otherwise.
+        True forces quantized storage (raises if any quantized layer's backend
+        has no comfy format); False forces a dequantized save. dtype, when
+        given, casts the floating point (non-quantized) tensors."""
         from safetensors.torch import save_file
         from toolkit.util.quantize import dequantize_if_quantized
 
+        q_entries: Dict[str, torch.Tensor] = {}
+        exported: List[str] = []
+        if quantized is None or quantized:
+            from toolkit.util.comfy_quant_export import export_comfy_quantized_layers
+
+            q_entries, exported, unexportable = export_comfy_quantized_layers(self)
+            if unexportable:
+                if quantized:
+                    raise ValueError(
+                        f"{type(self).__name__}: quantized layers without a comfy "
+                        f"storage format: {unexportable[:8]}"
+                    )
+                # auto mode: a partially-quantized file would be inconsistent —
+                # fall back to a fully dequantized save
+                q_entries, exported = {}, []
+
+        skip_keys = {f"{name}.weight" for name in exported}
         state_dict = {}
         for key, value in self.state_dict().items():
+            if key in skip_keys:
+                continue
             value = dequantize_if_quantized(value)
             if dtype is not None and value.is_floating_point():
                 value = value.to(dtype=dtype)
             state_dict[key] = value.detach().to("cpu").contiguous()
+        state_dict.update(q_entries)
         state_dict = self.convert_state_dict_on_save(state_dict)
 
         parent = os.path.dirname(output_path)
@@ -479,5 +560,7 @@ class OstrisTransformersMixin(OstrisModelMixin):
 
     @classmethod
     def aitk_from_config(cls, config):
-        with torch.device("meta"):
+        from accelerate import init_empty_weights
+
+        with init_empty_weights(include_buffers=False):
             return cls(config)

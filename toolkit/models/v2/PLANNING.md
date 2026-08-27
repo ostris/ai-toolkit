@@ -252,10 +252,89 @@ loads via diffusers. Nothing about sources or outputs changes yet. Suggested ord
       (`dequantize_if_quantized` everywhere), raw-`quantize()` → `quantize_model()`
 
 ### Phase 2 — comfy weights become the preferred source
-- [ ] Wire `comfy_weight_names` per model; standard-repo `name_or_path` + existing
-      comfy weights → load comfy
-- [ ] Comfy-format save (bf16 + convrot8/nvfp4 quantized) as the default
-      full-weight save
+
+Decisions:
+- Comfy weights come from the Comfy-Org hub repos (per-model repos, comfy
+  layout nested under `split_files/` — stripped when placing files into
+  MODELS_PATH). Repos ship several precision variants of each component.
+- **Selection preference: convrot8 > float8 mixed > float8 > bf16 > fp16**
+  (`resolver.comfy_precision_rank`; nvfp4/unmarked rank last and are only
+  used when explicitly listed). **Local-first**: the best-ranked LOCAL
+  candidate wins; only when no candidate is local is the best-ranked one
+  downloaded.
+- Per-model candidate lists (`aitk_comfy_weight_names`) hold only the
+  variants the class can actually digest. Constraint discovered: comfy
+  convrot/quantized files carry markers on the ORIGINAL module layout (e.g.
+  z_image's fused attention.qkv) — diffusers-layout classes with split
+  modules can't attach them until they grow fused-layout support; until then
+  those models list bf16/fp8 variants only. (Vendored comfy-layout classes —
+  minimax/ltx pattern — take convrot directly.)
+- The standard repo still supplies the config; local dirs and unregistered
+  repos load as-is; `model_kwargs.use_comfy_weights: false` opts out.
+
+- [x] Mechanism: `resolver.comfy_precision_rank` / `comfy_local_rel` /
+      `resolve_comfy_candidates` + `OstrisModelMixin.resolve_comfy_weights`,
+      integrated into `load_model` (comfy file preferred for registered
+      standard repos, downloaded into the shared comfy layout)
+- [x] First wired model: z_image (Comfy-Org/z_image_turbo, bf16 candidate).
+      Verified end-to-end against the real shared ComfyUI folder
+      (MODELS_PATH=/mnt/Models/comfy_models): standard-repo name_or_path
+      resolved to the locally-present comfy file and produced the identical
+      generation to the diffusers-shards load
+- [x] qwen_image wired: its comfy files use the diffusers key layout
+      directly — `fp8mixed` (float8-mixed, rank 1) attaches its 839
+      `float8_e4m3fn` markers straight onto the class; candidates fp8mixed →
+      fp8_e4m3fn (raw cast) → bf16. Verified with real weights: loaded the
+      shared folder's local fp8 file (local-first, no download) and generated
+      correctly. Holder skips re-quantization for prequantized checkpoints.
+- [x] New `float8_e4m3fn` Ostris backend (toolkit/util/float8_quant.py):
+      ComfyUI's fp8 + per-tensor-scale storage with dequantized matmul, in
+      get_ostris_quantizer + comfy import/export. Round-trip verified.
+- [x] wan family wired: comfy wan files (original key layout) convert via
+      diffusers' own `convert_wan_transformer_to_diffusers` (rename-only, so
+      quantized weight/scale keys ride along with their modules). Candidate
+      keys support `(repo, subfolder)` tuples for wan2.2 A14B's dual DiTs
+      (transformer = high noise, transformer_2 = low noise) and per-entry
+      comfy-repo overrides ({"repo": ..., "files": [...]}) since wan2.1 and
+      2.2 files live in different Comfy-Org repos. Wired: 2.2 TI2V-5B,
+      T2V/I2V-A14B (fp8_scaled), 2.1 T2V 1.3B/14B, I2V 480P/720P. Verified
+      with real weights: wan21 1.3B (downloaded comfy bf16) and wan22 5B
+      (local comfy fp16) both load through the converter and generate video.
+      Fix along the way: the mixin's meta build now uses accelerate
+      init_empty_weights (params meta, buffers real) so init-computed
+      non-persistent buffers like wan's rope tables materialize.
+- [x] Legacy ComfyUI scaled-fp8 support (`scaled_fp8` marker + per-layer
+      fp8 weight / scalar scale_weight, e.g. every wan *_fp8_scaled file):
+      imports onto the float8 backend; scale_input (activation quant) is
+      dropped, matmuls run dequantized.
+- [ ] Wire remaining archs' candidate lists (chroma/others as their key
+      conversions are verified per file); wan comfy-format save needs the
+      inverse key mapping (defer with the other save flips)
+- [x] Fused-layout quantized attach for diffusers-split classes:
+      `split_fused_quantized_keys` / `fuse_split_quantized_keys`
+      (comfy_quant_import) do exact out-dim row surgery on quantized comfy
+      entries for all three formats (int8 rows+scales slice; fp8 scalar and
+      nvfp4 per-tensor scales shared; nvfp4 block scales
+      unswizzle→split→reswizzle). z_image's load/save converters use them, so
+      its convrot8 candidate is live and top-ranked. Unit-verified exact both
+      directions.
+- [x] Comfy-format save: `save_model` auto-keeps quantized storage
+      (comfy_quant markers) for convrot8 / nvfp4 / convrotcomfyw4a4 layers via
+      `toolkit/util/comfy_quant_export.py` (inverse of comfy_quant_import;
+      nvfp4 nibbles re-swapped + scales re-swizzled to the cuBLAS tile
+      layout), plain layers save at bf16; partially-exportable models fall
+      back to dequantized. Round-trip verified: save → mixin reload → outputs
+      match for convrot8, nvfp4, and plain layers.
+- [x] Save unification started: z_image and qwen_image holders now save
+      comfy-format single files via the mixin regardless of how they loaded
+      (z_image's dual-style branch deleted). Real round trip verified: the
+      published z_image int8_convrot file loads (270 quantized linears,
+      split-attach), resaves to the IDENTICAL 857-key comfy layout with
+      bit-exact fused qkv weights/scales/markers, and the reload's quantized
+      forward is bit-identical — toolkit saves are byte-compatible with
+      ComfyUI.
+- [ ] Flip the remaining per-arch `save_model` overrides as each arch's
+      save-side key conversion is in place
 - [ ] Publish/verify comfy repacks per model as they flip
 
 ### Phase 3 — live server
@@ -291,9 +370,10 @@ loads via diffusers. Nothing about sources or outputs changes yet. Suggested ord
       device); ideogram4's fp8 release renders its own "blocked by safety
       filter" card for a plain cat prompt (model behavior, not a bug —
       investigate its trigger).
-- [ ] Round-trip test per model: load → save comfy format → reload from the save →
-      outputs match (bf16) / load cleanly (quantized saves). Lands with the
-      Phase 2 comfy save path.
+- [x] Round-trip verified for the first comfy-save arch: z_image convrot
+      load → comfy save → identical key set + bit-exact quantized entries vs
+      the published file → reload → bit-identical quantized forward. Extend
+      per arch as saves flip.
 - [ ] Each newly migrated model adds its test in the same PR as its migration.
 
 ## TODO / look at later

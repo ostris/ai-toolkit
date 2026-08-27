@@ -17,6 +17,7 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.util.quantize import quantize_model
 import torch.nn.functional as F
 from toolkit.memory_management import MemoryManager
+from toolkit.metadata import get_meta_for_safetensors
 from safetensors.torch import load_file
 
 from diffusers import (
@@ -101,9 +102,17 @@ class QwenImageModel(QwenImageVAEHolderMixin, BaseModel):
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
-        transformer = QwenImageTransformer2DModel.load_model(model_path, dtype=model_dtype)
+        transformer = QwenImageTransformer2DModel.load_model(
+            model_path,
+            dtype=model_dtype,
+            use_comfy_weights=self.model_config.model_kwargs.get(
+                "use_comfy_weights", True
+            ),
+        )
 
-        if self.model_config.quantize:
+        if self.model_config.quantize and not getattr(
+            transformer, "aitk_is_quantized", False
+        ):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
@@ -350,16 +359,16 @@ class QwenImageModel(QwenImageVAEHolderMixin, BaseModel):
         return False
 
     def save_model(self, output_path, meta, save_dtype):
-        # only save the unet
+        # comfy-format single-file save (diffusers keys ARE the comfy layout
+        # for qwen image); prequantized layers keep their quantized storage
         transformer: QwenImageTransformer2DModel = unwrap_model(self.model)
-        transformer.save_pretrained(
-            save_directory=os.path.join(output_path, "transformer"),
-            safe_serialization=True,
+        if not output_path.endswith(".safetensors"):
+            output_path += ".safetensors"
+        transformer.save_model(
+            output_path,
+            dtype=save_dtype,
+            metadata=get_meta_for_safetensors(meta, name=self.arch),
         )
-
-        meta_path = os.path.join(output_path, "aitk_meta.yaml")
-        with open(meta_path, "w") as f:
-            yaml.dump(meta, f)
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")

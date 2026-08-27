@@ -16,6 +16,78 @@ from typing import Callable, Iterable, Optional
 from toolkit.paths import MODELS_PATH
 
 
+def comfy_precision_rank(filename: str) -> int:
+    """Load-preference rank for a comfy weight filename:
+    convrot8 (0) > float8 mixed (1) > float8 (2) > bf16 (3) > fp16 (4) >
+    anything else, e.g. nvfp4 or unmarked (5)."""
+    name = os.path.basename(filename).lower()
+    if "convrot" in name:
+        return 0
+    is_fp8 = "fp8" in name or "float8" in name or "e4m3" in name
+    if is_fp8 and "mixed" in name:
+        return 1
+    if is_fp8:
+        return 2
+    if "bf16" in name:
+        return 3
+    if "fp16" in name:
+        return 4
+    return 5
+
+
+def comfy_local_rel(repo_rel: str) -> str:
+    """Repo file path -> ComfyUI models-folder path. Comfy-Org repos nest the
+    comfy layout under a packaging prefix (split_files/, non_official/) that is
+    not part of the shared models folder layout."""
+    for prefix in ("split_files/", "non_official/"):
+        if repo_rel.startswith(prefix):
+            return repo_rel[len(prefix):]
+    return repo_rel
+
+
+def resolve_comfy_candidates(
+    candidates: Iterable[str],
+    repo_id: str,
+    hf_token: Optional[str] = None,
+    status_fn: Optional[Callable[[str], None]] = None,
+    local_only: bool = False,
+) -> Optional[str]:
+    """Pick the best comfy weight file among precision variants of one
+    component (repo-relative paths, ranked by comfy_precision_rank then list
+    order). The best-ranked LOCAL candidate wins; only when no candidate is
+    local is the best-ranked one downloaded to its comfy-layout location
+    under MODELS_PATH."""
+    candidates = list(candidates)
+    ordered = sorted(
+        candidates, key=lambda c: (comfy_precision_rank(c), candidates.index(c))
+    )
+    for repo_rel in ordered:
+        found = resolve_comfy_file(
+            comfy_local_rel(repo_rel), repo_id, local_only=True
+        )
+        if found is not None:
+            return found
+    if local_only:
+        return None
+
+    import huggingface_hub
+
+    best = ordered[0]
+    local_rel = comfy_local_rel(best)
+    if status_fn is not None:
+        status_fn(f"Downloading {best} from {repo_id} into {MODELS_PATH}")
+    path = huggingface_hub.hf_hub_download(
+        repo_id=repo_id, filename=best, token=hf_token, local_dir=MODELS_PATH
+    )
+    target = os.path.join(MODELS_PATH, local_rel)
+    if os.path.abspath(path) != os.path.abspath(target):
+        # move out of the packaging prefix into the shared comfy layout
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        os.replace(path, target)
+        return target
+    return path
+
+
 def find_file_recursive(root_dir: str, filename: str) -> Optional[str]:
     """First (breadth-stable, sorted) match of ``filename`` anywhere under
     ``root_dir``."""

@@ -3,7 +3,6 @@ from typing import List, Optional
 
 import huggingface_hub
 import torch
-import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.models.base_model import BaseModel
@@ -13,15 +12,12 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from toolkit.util.quantize import (
-    quantize_model,
-    dequantize_if_quantized,
-)
+from toolkit.util.quantize import quantize_model
 from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.v2.text_encoders.qwen3 import Qwen3TextEncoder
 from toolkit.models.v2.vae.autoencoder_kl import KLVAE
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 
 
 try:
@@ -200,6 +196,9 @@ class ZImageModel(BaseModel):
             qtype=qtype,
             quantize_device=self.device_torch,
             config_path=base_model_path if self.is_single_file else None,
+            use_comfy_weights=self.model_config.model_kwargs.get(
+                "use_comfy_weights", True
+            ),
         )
         flush()
 
@@ -400,31 +399,17 @@ class ZImageModel(BaseModel):
         return ZImageTransformer2DModel.get_quantization_exclude_modules()
 
     def save_model(self, output_path, meta, save_dtype):
+        # comfy-format single-file save (the standard save format regardless
+        # of how the model was loaded); prequantized layers keep their
+        # quantized storage
         transformer: ZImageTransformer2DModel = unwrap_model(self.model)
-        if self.is_single_file:
-            # loaded from a single-file checkpoint, save back in that format
-            sd = transformer.state_dict()
-            save_dict = {}
-            for key, value in sd.items():
-                # dequantize any quantized (e.g. torchao) weights so we save plain tensors
-                save_dict[key] = (
-                    dequantize_if_quantized(value).clone().to("cpu", dtype=save_dtype)
-                )
-            save_dict = transformer.convert_state_dict_on_save(save_dict)
-
-            if not output_path.endswith(".safetensors"):
-                output_path += ".safetensors"
-            meta = get_meta_for_safetensors(meta, name=self.arch)
-            save_file(save_dict, output_path, metadata=meta)
-        else:
-            transformer.save_pretrained(
-                save_directory=os.path.join(output_path, "transformer"),
-                safe_serialization=True,
-            )
-
-            meta_path = os.path.join(output_path, "aitk_meta.yaml")
-            with open(meta_path, "w") as f:
-                yaml.dump(meta, f)
+        if not output_path.endswith(".safetensors"):
+            output_path += ".safetensors"
+        transformer.save_model(
+            output_path,
+            dtype=save_dtype,
+            metadata=get_meta_for_safetensors(meta, name=self.arch),
+        )
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")
