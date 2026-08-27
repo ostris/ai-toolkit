@@ -192,3 +192,4 @@ aitk_db.db-shm
 .claude
 original_repo
 .next
+testing/.model_test_outputs

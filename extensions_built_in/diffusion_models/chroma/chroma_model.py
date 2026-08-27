@@ -50,10 +50,12 @@ class FakeConfig:
         self.patch_size = 1
         
 class FakeCLIP(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, device='cuda'):
         super().__init__()
         self.dtype = torch.bfloat16
-        self.device = 'cuda'
+        # the pipeline derives its execution device from this attribute;
+        # nn.Module.to() does not update it
+        self.device = device
         self.text_model = None
         self.tokenizer = None
         self.model_max_length = 77
@@ -180,8 +182,8 @@ class ChromaModel(BaseModel):
         self.prepare_text_encoder(text_encoder_2, dtype=dtype)
 
         # self.print_and_status_update("Loading CLIP")
-        text_encoder = FakeCLIP()
-        tokenizer = FakeCLIP()
+        text_encoder = FakeCLIP(device=self.device_torch)
+        tokenizer = FakeCLIP(device=self.device_torch)
         text_encoder.to(self.device_torch, dtype=dtype)
 
         self.noise_scheduler = ChromaModel.get_train_scheduler()

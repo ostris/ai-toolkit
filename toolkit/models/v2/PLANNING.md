@@ -267,14 +267,33 @@ loads via diffusers. Nothing about sources or outputs changes yet. Suggested ord
 
 ## Testing
 
-- [ ] `testing/` (or `tests/`) harness: for each migrated arch, load the model via
-      its v2 modules and run one small inference pass (single low-step sample; video
-      models at minimum frame count). One arch at a time, full unload between archs.
-- [ ] Weights resolved through the normal resolver against `MODELS_PATH`
-      (GPU + local-weights test, not CI-portable at first; skip archs whose weights
-      are absent rather than failing).
+- [x] `testing/test_model_loading.py`: per-arch load + one small sample through
+      the normal training-style flow (get_model_class → load_model →
+      generate_images). `--arch X` runs one in-process; `--all` runs every
+      registered arch in its own subprocess (full unload between archs).
+      15 archs registered so far — add each model type as it migrates.
+- [x] Missing weights skip rather than fail: default is HF_HUB_OFFLINE=1 and
+      hub/file errors classify as SKIP; `--allow-download` opts into fetching.
+      (GPU + local-weights test, not CI-portable.)
+- [x] Full sweep run 2026-08-27: 14/15 PASS (zimage, qwen_image, krea2,
+      boogu_image, ernie_image, ideogram4, hidream_o1, anima, wan21, wan22_5b,
+      chroma, flux_kontext, flux2_klein_4b, ltx2.3 — the quantized 22B ltx
+      stack doesn't fit 32GB, needs the 96GB card). mageflow blocked
+      upstream: microsoft/Mage-Flow-Base 404s on the hub (cached locally, so
+      it runs offline — recheck whether the repo moved/went private).
+- [x] Registry carries realistic per-arch sample settings (native res, steps,
+      CFG) so sweep outputs are visually verifiable, not just "a file
+      exists". Verified: all 14 produce proper generations. Findings from
+      the quality pass: boogu emits a black frame below native res at
+      low-step/high-CFG (settings regime, present pre-restructure, not a
+      migration bug); chroma's FakeCLIP hardcoded device 'cuda' broke any
+      non-cuda:0 run (pre-existing, fixed — FakeCLIP now takes the real
+      device); ideogram4's fp8 release renders its own "blocked by safety
+      filter" card for a plain cat prompt (model behavior, not a bug —
+      investigate its trigger).
 - [ ] Round-trip test per model: load → save comfy format → reload from the save →
-      outputs match (bf16) / load cleanly (quantized saves).
+      outputs match (bf16) / load cleanly (quantized saves). Lands with the
+      Phase 2 comfy save path.
 - [ ] Each newly migrated model adds its test in the same PR as its migration.
 
 ## TODO / look at later
