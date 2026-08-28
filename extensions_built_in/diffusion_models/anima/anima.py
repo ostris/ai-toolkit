@@ -271,7 +271,7 @@ class AnimaModel(BaseModel):
             flush()
 
             self.print_and_status_update("Quantizing Text Conditioner")
-            quantize(text_conditioner, weights=get_qtype(self.model_config.qtype))
+            quantize(text_conditioner, weights=get_qtype(self.model_config.qtype_te))
             freeze(text_conditioner)
             flush()
 

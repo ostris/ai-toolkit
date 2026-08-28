@@ -29,7 +29,9 @@ class QwenImageTransformer2DModel(
         return ["transformer_blocks"]
 
     @classmethod
-    def _load_single_file(cls, file_path, dtype, config_path=None, subfolder=None):
+    def _load_single_file(
+        cls, file_path, dtype, config_path=None, config=None, subfolder=None
+    ):
         from safetensors import safe_open
 
         with safe_open(file_path, framework="pt") as f:
@@ -38,7 +40,11 @@ class QwenImageTransformer2DModel(
             # comfy prequantized checkpoint (diffusers key layout): the mixin
             # path attaches the quantized layers
             return super()._load_single_file(
-                file_path, dtype, config_path=config_path, subfolder=subfolder
+                file_path,
+                dtype,
+                config_path=config_path,
+                config=config,
+                subfolder=subfolder,
             )
         # other single-file checkpoints carry diffusers or original key
         # layouts; diffusers' single-file machinery owns that conversion

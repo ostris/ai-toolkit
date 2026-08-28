@@ -1279,7 +1279,7 @@ class LTX25Model(LTX2Model):
         from the state dict. Works unchanged for bf16 checkpoints, where no
         quant markers exist and everything strict-loads."""
         from toolkit.util.comfy_quant_import import import_comfy_quantized_layers
-        from toolkit.util.ostris_quant import OstrisLinear
+        from toolkit.models.v2._mixin import OstrisModelMixin
 
         state_dict, num_quantized = import_comfy_quantized_layers(
             module, state_dict, orig_dtype=self.torch_dtype
@@ -1288,32 +1288,8 @@ class LTX25Model(LTX2Model):
             self.print_and_status_update(
                 f" - attached {num_quantized} pre-quantized ConvRot layers to {name}"
             )
-        result = module.load_state_dict(state_dict, assign=True, strict=False)
-        # quantized linears hold their weight as backend buffers and had their
-        # bias assigned by the importer, so both report as "missing" here
-        quantized_param_keys = set()
-        for mod_name, m in module.named_modules():
-            if isinstance(m, OstrisLinear):
-                quantized_param_keys.add(f"{mod_name}.weight")
-                if m.bias is not None:
-                    quantized_param_keys.add(f"{mod_name}.bias")
-        bad_missing = [k for k in result.missing_keys if k not in quantized_param_keys]
-        if bad_missing or result.unexpected_keys:
-            raise ValueError(
-                f"LTX-2.5 {name} load mismatch: missing {bad_missing[:8]}, "
-                f"unexpected {result.unexpected_keys[:8]}"
-            )
-        # nothing may be left on the meta device (e.g. a bias the importer
-        # should have filled)
-        leftover_meta = [
-            param_name
-            for param_name, p in module.named_parameters()
-            if p.is_meta
-        ]
-        if leftover_meta:
-            raise ValueError(
-                f"LTX-2.5 {name} load left meta parameters: {leftover_meta[:8]}"
-            )
+        # whitelist for quantized weights + leftover-meta check
+        OstrisModelMixin._load_state_dict_with_quantized(module, state_dict)
         return num_quantized
 
     def _load_gemma4_text_encoder(self, te_path: str, te_state_dict: dict):

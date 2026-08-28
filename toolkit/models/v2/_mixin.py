@@ -67,6 +67,12 @@ class OstrisModelMixin:
     aitk_processor_repo: Optional[str] = None
     aitk_processor_subfolder: Optional[str] = None
 
+    # single-file loads without quant markers cast tensors to the requested
+    # dtype; classes whose checkpoints carry a deliberate precision mix (e.g.
+    # fp32 norms next to bf16 weights) set this False to load at stored
+    # precision instead
+    aitk_cast_on_load: bool = True
+
     # ---- state set by the loader / quantizer ----
     aitk_is_quantized: bool = False
     aitk_qtype: Optional[str] = None
@@ -119,7 +125,10 @@ class OstrisModelMixin:
         from accelerate import init_empty_weights
 
         with init_empty_weights(include_buffers=False):
-            return cls.from_config(config)
+            if hasattr(cls, "from_config"):
+                return cls.from_config(config)
+            # plain nn.Module classes take their params/config object directly
+            return cls(config)
 
     # ------------------------------------------------------------------
     # loading
@@ -135,6 +144,7 @@ class OstrisModelMixin:
         quantize_device: Optional[torch.device] = None,
         exclude_quant_modules: Optional[List[str]] = None,
         config_path: Optional[str] = None,
+        config=None,
         subfolder: Optional[str] = None,
         use_comfy_weights: bool = True,
         **kwargs,
@@ -180,7 +190,11 @@ class OstrisModelMixin:
         if name_or_path.endswith(".safetensors"):
             file_path = cls._resolve_single_file(name_or_path)
             model = cls._load_single_file(
-                file_path, dtype=dtype, config_path=config_path, subfolder=subfolder
+                file_path,
+                dtype=dtype,
+                config_path=config_path,
+                config=config,
+                subfolder=subfolder,
             )
         else:
             if os.path.isdir(name_or_path):
@@ -243,11 +257,16 @@ class OstrisModelMixin:
         file_path: str,
         dtype: torch.dtype,
         config_path: Optional[str] = None,
+        config=None,
         subfolder: Optional[str] = None,
     ):
         state_dict = load_file(file_path)
         return cls.load_from_state_dict(
-            state_dict, dtype, config_path=config_path, subfolder=subfolder
+            state_dict,
+            dtype,
+            config_path=config_path,
+            config=config,
+            subfolder=subfolder,
         )
 
     @classmethod
@@ -263,16 +282,20 @@ class OstrisModelMixin:
         state_dict: Dict[str, torch.Tensor],
         dtype: torch.dtype,
         config_path: Optional[str] = None,
+        config=None,
         subfolder: Optional[str] = None,
     ):
         """Build the model and load an already-read single-file state dict
         (the tail of the single-file path; also callable directly for
-        checkpoints read from non-safetensors sources)."""
+        checkpoints read from non-safetensors sources). ``config``, when
+        given, is used directly (for models whose config comes from the
+        holder, e.g. model_kwargs-driven archs)."""
         state_dict = cls.convert_state_dict_on_load(state_dict)
         has_quant_markers = "scaled_fp8" in state_dict or any(
             k.endswith(".comfy_quant") for k in state_dict
         )
-        config = cls.aitk_config_from_state_dict(state_dict)
+        if config is None:
+            config = cls.aitk_config_from_state_dict(state_dict)
         if config is None:
             config = cls._load_single_file_config(config_path, subfolder)
         model = cls.aitk_from_config(config)
@@ -288,11 +311,15 @@ class OstrisModelMixin:
             )
             cls._load_state_dict_with_quantized(model, state_dict)
             model.aitk_is_quantized = True
-        else:
+        elif cls.aitk_cast_on_load:
             for key, value in state_dict.items():
-                state_dict[key] = value.to(dtype=dtype)
+                if value.is_floating_point():
+                    state_dict[key] = value.to(dtype=dtype)
             model.load_state_dict(state_dict, assign=True)
             model.to(dtype=dtype)
+        else:
+            # stored-precision load (the checkpoint's dtype mix is deliberate)
+            model.load_state_dict(state_dict, assign=True)
         del state_dict
         flush()
         return model

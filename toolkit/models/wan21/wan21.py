@@ -44,6 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from toolkit.models.wan21.wan_lora_convert import convert_to_diffusers, convert_to_original
 from toolkit.util.quantize import quantize_model
 from toolkit.models.v2.text_encoders.umt5 import UMT5TextEncoder
+from toolkit.metadata import get_meta_for_safetensors
 
 # for generation only?
 scheduler_configUniPC = {
@@ -680,16 +681,15 @@ class Wan21(BaseModel):
         return False
 
     def save_model(self, output_path, meta, save_dtype):
-        # only save the unet
-        transformer: Wan21 = unwrap_model(self.model)
-        transformer.save_pretrained(
-            save_directory=os.path.join(output_path, 'transformer'),
-            safe_serialization=True,
+        # comfy-format single-file save (original wan key layout)
+        transformer = unwrap_model(self.model)
+        if not output_path.endswith(".safetensors"):
+            output_path += ".safetensors"
+        transformer.save_model(
+            output_path,
+            dtype=save_dtype,
+            metadata=get_meta_for_safetensors(meta, name=self.arch),
         )
-
-        meta_path = os.path.join(output_path, 'aitk_meta.yaml')
-        with open(meta_path, 'w') as f:
-            yaml.dump(meta, f)
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get('noise')

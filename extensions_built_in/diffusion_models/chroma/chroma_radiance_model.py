@@ -10,10 +10,9 @@ from toolkit.basic import flush
 # from toolkit.pixel_shuffle_encoder import AutoencoderPixelMixer
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype
+from optimum.quanto import QTensor
+from toolkit.util.quantize import quantize, quantize_model
 from .pipeline import ChromaPipeline, prepare_latent_image_ids
 from einops import rearrange, repeat
 import random
@@ -37,35 +36,15 @@ scheduler_config = {
     "use_dynamic_shifting": True
 }
 
-class FakeConfig:
-    # for diffusers compatability
-    def __init__(self):
-        self.attention_head_dim = 128
-        self.guidance_embeds = True
-        self.in_channels = 64
-        self.joint_attention_dim = 4096
-        self.num_attention_heads = 24
-        self.num_layers = 19
-        self.num_single_layers = 38
-        self.patch_size = 1
-        
-class FakeCLIP(torch.nn.Module):
-    def __init__(self, device='cuda'):
-        super().__init__()
-        self.dtype = torch.bfloat16
-        # the pipeline derives its execution device from this attribute;
-        # nn.Module.to() does not update it
-        self.device = device
-        self.text_model = None
-        self.tokenizer = None
-        self.model_max_length = 77
-
-    def forward(self, *args, **kwargs):
-        return torch.zeros(1, 1, 1).to(self.device)
+# shared with the base chroma model (identical stubs)
+from .chroma_model import FakeCLIP, FakeConfig
 
 
 class ChromaRadianceModel(BaseModel):
     arch = "chroma_radiance"
+
+    def get_transformer_block_names(self):
+        return ["double_blocks", "single_blocks"]
 
     def __init__(
             self,
@@ -165,13 +144,10 @@ class ChromaRadianceModel(BaseModel):
         transformer.config.num_single_layers = transformer.params.depth_single_blocks
 
         if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
+            # block-streaming quantize (handles dequant-on-save patching,
+            # excludes, ARA, and quantize_kwargs)
             self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
-            freeze(transformer)
+            quantize_model(self, transformer)
             transformer.to(self.device_torch)
         else:
             transformer.to(self.device_torch, dtype=dtype)
@@ -373,19 +349,16 @@ class ChromaRadianceModel(BaseModel):
         return False
     
     def save_model(self, output_path, meta, save_dtype):
+        # comfy-format single-file save via the mixin (chroma's class keys ARE
+        # the original layout); handles torchao/Ostris dequant, not just quanto
         if not output_path.endswith(".safetensors"):
-            output_path =  output_path + ".safetensors"
-        # only save the unet
+            output_path = output_path + ".safetensors"
         transformer: Chroma = unwrap_model(self.model)
-        state_dict = transformer.state_dict()
-        save_dict = {}
-        for k, v in state_dict.items():
-            if isinstance(v, QTensor):
-                v = v.dequantize()
-            save_dict[k] = v.clone().to('cpu', dtype=save_dtype)
-        
-        meta = get_meta_for_safetensors(meta, name='chroma')
-        save_file(save_dict, output_path, metadata=meta)
+        transformer.save_model(
+            output_path,
+            dtype=save_dtype,
+            metadata=get_meta_for_safetensors(meta, name="chroma"),
+        )
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get('noise')

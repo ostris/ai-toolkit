@@ -238,9 +238,6 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update("Loading transformer")
 
         transformer_config = Ideogram4Config()
-        with torch.device("meta"):
-            transformer = Ideogram4Transformer2DModel(transformer_config)
-
         self.print_and_status_update("  - fetching transformer weights")
         state_dict = _load_component_state_dict(
             base, "transformer", "diffusion_pytorch_model"
@@ -250,7 +247,9 @@ class Ideogram4Model(BaseModel):
             state_dict, dtype, self.device_torch, self.model_config.low_vram
         )
         self.print_and_status_update("  - loading transformer state dict")
-        transformer.load_state_dict(state_dict, assign=True)
+        transformer = Ideogram4Transformer2DModel.load_from_state_dict(
+            state_dict, dtype, config=transformer_config
+        )
         del state_dict
         flush()
 

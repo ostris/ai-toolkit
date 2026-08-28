@@ -20,6 +20,8 @@ import math
 from dataclasses import dataclass
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
@@ -408,7 +410,7 @@ class SingleStreamBlock(nn.Module):
         return x
 
 
-class SingleStreamDiT(nn.Module):
+class SingleStreamDiT(nn.Module, OstrisModelMixin):
     def __init__(self, config: SingleMMDiTConfig):
         super().__init__()
         self.config = config

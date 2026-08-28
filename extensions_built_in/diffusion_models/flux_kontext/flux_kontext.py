@@ -17,11 +17,10 @@ from toolkit.basic import flush
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.models.flux import add_model_gpu_splitter_to_flux, bypass_flux_guidance, restore_flux_guidance
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import get_accelerator, unwrap_model
-from optimum.quanto import freeze, QTensor
+from optimum.quanto import QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
-from toolkit.util.quantize import quantize, get_qtype
+from toolkit.util.quantize import quantize, quantize_model
 from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
@@ -43,6 +42,9 @@ scheduler_config = {
 
 class FluxKontextModel(BaseModel):
     arch = "flux_kontext"
+
+    def get_transformer_block_names(self):
+        return ["transformer_blocks", "single_transformer_blocks"]
 
     def __init__(
             self,
@@ -95,13 +97,10 @@ class FluxKontextModel(BaseModel):
         transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
+            # block-streaming quantize (handles dequant-on-save patching,
+            # excludes, ARA, and quantize_kwargs)
             self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
-            freeze(transformer)
+            quantize_model(self, transformer)
             transformer.to(self.device_torch)
         else:
             transformer.to(self.device_torch, dtype=dtype)

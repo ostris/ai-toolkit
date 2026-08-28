@@ -92,10 +92,6 @@ class ZetaChromaModel(BaseModel):
 
         transformer_state_dict = load_file(transformer_path, device="cpu")
 
-        # cast to dtype
-        for key in transformer_state_dict:
-            transformer_state_dict[key] = transformer_state_dict[key].to(dtype)
-        
         # Auto-detect use_x0 from checkpoint
         use_x0 = "__x0__" in transformer_state_dict
 
@@ -107,10 +103,9 @@ class ZetaChromaModel(BaseModel):
             use_x0=use_x0,
         )
 
-        with torch.device("meta"):
-            transformer = ZImageDCT(model_params)
-            
-        transformer.load_state_dict(transformer_state_dict, assign=True)
+        transformer = ZImageDCT.load_from_state_dict(
+            transformer_state_dict, dtype, config=model_params
+        )
         del transformer_state_dict
 
         transformer.to(self.quantize_device, dtype=dtype)

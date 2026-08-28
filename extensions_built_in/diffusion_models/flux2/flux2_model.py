@@ -111,7 +111,7 @@ class Flux2Model(BaseModel):
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Mistral")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
             freeze(text_encoder)
             flush()
 
@@ -136,9 +136,6 @@ class Flux2Model(BaseModel):
         transformer_path = model_path
 
         self.print_and_status_update("Loading transformer")
-        with torch.device("meta"):
-            transformer = Flux2(self.get_flux2_params())
-
         # use local path if provided
         if os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
             transformer_path = os.path.join(transformer_path, self.flux2_te_filename)
@@ -152,12 +149,9 @@ class Flux2Model(BaseModel):
             )
 
         transformer_state_dict = load_file(transformer_path, device="cpu")
-
-        # cast to dtype
-        for key in transformer_state_dict:
-            transformer_state_dict[key] = transformer_state_dict[key].to(dtype)
-
-        transformer.load_state_dict(transformer_state_dict, assign=True)
+        transformer = Flux2.load_from_state_dict(
+            transformer_state_dict, dtype, config=self.get_flux2_params()
+        )
 
         if self.model_config.quantize:
             # patch the state dict method

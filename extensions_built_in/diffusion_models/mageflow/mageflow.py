@@ -178,22 +178,13 @@ class MageFlowModel(BaseModel):
         structure.update(self.model_config.model_kwargs.get("transformer_config", {}))
         params = MageFlowParams(**structure)
 
-        # Build on meta, then materialize straight from the checkpoint.
-        with torch.device("meta"):
-            transformer = MageFlow(params)
-
         self.print_and_status_update("  - fetching transformer weights")
         state_dict = load_file(
             self._get_model_file("transformer/diffusion_pytorch_model.safetensors")
         )
-        state_dict = {
-            k: (v.to(dtype) if v.is_floating_point() else v)
-            for k, v in state_dict.items()
-        }
         self.print_and_status_update("  - loading transformer state dict")
-        transformer.load_state_dict(state_dict, strict=True, assign=True)
-        # The RoPE tables are plain tensors (not buffers/params), so the meta
-        # init left them unmaterialized — rebuild them for real.
+        transformer = MageFlow.load_from_state_dict(state_dict, dtype, config=params)
+        # rebuild the plain-tensor RoPE tables at full precision
         transformer.reset_rope()
         del state_dict
         flush()

@@ -217,21 +217,15 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         mmdit_kwargs.update(self.model_config.model_kwargs.get("mmdit_config", {}))
         config = SingleMMDiTConfig(**mmdit_kwargs)
 
-        # Build on meta, then materialize straight from the checkpoint.
-        with torch.device("meta"):
-            transformer = SingleStreamDiT(config)
-
         self.print_and_status_update("  - fetching transformer weights")
         state_dict = _load_mmdit_state_dict(
             self.model_config.name_or_path,
             self.model_config.model_kwargs.get("checkpoint_filename", None),
         )
-        state_dict = {
-            k: (v.to(dtype) if v.is_floating_point() else v)
-            for k, v in state_dict.items()
-        }
         self.print_and_status_update("  - loading transformer state dict")
-        transformer.load_state_dict(state_dict, strict=True, assign=True)
+        transformer = SingleStreamDiT.load_from_state_dict(
+            state_dict, dtype, config=config
+        )
         del state_dict
         flush()
         return transformer

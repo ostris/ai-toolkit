@@ -207,8 +207,11 @@ loads via diffusers. Nothing about sources or outputs changes yet. Suggested ord
       variants inherit
 - [x] nucleus_image — `v2/diffusion_models/nucleus_image.py`, TE stanza
       collapsed to prepare_text_encoder
-- [ ] krea2, ideogram4, mageflow — TE/VAE migrated; their custom local DiT
-      classes still to be rebased onto the mixin
+- [x] krea2, ideogram4, mageflow — DiTs on the mixin via the `config=`
+      passthrough (holder builds config from model_kwargs/holder state, mixin
+      does build/markers/whitelist/casting; plain nn.Module classes now work
+      with the default builder). krea2 + ideogram4 verified by harness;
+      mageflow untestable while its repo 404s
 - [x] chroma, chroma_radiance — both vendored Chroma classes now carry
       `OstrisModelMixin` with the block-count sniff moved into a new
       `aitk_config_from_state_dict` hook (mixin now supports checkpoint-derived
@@ -217,14 +220,23 @@ loads via diffusers. Nothing about sources or outputs changes yet. Suggested ord
       depends on holder state (patch_size), not the checkpoint
 - [x] flux_kontext — `v2/diffusion_models/flux.py` (FluxTransformer2DModel);
       whole model now loads through v2 (transformer, T5, CLIP, KLVAE)
-- [ ] flux2 — TE/VAE partially migrated (flux2_kl); custom DiT still local.
-      krea2/mageflow/ideogram4/zeta_chroma DiTs stay model-specific: their
-      configs come from model_kwargs / holder state, so the mixin adds nothing
-      until the comfy-weights flip (Phase 2)
-- [ ] minimax_h3 (+ ref2va), ltx2 family — already on the shared resolver +
-      comfy_quant_import; the full mixin port waits for Phase 2, when the
-      mixin's single-file precision policy (stored-precision loading, fp32-key
-      protection) is settled to match their deliberate behavior
+- [x] flux2 + zeta_chroma DiTs on the mixin via `config=` passthrough
+      (flux2_klein_4b verified by harness). Every arch's DiT now loads
+      through the mixin except: ltx2 family (one-file→two-modules split,
+      helper delegated), anima (diffusers modular pipeline), ace_step
+      (bundled single-file loader), z_image_l2p's local subclass, and the
+      grandfathered legacy stable_diffusion_model archs
+- [x] minimax_h3 (+ ref2va) transformer ported to the mixin: config sniffed
+      from the checkpoint via aitk_config_from_state_dict (adaln_t_table),
+      marker attach + stored-precision load via the new
+      `aitk_cast_on_load = False` knob. Verified on the real pruned convrot
+      file: 200 ConvRot linears, pruned table detected, fp32/fp16/bf16 mix
+      preserved, no meta leftovers. Its TE stays custom (50-layer truncation
+      + key_map). ltx2.5's `_load_quantized_module` now delegates to the
+      mixin's whitelist/meta helper (~30 lines deleted); its full port is
+      blocked on the one-comfy-file → transformer+connectors split, which
+      doesn't fit the per-class single-file shape — revisit with the live
+      server's component model
 - [x] wan21 / wan22 family — `v2/diffusion_models/wan.py`
       (WanTransformer3DModel, both wan22 dual loads included) +
       `v2/text_encoders/umt5.py` (UMT5TextEncoder + PatchedT5Tokenizer;
@@ -307,9 +319,16 @@ Decisions:
       fp8 weight / scalar scale_weight, e.g. every wan *_fp8_scaled file):
       imports onto the float8 backend; scale_input (activation quant) is
       dropped, matmuls run dequantized.
+- [x] wan comfy-format saves: `convert_state_dict_on_save` inverts diffusers'
+      rename table (base/t2v/i2v; vace/animate excluded — their reverse
+      mappings collide). Round-trip verified on both real comfy files
+      (exact; the 2.1 file's legacy model.diffusion_model. prefix drops per
+      the modern convention) and with real weights (load → save → 825-key
+      original-layout file → reload bit-equal). wan21 + wan22_5b save one
+      comfy file; wan22_14b saves the comfy-standard _high_noise/_low_noise
+      pair instead of two diffusers folders.
 - [ ] Wire remaining archs' candidate lists (chroma/others as their key
-      conversions are verified per file); wan comfy-format save needs the
-      inverse key mapping (defer with the other save flips)
+      conversions are verified per file)
 - [x] Fused-layout quantized attach for diffusers-split classes:
       `split_fused_quantized_keys` / `fuse_split_quantized_keys`
       (comfy_quant_import) do exact out-dim row surgery on quantized comfy
@@ -333,6 +352,14 @@ Decisions:
       bit-exact fused qkv weights/scales/markers, and the reload's quantized
       forward is bit-identical — toolkit saves are byte-compatible with
       ComfyUI.
+- [x] chroma + chroma_radiance saves flipped to the mixin (their class keys
+      ARE the original layout) — also fixes their quanto-only dequant bug
+      (torchao/Ostris weights now dequantize on save). Tiny-model round trip
+      verified. Save flips so far: z_image, qwen_image, wan21, wan22_5b,
+      wan22_14b (dual files), chroma ×2.
+- [ ] flux_kontext comfy wiring deferred: its Comfy-Org repo ships a single
+      legacy-fp8 file in fused BFL layout — needs the flux fused-split
+      conversion (split_fused_quantized_keys pattern + BFL↔diffusers maps)
 - [ ] Flip the remaining per-arch `save_model` overrides as each arch's
       save-side key conversion is in place
 - [ ] Publish/verify comfy repacks per model as they flip
@@ -354,6 +381,13 @@ Decisions:
 - [x] Missing weights skip rather than fail: default is HF_HUB_OFFLINE=1 and
       hub/file errors classify as SKIP; `--allow-download` opts into fetching.
       (GPU + local-weights test, not CI-portable.)
+- [x] Final certification sweep (2026-08-27, post-polish): 14/14 runnable
+      archs PASS — comfy-source loads (zimage convrot8, qwen fp8, wan ×2 +
+      fp8 umt5 TE), all ported holder-config DiTs, and the migrated
+      quantize_model paths (chroma, flux_kontext, f_light block-streamed) in
+      one run; mageflow remains the upstream 404 skip. One regression caught
+      and fixed: qwen's _load_single_file override needed the new config
+      kwarg.
 - [x] Full sweep run 2026-08-27: 14/15 PASS (zimage, qwen_image, krea2,
       boogu_image, ernie_image, ideogram4, hidream_o1, anima, wan21, wan22_5b,
       chroma, flux_kontext, flux2_klein_4b, ltx2.3 — the quantized 22B ltx
@@ -378,20 +412,28 @@ Decisions:
 
 ## TODO / look at later
 
-- [ ] Quantize-path consolidation quirks: `quantize_kwargs` is honored only by the
-      raw `quantize()` call sites and silently dropped by `quantize_model()`; the
-      ARA path inside `quantize_model` hardcodes `uint8`. Decide the unified
-      behavior when consolidating.
+- [x] Quantize consolidation: `quantize_model` now honors `quantize_kwargs`
+      (blocks + extras) and tolerates missing block names; the chroma ×2,
+      flux_kontext, f_light, omnigen2 raw-quantize sites migrated onto it
+      (gaining block streaming, excludes, ARA, dequant-on-save patching) with
+      holder block names added. Remaining raw sites are legacy/extension
+      (flex2, cogview4, stable_diffusion_model). The ARA uint8 hardcode
+      stands — revisit if a non-uint8 ARA base is ever wanted.
+- [x] Last known `qtype_te` bugs fixed (flux2's Mistral TE, anima's
+      text_conditioner) — 9/9 sites from the survey now correct outside the
+      grandfathered legacy monolith (cogview4/legacy SD remain as-is).
 - [x] wan comfy-TE resolved for real: UMT5TextEncoder carries comfy
       candidates (fp8_e4m3fn_scaled via the legacy importer, fp16), files
       already in transformers key layout (spiece blob dropped, tied
       embed_tokens materialized). Verified: wan21 samples with the local
       comfy fp8 TE. The loaders/umt5.py `comfy_files` param stays as a
       no-op shim for old callers.
-- [ ] Registry hardening: error (don't fall back to SD1) on unknown arch; lazy
+- [x] Registry hardening: unknown archs now raise with the known-arch list
+      (legacy monolith archs whitelisted via LEGACY_ARCHS). Still open: lazy
       per-arch imports; single source of truth shared with the UI's
       `options.tsx` model list.
-- [ ] Fake/stub components: consolidate on `toolkit/models/FakeVAE.py` /
-      `toolkit/unloader.py`, delete local copies.
+- [x] Stub dedup where identical: chroma_radiance imports FakeCLIP/FakeConfig
+      from chroma_model. The other Fake* copies (hidream_o1, flux2, zeta)
+      carry model-specific values — left in place.
 - [ ] Vendored upstream code (hidream/src, omnigen2/src, ltx2 converter's private
       comfy-quant parser): dedupe against toolkit utils where practical.

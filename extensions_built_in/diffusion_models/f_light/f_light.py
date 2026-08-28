@@ -11,10 +11,9 @@ from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from toolkit.basic import flush
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype
+from optimum.quanto import QTensor
+from toolkit.util.quantize import quantize, quantize_model
 from .src import FLitePipeline, DiT
 
 if TYPE_CHECKING:
@@ -33,6 +32,9 @@ scheduler_config = {
 
 class FLiteModel(BaseModel):
     arch = "f-lite"
+
+    def get_transformer_block_names(self):
+        return ["blocks"]
 
     def __init__(
             self,
@@ -79,13 +81,10 @@ class FLiteModel(BaseModel):
         transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
+            # block-streaming quantize (handles dequant-on-save patching,
+            # excludes, ARA, and quantize_kwargs)
             self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
-            freeze(transformer)
+            quantize_model(self, transformer)
             transformer.to(self.device_torch)
         else:
             transformer.to(self.device_torch, dtype=dtype)

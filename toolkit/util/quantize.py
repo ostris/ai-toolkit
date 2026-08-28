@@ -429,9 +429,10 @@ def quantize_model(
         # quantize model the original way without an accuracy recovery adapter
         # move and quantize only certain pieces at a time.
         quantization_type = get_qtype(base_model.model_config.qtype)
+        quantize_kwargs = base_model.model_config.quantize_kwargs or {}
         # all_blocks = list(model_to_quantize.transformer_blocks)
         all_blocks: List[torch.nn.Module] = []
-        transformer_block_names = base_model.get_transformer_block_names()
+        transformer_block_names = base_model.get_transformer_block_names() or []
         for name in transformer_block_names:
             # name may be a dotted path for models that nest their blocks
             # (e.g. hidream_o1's "model.language_model.layers").
@@ -456,7 +457,12 @@ def quantize_model(
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             # exclude patterns with a leading wildcard (e.g. "*adaln_proj*")
             # also apply inside blocks, where names are block-relative
-            quantize(block, weights=quantization_type, exclude=exclude_modules)
+            quantize(
+                block,
+                weights=quantization_type,
+                exclude=exclude_modules,
+                **quantize_kwargs,
+            )
             freeze(block)
             # NOT non_blocking: an async D2H allocates the cpu destination in pinned
             # memory, which the caching host allocator keeps forever (with power-of-2
@@ -472,5 +478,10 @@ def quantize_model(
         # device without having to move the transformer blocks to the device first
         base_model.print_and_status_update(" - quantizing extras")
         # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
-        quantize(model_to_quantize, weights=quantization_type, exclude=exclude_modules)
+        quantize(
+            model_to_quantize,
+            weights=quantization_type,
+            exclude=exclude_modules,
+            **quantize_kwargs,
+        )
         freeze(model_to_quantize)

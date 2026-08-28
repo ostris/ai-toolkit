@@ -373,46 +373,12 @@ class MinimaxH3Model(BaseModel):
         self.invert_assistant_lora = False
 
     def _load_transformer(self) -> MiniMaxH3Transformer:
-        dtype = self.torch_dtype
         dit_path = self._resolve_comfy_file(self._dit_component())
         self.print_and_status_update(f"Loading transformer from {dit_path}")
-        state_dict = load_file(dit_path)
-
-        params = MiniMaxH3TransformerParams()
-        table = state_dict.get("adaln_t_table", None)
-        if table is not None:
-            # pruned checkpoint: factored timestep table instead of the MLP
-            params.adaln_t_table_size = table.shape[0]
-            params.time_embed_dim = table.shape[1]
-
-        with torch.device("meta"):
-            transformer = MiniMaxH3Transformer(params)
-
-        # attach the pre-quantized (int8 ConvRot) linears onto the toolkit's
-        # quantization backends; the rest loads at its stored precision (the
-        # checkpoint's bf16/fp16/fp32 mix is deliberate)
-        state_dict, num_quantized = import_comfy_quantized_layers(
-            transformer, state_dict, orig_dtype=dtype
-        )
-        if num_quantized:
-            self.print_and_status_update(
-                f" - attached {num_quantized} pre-quantized ConvRot layers"
-            )
-        result = transformer.load_state_dict(state_dict, assign=True, strict=False)
-        quantized_weight_keys = {
-            f"{name}.weight"
-            for name, m in transformer.named_modules()
-            if isinstance(m, OstrisLinear)
-        }
-        bad_missing = [k for k in result.missing_keys if k not in quantized_weight_keys]
-        if bad_missing or result.unexpected_keys:
-            raise ValueError(
-                f"MiniMax-H3 transformer load mismatch: missing {bad_missing[:8]}, "
-                f"unexpected {result.unexpected_keys[:8]}"
-            )
-        del state_dict
-        flush()
-        return transformer
+        # the mixin single-file path: config sniffed from the checkpoint
+        # (adaln_t_table), pre-quantized ConvRot linears attached, everything
+        # else at its stored precision (the bf16/fp16/fp32 mix is deliberate)
+        return MiniMaxH3Transformer.load_model(dit_path, dtype=self.torch_dtype)
 
     def _load_text_encoder(self):
         from accelerate import init_empty_weights

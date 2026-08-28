@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
@@ -681,7 +683,7 @@ class MageFlowParams:
     patch_size: int = 1
 
 
-class MageFlow(nn.Module):
+class MageFlow(nn.Module, OstrisModelMixin):
     def __init__(self, params: MageFlowParams):
         super().__init__()
         self.params = params

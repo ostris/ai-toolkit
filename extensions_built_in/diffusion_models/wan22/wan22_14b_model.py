@@ -22,6 +22,7 @@ from toolkit.models.v2.diffusion_models.wan import WanTransformer3DModel
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from torchvision.transforms import functional as TF
 
+from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.wan21.wan21 import Wan21
 from .wan22_5b_model import (
     scheduler_config,
@@ -431,19 +432,19 @@ class Wan2214bModel(Wan21):
         return False
 
     def save_model(self, output_path, meta, save_dtype):
+        # comfy-format single-file saves, one per DiT (comfy convention:
+        # separate high/low noise files)
         transformer_combo: DualWanTransformer3DModel = unwrap_model(self.model)
-        transformer_combo.transformer_1.save_pretrained(
-            save_directory=os.path.join(output_path, "transformer"),
-            safe_serialization=True,
+        base = output_path
+        if base.endswith(".safetensors"):
+            base = base[: -len(".safetensors")]
+        metadata = get_meta_for_safetensors(meta, name=self.arch)
+        transformer_combo.transformer_1.save_model(
+            f"{base}_high_noise.safetensors", dtype=save_dtype, metadata=metadata
         )
-        transformer_combo.transformer_2.save_pretrained(
-            save_directory=os.path.join(output_path, "transformer_2"),
-            safe_serialization=True,
+        transformer_combo.transformer_2.save_model(
+            f"{base}_low_noise.safetensors", dtype=save_dtype, metadata=metadata
         )
-
-        meta_path = os.path.join(output_path, "aitk_meta.yaml")
-        with open(meta_path, "w") as f:
-            yaml.dump(meta, f)
 
     def save_lora(
         self,

@@ -13,7 +13,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype
+from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from .src.pipelines.omnigen2.pipeline_omnigen2 import OmniGen2Pipeline
 from .src.models.transformers import OmniGen2Transformer2DModel
 from .src.models.transformers.repo import OmniGen2RotaryPosEmbed
@@ -105,9 +105,9 @@ class OmniGen2Model(BaseModel):
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing transformer")
-            quantization_type = get_qtype(self.model_config.qtype)
-            quantize(transformer, weights=quantization_type)
-            freeze(transformer)
+            quantize_model(self, transformer)
+            if not self.low_vram:
+                transformer.to(self.device_torch)
 
         if self.low_vram:
             # unload it for now
