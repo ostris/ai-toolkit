@@ -442,6 +442,40 @@ them: Flux2, MageFlow, ZImageDCT, Ideogram4Transformer2DModel (+ its exclude
 list on MageFlow). `prepare_text_encoder` remains only as the legacy-monolith
 path.
 
+## Load/quantize optimization round 1 (2026-08-28)
+
+Baseline: testing/.model_test_outputs/report_baseline.md (+ per-arch
+metrics_baseline.json). Profiling findings and fixes:
+
+- The "slow quantization" in the baseline was mostly NOT quantize math
+  (convrot8 on chroma's 57 blocks: 0.5s of GPU kernels). It was data
+  movement: mmap-backed safetensors faulting pages in per-tensor cudaMemcpy
+  order (cold cache on the 92%-full NVMe reads at ~0.32GB/s; the drive's
+  sequential ceiling is ~435MB/s — cold loads are storage-bound), plus the
+  old stream-quantize choreography crossing the bus three times (up, back
+  into a fresh host copy, up again at final placement).
+- `quantize_module(keep_on_device=True)`: when the final home IS the
+  quantize gpu (no offload/low_vram — aitk_post_load detects this), blocks
+  stay on the gpu after quantizing and the extras pass runs there too.
+  Weights cross the bus once; the model-sized host-RAM spike of the
+  intermediate copy is gone (chroma RSS peak 25.3 -> 17.3GB, the rest is
+  reclaimable page cache; flux2's 93GB spike class eliminated). Warm-cache
+  chroma blocks: 46s -> 3.9s; wan22_5b quantize 10.6s -> 3.8s.
+- Offload/low_vram path keeps cpu residency but quantizes extras layer-by-
+  layer via quantize_device instead of the all-cores cpu burst (was 350-650%
+  cpu avg with 1600% spikes).
+- `quantize()` skips the quantize_device round-trip for same-qtype
+  OstrisLinears (guaranteed no-op) and, for ostris backends, for non-Linear
+  leaves (norms/embeddings were being ferried across the bus for nothing).
+- posix_fadvise(WILLNEED) readahead on single-file loads (mixin._readahead)
+  — ~10-15% on cold reads, free when warm, no-op off POSIX.
+
+Ideas not yet done: pinned-buffer staged h2d (~+60% warm-upload bandwidth,
+9.5 vs 5.8GB/s measured), overlapping h2d with quantize kernels (small — the
+kernels are ~2% of the pass), wan22 low_vram generate choreography (165s of
+unload/reload per sample), extending keep_on_device to the legacy
+quantize_model/trainer path.
+
 ## Testing
 
 - [x] `testing/test_model_loading.py`: per-arch load + one small sample through

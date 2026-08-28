@@ -257,10 +257,21 @@ class OstrisModelMixin:
                 attach_ara_and_quantize(base_model, self, ara_path, exclude=exclude)
             else:
                 status_fn(f"Quantizing ({qtype})")
+                q_device = quantize_device if quantize_device is not None else device
+                # final home is the quantize gpu (no offloading, no cpu
+                # parking): quantized weights stay put — one bus crossing
+                # instead of three, and no model-sized host-ram copy
+                keep_on_device = (
+                    not offload
+                    and device is not None
+                    and q_device is not None
+                    and torch.device(device) == torch.device(q_device)
+                    and torch.device(device).type != "cpu"
+                )
                 quantize_module(
                     self,
                     qtype,
-                    device=quantize_device if quantize_device is not None else device,
+                    device=q_device,
                     dtype=dtype,
                     block_names=self.get_transformer_block_names(),
                     exclude=exclude,
@@ -270,6 +281,7 @@ class OstrisModelMixin:
                         else None
                     ),
                     status_fn=status_fn,
+                    keep_on_device=keep_on_device,
                 )
             self.aitk_is_quantized = True
             self.aitk_qtype = qtype
@@ -407,6 +419,22 @@ class OstrisModelMixin:
             subfolder = None
         return cls.aitk_load_config(config_source, subfolder=subfolder)
 
+    @staticmethod
+    def _readahead(file_path: str):
+        """Queue kernel readahead for the whole file. safetensors tensors are
+        mmap-backed; without this a cold cache faults pages in per-tensor
+        cudaMemcpy order at a fraction of the drive's sequential bandwidth."""
+        if not hasattr(os, "posix_fadvise"):
+            return  # non-POSIX: mmap readahead heuristics only
+        try:
+            fd = os.open(file_path, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_WILLNEED)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
     @classmethod
     def _load_single_file(
         cls,
@@ -417,6 +445,7 @@ class OstrisModelMixin:
         subfolder: Optional[str] = None,
         **kwargs,
     ):
+        cls._readahead(file_path)
         state_dict = load_file(file_path)
         return cls.load_from_state_dict(
             state_dict,

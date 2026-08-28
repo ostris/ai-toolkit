@@ -1,3 +1,5 @@
+import os
+import time
 from fnmatch import fnmatch
 from typing import List, Optional, Union, TYPE_CHECKING
 import torch
@@ -186,6 +188,16 @@ def quantize(
                     and m.__class__.__name__ == "OstrisLinear"
                 ):
                     continue
+                if getattr(m.ostris_quantizer, "qtype", None) == weights.quantizer.qtype:
+                    # guaranteed per-layer no-op: skip before any
+                    # quantize_device round-trip
+                    continue
+            if isinstance(weights, ostristype) and not isinstance(m, torch.nn.Linear):
+                # ostris backends only quantize nn.Linear; don't ferry norms/
+                # embeddings across the bus for nothing when quantize_device
+                # is set (containers fall through so children are visited)
+                if quantize_device is not None and next(m.children(), None) is None:
+                    continue
             if (
                 isinstance(weights, aotype)
                 and not isinstance(m, torch.nn.Linear)
@@ -271,17 +283,29 @@ def quantize_module(
     exclude: Optional[List[str]] = None,
     quantize_kwargs: Optional[dict] = None,
     status_fn=print_acc,
+    keep_on_device: bool = False,
 ):
     """Module-centric quantization: block-streamed (each repeated block moves
-    to ``device`` for the math and returns to cpu) with a whole-module pass
-    for the extras. This is the core the per-model loaders call; holders'
-    quantize_model wraps it with model_config plumbing."""
+    to ``device`` for the math) with a whole-module pass for the extras. This
+    is the core the per-model loaders call; holders' quantize_model wraps it
+    with model_config plumbing.
+
+    ``keep_on_device``: when the model's final home IS ``device`` (no layer
+    offloading / low_vram), quantized blocks stay there instead of round-
+    tripping back to cpu — the weights then cross the bus exactly once
+    (mmap/page-cache -> gpu) instead of three times (up, back into a fresh
+    host copy, up again at final placement), and the model-sized host RAM
+    spike of that intermediate copy never happens. The extras pass runs on
+    the gpu too. With it off (offload paths), blocks return to cpu as before
+    and the extras quantize layer-by-layer on ``device`` via quantize_device
+    rather than burning every cpu core."""
     from toolkit.dequantize import patch_dequantization_on_save
 
     patch_dequantization_on_save(module)
     quantization_type = get_qtype(qtype)
     exclude = list(exclude or [])
     quantize_kwargs = quantize_kwargs or {}
+    keep_on_device = keep_on_device and device is not None
 
     all_blocks: List[torch.nn.Module] = []
     for name in block_names or []:
@@ -296,29 +320,60 @@ def quantize_module(
     if all_blocks:
         status_fn(f" - quantizing {len(all_blocks)} blocks")
     already_quantized = 0
+    debug_phases = os.environ.get("AITK_QUANT_DEBUG") == "1"
+    t_check = t_h2d = t_quant = t_d2h = 0.0
     for block in tqdm(all_blocks):
-        if not _has_quantizable_linear(block, quantization_type, exclude):
+        t = time.perf_counter()
+        skip = not _has_quantizable_linear(block, quantization_type, exclude)
+        t_check += time.perf_counter() - t
+        if skip:
             # pre-quantized checkpoint with a matching qtype: nothing in this
-            # block would change — skip the device round-trip and the dtype
-            # cast entirely so the load stays byte-identical
+            # block would change — skip the dtype cast entirely so the load
+            # stays byte-identical (placement still honors keep_on_device)
             already_quantized += 1
+            if keep_on_device:
+                block.to(device)
             continue
+        t = time.perf_counter()
         if device is not None:
             block.to(device, dtype=dtype, non_blocking=True)
+        t_h2d += time.perf_counter() - t
+        t = time.perf_counter()
         quantize(block, weights=quantization_type, exclude=exclude, **quantize_kwargs)
         freeze(block)
+        t_quant += time.perf_counter() - t
         # NOT non_blocking: an async D2H allocates the cpu destination in pinned
         # memory, which the caching host allocator keeps forever — that silently
         # retained a model-sized chunk of host ram
-        if device is not None:
+        t = time.perf_counter()
+        if device is not None and not keep_on_device:
             block.to("cpu")
+        t_d2h += time.perf_counter() - t
+    if debug_phases and all_blocks:
+        status_fn(
+            f" - [debug] check {t_check:.1f}s h2d {t_h2d:.1f}s "
+            f"quant {t_quant:.1f}s d2h {t_d2h:.1f}s"
+        )
     if already_quantized:
         status_fn(
             f" - {already_quantized} blocks already quantized with a matching qtype; left untouched"
         )
 
     status_fn(" - quantizing extras")
-    quantize(module, weights=quantization_type, exclude=exclude, **quantize_kwargs)
+    if keep_on_device:
+        # blocks already live on the gpu; bring the remainder over and run the
+        # extras pass there (fast kernels instead of an all-cores cpu burst)
+        module.to(device)
+        quantize(module, weights=quantization_type, exclude=exclude, **quantize_kwargs)
+    else:
+        # cpu-resident model: quantize each extra layer with a gpu round-trip
+        quantize(
+            module,
+            weights=quantization_type,
+            exclude=exclude,
+            quantize_device=device,
+            **quantize_kwargs,
+        )
     freeze(module)
     return module
 
