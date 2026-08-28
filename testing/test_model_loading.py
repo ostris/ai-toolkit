@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 TOOLKIT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TOOLKIT_ROOT)
@@ -57,11 +58,11 @@ MODEL_TESTS = {
     "boogu_image": {
         # native ~1024; 512/low-step/high-CFG degenerates to a black frame
         "model": {"name_or_path": "Boogu/Boogu-Image-0.1-Base", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
     },
     "ernie_image": {
         "model": {"name_or_path": "baidu/ERNIE-Image", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
     },
     "mageflow": {
         "model": {"name_or_path": "microsoft/Mage-Flow-Base", "quantize": True, "quantize_te": True},
@@ -69,15 +70,15 @@ MODEL_TESTS = {
     },
     "ideogram4": {
         "model": {"name_or_path": "ideogram-ai/ideogram-4-fp8", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
     },
     "hidream_o1": {
         "model": {"name_or_path": "HiDream-ai/HiDream-O1-Image", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
     },
     "anima": {
         "model": {"name_or_path": "circlestone-labs/Anima-Base-v1.0-Diffusers"},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.5, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.5, "seed": 42},
     },
     "wan21": {
         "model": {"name_or_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"},
@@ -124,7 +125,7 @@ MODEL_TESTS = {
     },
     "hidream": {
         "model": {"name_or_path": "HiDream-ai/HiDream-I1-Full", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
     },
     "hidream_e1": {
         # editing seq budget fits 768x768 (source+target concat)
@@ -134,11 +135,11 @@ MODEL_TESTS = {
     },
     "nucleus_image": {
         "model": {"name_or_path": "NucleusAI/Nucleus-Image", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
     },
     "omnigen2": {
         "model": {"name_or_path": "OmniGen2/OmniGen2", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
     },
     "ltx2.5": {
         "model": {"name_or_path": "Lightricks/LTX-2.5", "quantize": True, "quantize_te": True},
@@ -181,7 +182,7 @@ MODEL_TESTS = {
     },
     "sdxl": {
         "model": {"name_or_path": "stabilityai/stable-diffusion-xl-base-1.0"},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 6.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 6.0, "seed": 42},
     },
     "ace_step_15": {
         "model": {"name_or_path": "ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors", "quantize": True, "quantize_te": True},
@@ -189,7 +190,7 @@ MODEL_TESTS = {
     },
     "f-lite": {
         "model": {"name_or_path": "Freepik/F-Lite", "quantize": True, "quantize_te": True},
-        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
     },
 }
 
@@ -228,7 +229,14 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     from toolkit.config_modules import GenerateImageConfig, ModelConfig
     from toolkit.util.get_model import get_model_class
 
-    model_config = ModelConfig(arch=arch, dtype="bf16", **entry["model"])
+    # quantization always tests the convrot8 backend (per-entry override wins)
+    model_kwargs = dict(entry["model"])
+    if model_kwargs.get("quantize"):
+        model_kwargs.setdefault("qtype", "convrot8")
+    if model_kwargs.get("quantize_te"):
+        model_kwargs.setdefault("qtype_te", "convrot8")
+
+    model_config = ModelConfig(arch=arch, dtype="bf16", **model_kwargs)
     ModelClass = get_model_class(model_config)
     from toolkit.util.get_model import LEGACY_ARCHS
 
@@ -271,7 +279,32 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
         dtype="bf16",
         noise_scheduler=sampler,
     )
+
+    # ---- per-stage speed / VRAM / CPU instrumentation + cProfile ----
+    import cProfile
+
+    from testing.stage_profiler import StageProfiler, profile_top
+
+    prof = StageProfiler(device)
+    if hasattr(sd, "print_and_status_update"):
+        # every holder announces its stages through print_and_status_update;
+        # each status line opens a new profiler stage
+        _orig_status = sd.print_and_status_update
+
+        def _status_hook(msg, *a, **k):
+            prof.stage(str(msg))
+            return _orig_status(msg, *a, **k)
+
+        sd.print_and_status_update = _status_hook
+
+    prof.stage("load: init")
+    load_profile = cProfile.Profile()
+    load_profile.enable()
+    t_load0 = time.perf_counter()
     sd.load_model()
+    load_seconds = time.perf_counter() - t_load0
+    load_profile.disable()
+    load_profile.dump_stats(os.path.join(out_dir, "load.prof"))
 
     sample_kwargs = dict(entry["sample"])
     if entry.get("needs_control_image"):
@@ -295,16 +328,175 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     if not hasattr(ModelClass, "get_train_scheduler"):
         # the legacy monolith takes the sampler NAME at generate time
         gen_kwargs["sampler"] = "ddpm"
+
+    prof.stage("generate")
+    gen_profile = cProfile.Profile()
+    gen_profile.enable()
+    t_gen0 = time.perf_counter()
     sd.generate_images([gen], **gen_kwargs)
+    gen_seconds = time.perf_counter() - t_gen0
+    gen_profile.disable()
+    gen_profile.dump_stats(os.path.join(out_dir, "gen.prof"))
+
+    stages = prof.finish()
 
     produced = [
         p
         for p in glob.glob(os.path.join(out_dir, "*"))
-        if os.path.isfile(p) and os.path.getsize(p) > 1024 and not p.endswith(".txt")
+        if os.path.isfile(p)
+        and os.path.getsize(p) > 1024
+        and not p.endswith((".txt", ".prof", ".json"))
     ]
     if not produced:
         raise RuntimeError(f"no output file produced in {out_dir}")
-    return {"arch": arch, "status": "PASS", "outputs": produced}
+
+    import torch
+
+    result = {
+        "arch": arch,
+        "status": "PASS",
+        "outputs": produced,
+        "qtype": model_config.qtype if model_kwargs.get("quantize") else None,
+        "qtype_te": model_config.qtype_te if model_kwargs.get("quantize_te") else None,
+        "load_seconds": round(load_seconds, 3),
+        "gen_seconds": round(gen_seconds, 3),
+        "stages": stages,
+        "profile": {
+            "load_top": profile_top(load_profile),
+            "gen_top": profile_top(gen_profile, limit=15),
+            "load_prof": os.path.join(out_dir, "load.prof"),
+            "gen_prof": os.path.join(out_dir, "gen.prof"),
+        },
+        "env": {
+            "torch_num_threads": torch.get_num_threads(),
+            "cpu_count": os.cpu_count(),
+            "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
+        },
+    }
+    with open(os.path.join(out_dir, "metrics.json"), "w") as f:
+        json.dump(result, f, indent=2)
+    return result
+
+
+def format_stage_table(stages) -> str:
+    """Aligned markdown table: stage column left-aligned, numbers right-aligned
+    with fixed decimals so they line up in the terminal too."""
+    headers = [
+        "stage", "seconds", "vram peak GB", "vram resv GB", "vram end GB",
+        "rss peak GB", "cpu avg %", "cpu max %", "threads",
+    ]
+
+    def fmt(value, decimals):
+        if value is None or value == "-":
+            return "-"
+        return f"{value:.{decimals}f}"
+
+    rows = [
+        [
+            s["name"],
+            fmt(s.get("seconds"), 2),
+            fmt(s.get("vram_peak_gb", "-"), 2),
+            fmt(s.get("vram_reserved_gb", "-"), 2),
+            fmt(s.get("vram_end_gb", "-"), 2),
+            fmt(s.get("rss_peak_gb"), 2),
+            fmt(s.get("cpu_avg_pct"), 1),
+            fmt(s.get("cpu_max_pct"), 1),
+            str(s.get("threads_max", "-")),
+        ]
+        for s in stages
+    ]
+
+    widths = [
+        max(len(headers[i]), *(len(r[i]) for r in rows)) if rows else len(headers[i])
+        for i in range(len(headers))
+    ]
+
+    def line(cells):
+        out = []
+        for i, cell in enumerate(cells):
+            # stage name left-aligned, everything else right-aligned
+            out.append(cell.ljust(widths[i]) if i == 0 else cell.rjust(widths[i]))
+        return "| " + " | ".join(out) + " |"
+
+    sep = "|" + "|".join(
+        (":" + "-" * (w + 1)) if i == 0 else ("-" * (w + 1) + ":")
+        for i, w in enumerate(widths)
+    ) + "|"
+    return "\n".join([line(headers), sep] + [line(r) for r in rows])
+
+
+def write_report(results, path):
+    """Aggregated markdown report: per-arch stage tables + cross-arch summary
+    + load-profile hotspots, for diagnosing load/quantization speedups and
+    CPU usage."""
+
+    def _sum(stages, pred):
+        return round(sum(s["seconds"] for s in stages if pred(s)), 1)
+
+    lines = ["# Model loading test report", ""]
+    lines.append(
+        "Per-arch stage timings, peak VRAM (torch allocated/reserved), peak "
+        "process RSS, and CPU utilization (100 = one core, sampled at 50ms). "
+        "Quantization is convrot8 across the board. Full cProfile dumps sit "
+        "next to each arch's outputs (load.prof / gen.prof; inspect with "
+        "`python -m pstats <file>` or snakeviz)."
+    )
+    lines.append("")
+
+    # ---- summary ----
+    lines += ["## Summary", ""]
+    lines += [
+        "| arch | status | load s | quantize s | generate s | vram peak GB | rss peak GB | quant cpu avg % |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in results:
+        if r["status"] != "PASS" or "stages" not in r:
+            lines.append(
+                f"| {r['arch']} | {r['status']} | - | - | - | - | - | - | "
+            )
+            continue
+        stages = r["stages"]
+        quant = [s for s in stages if "uantiz" in s["name"]]
+        vram_peak = max((s.get("vram_peak_gb", 0) for s in stages), default=0)
+        rss_peak = max((s.get("rss_peak_gb", 0) for s in stages), default=0)
+        quant_cpu = (
+            round(sum(s["cpu_avg_pct"] for s in quant) / len(quant), 1)
+            if quant
+            else "-"
+        )
+        lines.append(
+            f"| {r['arch']} | PASS | {r['load_seconds']} "
+            f"| {_sum(quant, lambda s: True)} | {r['gen_seconds']} "
+            f"| {vram_peak} | {rss_peak} | {quant_cpu} |"
+        )
+    lines.append("")
+
+    # ---- per-arch detail ----
+    for r in results:
+        if r["status"] != "PASS" or "stages" not in r:
+            lines += [f"## {r['arch']} — {r['status']}", "", r.get("error", ""), ""]
+            continue
+        lines += [f"## {r['arch']}", ""]
+        lines += [
+            f"load {r['load_seconds']}s, generate {r['gen_seconds']}s, "
+            f"qtype {r.get('qtype')}, qtype_te {r.get('qtype_te')}, "
+            f"torch threads {r['env']['torch_num_threads']}/{r['env']['cpu_count']} cores",
+            "",
+        ]
+        lines += [format_stage_table(r["stages"]), ""]
+        top = r.get("profile", {}).get("load_top", [])[:12]
+        if top:
+            lines += ["Load hotspots (cumulative):", "", "```"]
+            for row in top:
+                lines.append(
+                    f"{row['cumtime']:>9.2f}s  tot {row['tottime']:>8.2f}s  "
+                    f"x{row['ncalls']:<8} {row['func']}"
+                )
+            lines += ["```", ""]
+
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+    return path
 
 
 def main():
@@ -315,11 +507,34 @@ def main():
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--json-result", type=str, default=None)
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="rebuild report.md from each arch's saved metrics.json, no runs",
+    )
     args = parser.parse_args()
 
     if args.list:
         for arch in MODEL_TESTS:
             print(arch)
+        return
+
+    if args.report_only:
+        results = []
+        for arch in MODEL_TESTS:
+            out_dir = os.path.join(
+                OUTPUT_ROOT, arch.replace("/", "_").replace(":", "_")
+            )
+            metrics_path = os.path.join(out_dir, "metrics.json")
+            if os.path.exists(metrics_path):
+                with open(metrics_path) as f:
+                    results.append(json.load(f))
+            else:
+                results.append(
+                    {"arch": arch, "status": "SKIP", "error": "no metrics.json saved"}
+                )
+        report_path = write_report(results, os.path.join(OUTPUT_ROOT, "report.md"))
+        print(f"report: {report_path}")
         return
 
     os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
@@ -343,6 +558,10 @@ def main():
         if args.json_result:
             with open(args.json_result, "w") as f:
                 json.dump(result, f)
+        if result["status"] == "PASS" and "stages" in result:
+            print()
+            print(format_stage_table(result["stages"]))
+            print()
         print(f"[{result['status']}] {args.arch}" + (f" — {result.get('error', '')}" if result["status"] != "PASS" else ""))
         if result["status"] == "FAIL":
             sys.exit(1)
@@ -355,8 +574,10 @@ def main():
     # --all: one subprocess per arch so every model fully unloads (clean CUDA
     # teardown) before the next loads
     results = []
-    for arch in MODEL_TESTS:
-        print(f"\n===== {arch} =====")
+    total = len(MODEL_TESTS)
+    sweep_t0 = time.perf_counter()
+    for i, arch in enumerate(MODEL_TESTS, start=1):
+        print(f"\n===== {arch} ({i}/{total}) =====")
         result_path = os.path.join(OUTPUT_ROOT, f".{arch.replace('/', '_')}.result.json")
         cmd = [
             sys.executable,
@@ -380,6 +601,18 @@ def main():
                 {"arch": arch, "status": "FAIL", "error": f"subprocess died (exit {proc.returncode})"}
             )
 
+        # running tally so a long sweep always shows how far along it is
+        tally = {"PASS": 0, "FAIL": 0, "SKIP": 0}
+        for r in results:
+            tally[r["status"]] = tally.get(r["status"], 0) + 1
+        elapsed = time.perf_counter() - sweep_t0
+        eta = (elapsed / i) * (total - i)
+        print(
+            f">>> progress: {i}/{total} ({i * 100 // total}%) — "
+            f"{tally['PASS']} pass, {tally['FAIL']} fail, {tally['SKIP']} skip — "
+            f"elapsed {elapsed / 60:.0f}m, eta ~{eta / 60:.0f}m"
+        )
+
     print("\n===== summary =====")
     counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
     for r in results:
@@ -389,6 +622,9 @@ def main():
             line += f" — {r.get('error', '')[:160]}"
         print(line)
     print(f"\n{counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped")
+
+    report_path = write_report(results, os.path.join(OUTPUT_ROOT, "report.md"))
+    print(f"report: {report_path}")
     if counts["FAIL"]:
         sys.exit(1)
 

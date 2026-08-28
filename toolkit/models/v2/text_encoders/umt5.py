@@ -34,6 +34,9 @@ class UMT5TextEncoder(UMT5EncoderModel, OstrisTransformersMixin):
     aitk_subfolder = "text_encoder"
     aitk_tokenizer_subfolder = "tokenizer"
     aitk_config_repo = "ai-toolkit/umt5_xxl_encoder"
+    # comfy fp8 umt5 files store non-quantized tensors in a dtype mix; T5
+    # assumes a uniform dtype, so follow the load dtype
+    aitk_cast_quantized_load = True
 
     aitk_comfy_repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged"
     # comfy umt5 files already use the transformers key layout; the

@@ -76,6 +76,12 @@ class WanTransformer3DModel(DiffusersWanTransformer3DModel, OstrisModelMixin):
         },
     }
 
+    # the comfy fp8/scaled_fp8 wan files mix fp16 conv biases with fp32
+    # tables; wan's forward assumes one uniform dtype, so cast the
+    # non-quantized tensors to the load dtype (the old holder did this with a
+    # blanket .to(device, dtype) after load)
+    aitk_cast_quantized_load = True
+
     @classmethod
     def get_transformer_block_names(cls):
         return ["blocks"]

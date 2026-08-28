@@ -91,6 +91,13 @@ class OstrisModelMixin:
     # precision instead
     aitk_cast_on_load: bool = True
 
+    # pre-quantized (comfy marker) checkpoints normally load their
+    # NON-quantized tensors at stored precision (the mix can be deliberate,
+    # e.g. ltx2.5's fp32 tables). Classes whose forward assumes one uniform
+    # dtype (wan: fp16 conv biases next to fp32 tables in the fp8 files) set
+    # this True to cast those float tensors to the load dtype instead
+    aitk_cast_quantized_load: bool = False
+
     # ---- state set by the loader / quantizer ----
     aitk_is_quantized: bool = False
     aitk_qtype: Optional[str] = None
@@ -461,7 +468,22 @@ class OstrisModelMixin:
             state_dict, num_quantized = import_comfy_quantized_layers(
                 model, state_dict, orig_dtype=dtype
             )
+            if cls.aitk_cast_quantized_load:
+                # uniform-dtype models: the leftover (non-quantized) float
+                # tensors follow the load dtype, like the non-marker path
+                for key, value in state_dict.items():
+                    if value.is_floating_point():
+                        state_dict[key] = value.to(dtype=dtype)
             cls._load_state_dict_with_quantized(model, state_dict)
+            if cls.aitk_cast_quantized_load:
+                # the importer assigns quantized-layer biases directly at
+                # stored dtype; they must follow too (a stray fp16 bias also
+                # makes ModelMixin.dtype — the pipelines' cast target — lie)
+                from toolkit.util.ostris_quant import OstrisLinear
+
+                for m in model.modules():
+                    if isinstance(m, OstrisLinear) and m.bias is not None:
+                        m.bias.data = m.bias.data.to(dtype=dtype)
             model.aitk_is_quantized = True
         elif cls.aitk_cast_on_load:
             for key, value in state_dict.items():
