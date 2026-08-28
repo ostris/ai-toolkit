@@ -21,24 +21,29 @@ from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
 from toolkit.paths import MODELS_PATH
+from toolkit.util.mixed_precision import attach_per_op_casting, pin_stored_fp32
 from safetensors.torch import load_file
 from PIL import Image
 import huggingface_hub
 
 try:
     from diffusers import LTX2Pipeline, LTX2ImageToVideoPipeline
-    from diffusers.models.autoencoders import (
-        AutoencoderKLLTX2Audio,
-        AutoencoderKLLTX2Video,
-    )
-    from diffusers.models.transformers import LTX2VideoTransformer3DModel
     from diffusers.pipelines.ltx2.export_utils import encode_video
     from transformers import (
         Gemma3ForConditionalGeneration,
         GemmaTokenizerFast,
     )
-    from diffusers.pipelines.ltx2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
-    from diffusers.pipelines.ltx2.connectors import LTX2TextConnectors
+    from toolkit.models.v2.diffusion_models.ltx2 import (
+        LTX2TextConnectors,
+        LTX2VideoTransformer3DModel,
+        LTX2Vocoder,
+        LTX2VocoderWithBWE,
+    )
+    from toolkit.models.v2.vae.ltx2 import (
+        LTX2AudioVAE as AutoencoderKLLTX2Audio,
+        LTX2VideoVAE as AutoencoderKLLTX2Video,
+    )
+    from toolkit.models.v2.text_encoders.gemma3 import Gemma3TextEncoder
     from .convert_ltx2_to_diffusers import (
         get_model_state_dict_from_combined_ckpt,
         convert_ltx2_transformer,
@@ -293,20 +298,14 @@ class LTX2Model(BaseModel):
             )
             transformer = transformer.to(dtype)
         else:
-            transformer_path = model_path
-            transformer_subfolder = "transformer"
-            if os.path.exists(transformer_path):
-                transformer_subfolder = None
-                transformer_path = os.path.join(transformer_path, "transformer")
+            if os.path.exists(model_path):
                 # check if the path is a full checkpoint.
                 te_folder_path = os.path.join(model_path, "text_encoder")
                 # if we have the te, this folder is a full checkpoint, use it as the base
                 if os.path.exists(te_folder_path):
                     base_model_path = model_path
 
-            transformer = LTX2VideoTransformer3DModel.from_pretrained(
-                transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
-            )
+            transformer = LTX2VideoTransformer3DModel.load_model(model_path, dtype=dtype)
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
@@ -347,7 +346,7 @@ class LTX2Model(BaseModel):
             tokenizer = GemmaTokenizerFast.from_pretrained(base_te_path)
 
             with init_empty_weights():
-                text_encoder = Gemma3ForConditionalGeneration(
+                text_encoder = Gemma3TextEncoder(
                     Gemma3Config(
                         **{
                             "boi_token_index": 255999,
@@ -420,22 +419,22 @@ class LTX2Model(BaseModel):
             tokenizer = GemmaTokenizerFast.from_pretrained(
                 self.model_config.te_name_or_path
             )
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.model_config.te_name_or_path, dtype=dtype
+            text_encoder = Gemma3TextEncoder.load_model(
+                self.model_config.te_name_or_path, dtype=dtype, subfolder=""
             )
         elif self.ltx_te_path is not None:
             # pull from model specific te
             tokenizer = GemmaTokenizerFast.from_pretrained(self.ltx_te_path)
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.ltx_te_path, dtype=dtype
+            text_encoder = Gemma3TextEncoder.load_model(
+                self.ltx_te_path, dtype=dtype, subfolder=""
             )
         else:
             # using combo hf repo
             tokenizer = GemmaTokenizerFast.from_pretrained(
                 self.model_config.name_or_path, subfolder="tokenizer"
             )
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.model_config.name_or_path, subfolder="text_encoder", dtype=dtype
+            text_encoder = Gemma3TextEncoder.load_model(
+                self.model_config.name_or_path, dtype=dtype
             )
 
         # remove the vision tower
@@ -497,24 +496,16 @@ class LTX2Model(BaseModel):
             del combined_state_dict
             flush()
         else:
-            vae = AutoencoderKLLTX2Video.from_pretrained(
-                base_model_path, subfolder="vae", torch_dtype=dtype
-            )
-            audio_vae = AutoencoderKLLTX2Audio.from_pretrained(
-                base_model_path, subfolder="audio_vae", torch_dtype=dtype
-            )
+            vae = AutoencoderKLLTX2Video.load_model(base_model_path, dtype=dtype)
+            audio_vae = AutoencoderKLLTX2Audio.load_model(base_model_path, dtype=dtype)
 
-            connectors = LTX2TextConnectors.from_pretrained(
-                base_model_path, subfolder="connectors", torch_dtype=dtype
-            )
+            connectors = LTX2TextConnectors.load_model(base_model_path, dtype=dtype)
 
             vocoder_cls = LTX2Vocoder
             if self.ltx_version in ("2.3", "2.5"):
                 vocoder_cls = LTX2VocoderWithBWE
 
-            vocoder = vocoder_cls.from_pretrained(
-                base_model_path, subfolder="vocoder", torch_dtype=dtype
-            )
+            vocoder = vocoder_cls.load_model(base_model_path, dtype=dtype)
 
         self.noise_scheduler = LTX2Model.get_train_scheduler()
 
@@ -1299,7 +1290,7 @@ class LTX25Model(LTX2Model):
         dropped, matching how the Gemma-3 vision tower was discarded."""
         from safetensors import safe_open
         from transformers import Gemma4TextConfig
-        from transformers.models.gemma4.modeling_gemma4 import Gemma4TextModel
+        from toolkit.models.v2.text_encoders.gemma3 import Gemma4TextEncoder
 
         with safe_open(te_path, framework="pt") as f:
             metadata = f.metadata() or {}
@@ -1309,7 +1300,7 @@ class LTX25Model(LTX2Model):
         }
 
         with init_empty_weights():
-            text_encoder = Gemma4TextModel(Gemma4TextConfig(**text_config))
+            text_encoder = Gemma4TextEncoder(Gemma4TextConfig(**text_config))
 
         def strip_model_prefix(key: str) -> str:
             return key[len("model.") :] if key.startswith("model.") else key
@@ -1374,12 +1365,14 @@ class LTX25Model(LTX2Model):
             transformer, transformer_sd, "transformer"
         )
         del transformer_sd
-        # cast to the compute dtype even when pre-quantized: the comfy file
-        # stores the scale_shift modulation tables in fp32, which promotes
-        # hidden states to fp32 and breaks the (bf16) diffusers attention
-        # linears. Quantized backends are immune (int8 qdata, uint8-viewed
-        # scales survive a dtype cast untouched).
-        transformer = transformer.to(dtype)
+        if num_quantized_dit == 0:
+            transformer = transformer.to(dtype)
+        else:
+            # mixed-precision comfy file (fp32 scale_shift tables next to bf16
+            # weights): comfy-style per-op input casting, with the stored-fp32
+            # pieces pinned so parent .to(dtype) casts cannot downcast them
+            attach_per_op_casting(transformer)
+            pin_stored_fp32(transformer)
         flush()
 
         if self.model_config.quantize:
@@ -1424,7 +1417,11 @@ class LTX25Model(LTX2Model):
             connectors, connectors_sd, "connectors"
         )
         del connectors_sd, dit_sd
-        connectors = connectors.to(dtype)
+        if num_quantized_connectors == 0:
+            connectors = connectors.to(dtype)
+        else:
+            attach_per_op_casting(connectors)
+            pin_stored_fp32(connectors)
         flush()
 
         # ---- text encoder (Gemma-4 12B, single comfy file) ----

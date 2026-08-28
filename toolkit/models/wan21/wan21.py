@@ -44,6 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from toolkit.models.wan21.wan_lora_convert import convert_to_diffusers, convert_to_original
 from toolkit.util.quantize import quantize_model
 from toolkit.models.v2.text_encoders.umt5 import UMT5TextEncoder
+from toolkit.models.v2.vae.wan import WanVAE
 from toolkit.metadata import get_meta_for_safetensors
 
 # for generation only?
@@ -431,11 +432,9 @@ class Wan21(BaseModel):
         
         if self._wan_vae_path is not None:
             # load the vae from individual repo
-            vae = AutoencoderKLWan.from_pretrained(
-                self._wan_vae_path, torch_dtype=dtype).to(dtype=dtype)
+            vae = WanVAE.load_model(self._wan_vae_path, dtype=dtype, subfolder="")
         else:
-            vae = AutoencoderKLWan.from_pretrained(
-                vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
+            vae = WanVAE.load_model(vae_path, dtype=dtype)
         flush()
 
         self.print_and_status_update("Making pipe")

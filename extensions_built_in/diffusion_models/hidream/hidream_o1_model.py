@@ -1,4 +1,5 @@
 import os
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextEncoder
 from typing import List, Optional
 
 import torch
@@ -189,7 +190,7 @@ class HidreamO1Model(BaseModel):
             )
 
             # transformer.load_state_dict(state_dict, assign=True)
-            transformer = Qwen3VLForConditionalGeneration.from_pretrained(
+            transformer = Qwen3VLTextEncoder.from_pretrained(
                 None,
                 config=Qwen3VLConfig(**model_config),
                 state_dict=state_dict,
@@ -197,7 +198,7 @@ class HidreamO1Model(BaseModel):
             )
             del state_dict  # free memory
         else:
-            transformer = Qwen3VLForConditionalGeneration.from_pretrained(
+            transformer = Qwen3VLTextEncoder.from_pretrained(
                 model_path,
                 torch_dtype=self.torch_dtype,
             )

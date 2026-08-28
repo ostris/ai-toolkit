@@ -1,4 +1,6 @@
 import os
+from toolkit.models.v2.text_encoders.qwen25_vl import Qwen25VLTextEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
@@ -78,8 +80,8 @@ class OmniGen2Model(BaseModel):
             extras_path, subfolder="processor", use_fast=True
         )
 
-        mllm = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            extras_path, subfolder="mllm", torch_dtype=torch.bfloat16
+        mllm = Qwen25VLTextEncoder.load_model(
+            extras_path, dtype=torch.bfloat16, subfolder="mllm"
         )
         mllm.to(self.device_torch, dtype=dtype)
         if self.model_config.quantize_te:
@@ -117,9 +119,9 @@ class OmniGen2Model(BaseModel):
 
         self.print_and_status_update("Loading vae")
 
-        vae = AutoencoderKL.from_pretrained(
-            extras_path, subfolder="vae", torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        vae = KLVAE.load_model(extras_path, dtype=torch.bfloat16).to(
+            self.device_torch, dtype=dtype
+        )
 
         flush()
         self.print_and_status_update("Loading Qwen2.5 VLProcessor")

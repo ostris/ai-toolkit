@@ -31,6 +31,7 @@ from toolkit.models.v2.vae.flux2_kl import (
     AutoEncoderParams,
     convert_diffusers_state_dict,
 )
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLModelEncoder
 from .src.latent_norm import get_latent_norm
 from .src.pipeline import (
     Ideogram4Pipeline,
@@ -224,8 +225,8 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update(f"Loading Qwen3-VL text encoder from {te_path}")
 
         tokenizer = AutoTokenizer.from_pretrained(te_path, token=HF_TOKEN)
-        text_encoder = AutoModel.from_pretrained(
-            te_path, torch_dtype=dtype, token=HF_TOKEN
+        text_encoder = Qwen3VLModelEncoder.load_model(
+            te_path, dtype=dtype, subfolder="", token=HF_TOKEN
         )
         flush()
 
@@ -268,8 +269,7 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update("Loading VAE")
         vae_sd = _load_component_state_dict(base, "vae", "diffusion_pytorch_model")
         vae_sd = convert_diffusers_state_dict(vae_sd)
-        vae = AutoEncoder(AutoEncoderParams())
-        vae.load_state_dict(vae_sd)
+        vae = AutoEncoder.load_from_state_dict(vae_sd, self.vae_torch_dtype)
         del vae_sd
         vae.to(self.vae_device_torch, dtype=dtype)
         vae.eval()

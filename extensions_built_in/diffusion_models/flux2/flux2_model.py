@@ -19,6 +19,7 @@ from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration
+from toolkit.models.v2.text_encoders.mistral3 import Mistral3TextEncoder
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
 from toolkit.models.v2.vae.flux2_kl import (
@@ -99,11 +100,8 @@ class Flux2Model(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Mistral")
 
-        text_encoder: Mistral3ForConditionalGeneration = (
-            Mistral3ForConditionalGeneration.from_pretrained(
-                MISTRAL_PATH,
-                torch_dtype=dtype,
-            )
+        text_encoder = Mistral3TextEncoder.load_model(
+            MISTRAL_PATH, dtype=dtype, subfolder=""
         )
         text_encoder.to(self.device_torch, dtype=dtype)
 
@@ -205,21 +203,8 @@ class Flux2Model(BaseModel):
                 token=HF_TOKEN,
             )
         
-        vae_state_dict = load_file(vae_path, device="cpu")
-        
-        autoencoder_params = AutoEncoderParams()
-        if vae_state_dict['decoder.up.0.block.0.conv1.bias'].shape[0] == 96:
-            # this is the small decoder version
-            autoencoder_params = AutoEncoderSmallDecoderParams()
-        
-        with torch.device("meta"):
-            vae = AutoEncoder(autoencoder_params)
-
-        # cast to dtype
-        for key in vae_state_dict:
-            vae_state_dict[key] = vae_state_dict[key].to(dtype)
-
-        vae.load_state_dict(vae_state_dict, assign=True)
+        # config sniffed from the checkpoint (small-decoder detection)
+        vae = AutoEncoder.load_model(vae_path, dtype=dtype)
 
         self.noise_scheduler = Flux2Model.get_train_scheduler()
 

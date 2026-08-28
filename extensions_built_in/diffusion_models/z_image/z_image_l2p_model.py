@@ -22,7 +22,7 @@ HF_TOKEN = os.getenv("HF_TOKEN", None)
 
 try:
     from diffusers import ZImagePipeline
-    from diffusers.models.transformers.transformer_z_image import (
+    from toolkit.models.v2.diffusion_models.z_image import (
         ZImageTransformer2DModel as ZImageTransformer2DModelOriginal,
     )
     from diffusers.models.modeling_outputs import Transformer2DModelOutput

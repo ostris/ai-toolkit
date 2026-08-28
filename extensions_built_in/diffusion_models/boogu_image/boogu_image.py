@@ -31,6 +31,8 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
 from toolkit.models.v2.text_encoders.qwen3_vl import patch_qwen_vl_patch_embed
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLModelEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -186,8 +188,8 @@ class BooguImageModel(BaseModel):
         # AutoModel yields the inner Qwen3VLModel (the ``.model`` of the
         # *ForConditionalGeneration), whose last_hidden_state is exactly the
         # instruction feature the Boogu pipeline consumes.
-        text_encoder = AutoModel.from_pretrained(
-            te_path, subfolder=te_subfolder, torch_dtype=dtype, token=HF_TOKEN
+        text_encoder = Qwen3VLModelEncoder.load_model(
+            te_path, dtype=dtype, subfolder=te_subfolder, token=HF_TOKEN
         )
         text_encoder.eval()
         text_encoder.requires_grad_(False)
@@ -217,9 +219,7 @@ class BooguImageModel(BaseModel):
 
         # --- VAE (FLUX AutoencoderKL) ---
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            base, subfolder="vae", torch_dtype=self.vae_torch_dtype, token=HF_TOKEN
-        )
+        vae = KLVAE.load_model(base, dtype=self.vae_torch_dtype, token=HF_TOKEN)
         vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
         vae.eval()
         vae.requires_grad_(False)

@@ -49,6 +49,7 @@ from toolkit.accelerator import unwrap_model
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextOnlyEncoder
 from toolkit.models.FakeVAE import FakeVAE
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
@@ -144,9 +145,7 @@ class PRXPixelT2IModel(BaseModel):
         # --- text encoder + tokenizer (Qwen3-VL text tower) ---
         self.print_and_status_update("Loading text encoder")
         tokenizer = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
-        text_encoder = Qwen3VLTextModel.from_pretrained(
-            model_path, subfolder="text_encoder", torch_dtype=dtype
-        )
+        text_encoder = Qwen3VLTextOnlyEncoder.load_model(model_path, dtype=dtype)
         text_encoder.to(self.te_device_torch)
         text_encoder.eval()
         text_encoder.requires_grad_(False)

@@ -101,6 +101,46 @@ DO_NOT_TRAIN_WEIGHTS = [
 DeviceStatePreset = Literal['cache_latents', 'generate']
 
 
+# diffusers-class name -> v2 wrapper for the legacy archs' components. The
+# adoption is an in-place class swap, so pipeline-held references stay valid.
+_V2_ADOPTION_MAP = {
+    "UNet2DConditionModel": ("toolkit.models.v2.diffusion_models.unet", "UNet2DConditionModel"),
+    "AutoencoderKL": ("toolkit.models.v2.vae.autoencoder_kl", "KLVAE"),
+    "CLIPTextModel": ("toolkit.models.v2.text_encoders.clip", "CLIPTextEncoder"),
+    "CLIPTextModelWithProjection": ("toolkit.models.v2.text_encoders.clip", "CLIPTextEncoderWithProjection"),
+    "T5EncoderModel": ("toolkit.models.v2.text_encoders.t5", "T5TextEncoder"),
+    "UMT5EncoderModel": ("toolkit.models.v2.text_encoders.umt5", "UMT5TextEncoder"),
+    "SD3Transformer2DModel": ("toolkit.models.v2.diffusion_models.sd3", "SD3Transformer2DModel"),
+    "PixArtTransformer2DModel": ("toolkit.models.v2.diffusion_models.pixart", "PixArtTransformer2DModel"),
+    "Transformer2DModel": ("toolkit.models.v2.diffusion_models.pixart", "Transformer2DModel"),
+    "AuraFlowTransformer2DModel": ("toolkit.models.v2.diffusion_models.auraflow", "AuraFlowTransformer2DModel"),
+    "FluxTransformer2DModel": ("toolkit.models.v2.diffusion_models.flux", "FluxTransformer2DModel"),
+    "Lumina2Transformer2DModel": ("toolkit.models.v2.diffusion_models.lumina2", "Lumina2Transformer2DModel"),
+    "Gemma2Model": ("toolkit.models.v2.text_encoders.gemma2", "Gemma2ModelEncoder"),
+}
+
+
+def _adopt_v2(module):
+    """Rebind a loaded legacy component onto its v2 wrapper class so every
+    resident component is an OstrisModelMixin instance the inference engine
+    can pool and hot-swap. No-op for unknown or already-adopted classes."""
+    import importlib
+
+    from toolkit.models.v2._mixin import OstrisModelMixin, adopt_component
+
+    if module is None or isinstance(module, OstrisModelMixin):
+        return module
+    entry = _V2_ADOPTION_MAP.get(type(module).__name__)
+    if entry is None:
+        return module
+    try:
+        wrapper = getattr(importlib.import_module(entry[0]), entry[1])
+        return adopt_component(module, wrapper)
+    except (ImportError, TypeError):
+        return module
+
+
+
 class BlankNetwork:
 
     def __init__(self):
@@ -1047,6 +1087,16 @@ class StableDiffusion:
         self.unet.to(self.device_torch, dtype=dtype)
         self.unet.requires_grad_(False)
         self.unet.eval()
+
+        # every resident component joins the v2 mixin system (in-place class
+        # adoption for components the pipeline loaders built directly)
+        _adopt_v2(self.unet)
+        _adopt_v2(self.vae)
+        if isinstance(text_encoder, list):
+            for te in text_encoder:
+                _adopt_v2(te)
+        elif text_encoder is not None:
+            _adopt_v2(text_encoder)
 
         # load any loras we have
         if self.model_config.lora_path is not None and not self.is_flux and not self.is_lumina2:

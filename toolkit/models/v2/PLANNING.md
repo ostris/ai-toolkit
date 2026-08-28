@@ -371,6 +371,43 @@ Decisions:
       unload/load the difference
 - [ ] Legacy `stable_diffusion_model.py` archs: grandfather or port last
 
+## 100% mixin coverage (2026-08-28)
+
+Every component of every non-legacy arch now loads through OstrisModelMixin —
+DiTs, text encoders, VAEs, vision encoders, connectors/vocoders, and the
+custom cases that previously bypassed it:
+
+- New wrapper classes: llama, gemma3 + gemma4, mistral3 (×2), qwen3 base,
+  qwen3-vl base + text-only, wan VAE, diffusers flux2 KL VAE, CLIP vision
+  (first vision encoder), cosmos DiT, anima text conditioner, the full ltx2
+  set (transformer, video/audio VAEs, connectors, vocoders).
+- Existing-class swaps: omnigen2 (mllm + VAE), boogu (TE + VAE), klein TE,
+  hidream llama, ideogram4 TE, prx TE.
+- Custom restructures: minimax video/audio VAEs and TE, MageVAE
+  (deferred-load ctor), the shared flux2_kl AutoEncoder (small-decoder sniff
+  as a class hook; flux2 + ideogram4 route through it), ace_step's bundle
+  (per-component class loaders), anima (modular-pipeline load replaced with
+  component-wise v2 loads + update_components), hidream_o1's Qwen3VL DiT,
+  z_image_l2p rebased onto the v2 class, ltx2's converter builds v2 classes.
+- Mixin: kwargs flow through the single-file chain (component ctor args like
+  MageVAE's sample_posterior).
+
+Verified with real weights: ltx2.3 + ltx2.5 (full v2 family), anima,
+ace_step_15 (new harness entry), minimax VAEs, plus the standing harness
+coverage. The legacy monolith archs joined the system per the inference-engine
+goal ("send a job with any base_model, reload/unload components on the fly"):
+six new wrapper classes complete the component vocabulary (UNet2DCondition,
+SD3/PixArt ×2/AuraFlow/Lumina2 transformers, Gemma2), and
+`adopt_component` (in-place class swap, OstrisLinear-style) rebinds
+pipeline-loaded components onto their wrappers at the monolith's single
+post-load funnel — covering every legacy arch without touching its fifteen
+load branches, with all pipeline references staying valid. Verified: sd1
+(UNet/KLVAE/CLIPTextEncoder all mixin instances + generation) and sdxl
+(dual-CLIP adoption + 1024² generation); harness gained sd1/sdxl entries,
+a legacy scheduler fallback, and the sampler-name pass-through. Full
+monolith decomposition (per-arch v2 loading with comfy candidates) remains
+future work, but every resident component is now poolable by the engine.
+
 ## Testing
 
 - [x] `testing/test_model_loading.py`: per-arch load + one small sample through
@@ -418,8 +455,12 @@ Decisions:
       flux2_klein_9b, prx_pixel, zeta_chroma, zimage_l2p, both qwen edit
       archs, f-lite. Fixes found by the run: ltx2.5's fp32 scale_shift
       tables promoted hidden states into bf16 linears under the diffusers
-      class (ComfyUI casts per-op) — the DiT/connectors now cast to compute
-      dtype after quantized attach (ConvRot storage immune); harness configs
+      class — fixed ComfyUI-style (toolkit/util/mixed_precision.py):
+      per-op input casting hooks on every weighted module + the stored-fp32
+      tensors pinned against parent .to(dtype) casts (device moves pass
+      through), so the tables stay genuinely fp32 at sample time. The
+      mechanism is general — any mixed-precision comfy checkpoint on a
+      diffusers-class arch can use it; harness configs
       for e1 resolution and zeta/l2p extras_name_or_path corrected to match
       the UI defaults.
 - [ ] Each newly migrated model adds its test in the same PR as its migration.

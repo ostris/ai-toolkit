@@ -17,6 +17,8 @@ import os
 from functools import lru_cache
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -591,7 +593,7 @@ def _load_state_dict(ckpt_path: str):
     return state
 
 
-class MageVAE(nn.Module):
+class MageVAE(nn.Module, OstrisModelMixin):
     """
     Encode: DConvEncoder (one-step diffusion) → latent [B, 128, H/16, W/16]
     Decode: DConvDenoiser + CoD Decoder       → image  [B, 3, H, W] in [-1, 1]
@@ -600,20 +602,32 @@ class MageVAE(nn.Module):
     latent_channels = 128
     downsample_factor = 16
 
-    def __init__(self, ckpt_path: str, sample_posterior: bool = True):
+    def __init__(self, ckpt_path: str = None, sample_posterior: bool = True):
         super().__init__()
         self.sample_posterior = sample_posterior
 
         self.dconv_encoder = _DConvEncoder()
         self.decoder_model = _DConvDenoiser()
 
-        sd = _load_state_dict(ckpt_path)
-        self._load_encoder(sd, ckpt_path)
-        self._load_decoder(sd, ckpt_path)
+        if ckpt_path is not None:
+            sd = _load_state_dict(ckpt_path)
+            self._load_encoder(sd, ckpt_path)
+            self._load_decoder(sd, ckpt_path)
 
-        # adaLN modulation depends only on t, and we always run at t=0.
-        # Precompute and drop the MLPs once at construction (~37M params saved).
-        self._freeze_adaln_cache()
+            # adaLN modulation depends only on t, and we always run at t=0.
+            # Precompute and drop the MLPs once at construction (~37M params saved).
+            self._freeze_adaln_cache()
+
+    @classmethod
+    def load_from_state_dict(cls, state_dict, dtype=None, **kwargs):
+        model = cls(
+            ckpt_path=None,
+            sample_posterior=kwargs.pop("sample_posterior", True),
+        )
+        model._load_encoder(state_dict, "<state dict>")
+        model._load_decoder(state_dict, "<state dict>")
+        model._freeze_adaln_cache()
+        return model
 
     def _load_encoder(self, sd, ckpt_path):
         prefix = "student.dconv_encoder."

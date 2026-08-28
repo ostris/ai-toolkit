@@ -42,6 +42,24 @@ class BasicModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMix
     pass
 
 
+def adopt_component(module: torch.nn.Module, wrapper_cls: type) -> torch.nn.Module:
+    """Rebind an already-loaded component instance onto its v2 wrapper class
+    (in-place class swap, like the OstrisLinear conversion). Used when a
+    component arrives from machinery that builds the base class directly
+    (e.g. a diffusers pipeline load), so every resident component is a mixin
+    instance the inference engine can pool and manage."""
+    if isinstance(module, wrapper_cls):
+        return module
+    base = wrapper_cls.__mro__[1]
+    if not isinstance(module, base):
+        raise TypeError(
+            f"cannot adopt {type(module).__name__} into {wrapper_cls.__name__} "
+            f"(expected a {base.__name__})"
+        )
+    module.__class__ = wrapper_cls
+    return module
+
+
 class OstrisModelMixin:
     # ---- per-model configuration, override in subclasses ----
     # subfolder that holds this model inside a diffusers style checkpoint
@@ -195,6 +213,7 @@ class OstrisModelMixin:
                 config_path=config_path,
                 config=config,
                 subfolder=subfolder,
+                **kwargs,
             )
         else:
             if os.path.isdir(name_or_path):
@@ -259,6 +278,7 @@ class OstrisModelMixin:
         config_path: Optional[str] = None,
         config=None,
         subfolder: Optional[str] = None,
+        **kwargs,
     ):
         state_dict = load_file(file_path)
         return cls.load_from_state_dict(
@@ -267,6 +287,7 @@ class OstrisModelMixin:
             config_path=config_path,
             config=config,
             subfolder=subfolder,
+            **kwargs,
         )
 
     @classmethod
@@ -284,6 +305,7 @@ class OstrisModelMixin:
         config_path: Optional[str] = None,
         config=None,
         subfolder: Optional[str] = None,
+        **kwargs,
     ):
         """Build the model and load an already-read single-file state dict
         (the tail of the single-file path; also callable directly for

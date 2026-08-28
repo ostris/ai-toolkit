@@ -5,6 +5,8 @@ import torch
 import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.mistral3 import Mistral3ModelEncoder
+from toolkit.models.v2.vae.autoencoder_kl_flux2 import Flux2KLVAE
 from toolkit.basic import flush
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
@@ -116,8 +118,8 @@ class ErnieImageModel(BaseModel):
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype
         )
-        text_encoder = AutoModel.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
+        text_encoder = Mistral3ModelEncoder.load_model(
+            base_model_path, subfolder="text_encoder", dtype=dtype
         )
 
         if (
@@ -140,8 +142,7 @@ class ErnieImageModel(BaseModel):
             flush()
 
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKLFlux2.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype
+        vae = Flux2KLVAE.load_model(            base_model_path, dtype=dtype
         ).to(self.device_torch, dtype=dtype)
 
         self.noise_scheduler = ErnieImageModel.get_train_scheduler()

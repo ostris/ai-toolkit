@@ -11,13 +11,16 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.memory_management import MemoryManager
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.diffusion_models.cosmos import CosmosTransformer3DModel
+from toolkit.models.v2.text_encoders.anima import AnimaTextConditioner
+from toolkit.models.v2.text_encoders.qwen3 import Qwen3ModelEncoder
+from toolkit.models.v2.vae.qwen_image import QwenImageVAE
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.util.quantize import get_qtype, quantize, quantize_model
 
 try:
-    from diffusers import AnimaAutoBlocks, AnimaModularPipeline, AnimaTextConditioner
-    from diffusers.models import CosmosTransformer3DModel
+    from diffusers import AnimaAutoBlocks, AnimaModularPipeline
     from diffusers.modular_pipelines import SequentialPipelineBlocks
     from diffusers.modular_pipelines.anima.modular_blocks_anima import AnimaCoreDenoiseStep, AnimaDecodeStep
 except ImportError as e:
@@ -255,12 +258,31 @@ class AnimaModel(BaseModel):
         self.print_and_status_update("Loading Anima model")
 
         pipe: AnimaModularPipeline = AnimaAutoBlocks().init_pipeline(self.model_config.name_or_path)
-        load_kwargs = {"torch_dtype": dtype}
-        model_path = os.path.abspath(os.path.expanduser(str(self.model_config.name_or_path)))
-        if os.path.isdir(model_path):
-            load_kwargs["pretrained_model_name_or_path"] = model_path
-        pipe.load_components(**load_kwargs)
-        pipe.update_components(scheduler=self.get_train_scheduler())
+        name = self.model_config.name_or_path
+        local_path = os.path.abspath(os.path.expanduser(str(name)))
+        if os.path.isdir(local_path):
+            name = local_path
+
+        # components load individually through the v2 module classes and are
+        # handed to the modular pipeline
+        from transformers import AutoTokenizer
+
+        self.print_and_status_update("Loading components")
+        transformer = CosmosTransformer3DModel.load_model(name, dtype=dtype)
+        vae = QwenImageVAE.load_model(name, dtype=dtype)
+        text_encoder = Qwen3ModelEncoder.load_model(name, dtype=dtype)
+        text_conditioner = AnimaTextConditioner.load_model(name, dtype=dtype)
+        tokenizer = AutoTokenizer.from_pretrained(name, subfolder="tokenizer")
+        t5_tokenizer = AutoTokenizer.from_pretrained(name, subfolder="t5_tokenizer")
+        pipe.update_components(
+            transformer=transformer,
+            vae=vae,
+            text_encoder=text_encoder,
+            text_conditioner=text_conditioner,
+            tokenizer=tokenizer,
+            t5_tokenizer=t5_tokenizer,
+            scheduler=self.get_train_scheduler(),
+        )
 
         transformer = pipe.transformer
         text_conditioner = pipe.text_conditioner

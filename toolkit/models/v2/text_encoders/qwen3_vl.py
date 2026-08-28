@@ -1,6 +1,10 @@
 import torch
 import torch.nn.functional as F
-from transformers import Qwen3VLForConditionalGeneration
+from transformers import (
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLModel,
+    Qwen3VLTextModel,
+)
 
 from .._mixin import OstrisTransformersMixin
 
@@ -51,3 +55,35 @@ class Qwen3VLTextEncoder(Qwen3VLForConditionalGeneration, OstrisTransformersMixi
         """Keep the vision tower (reference images ride into the embeddings)
         but swap its Conv3d patch_embed for an equivalent GEMM."""
         return patch_qwen_vl_patch_embed(self)
+
+
+class Qwen3VLModelEncoder(Qwen3VLModel, OstrisTransformersMixin):
+    """The inner Qwen3-VL base model (what AutoModel resolves): its
+    last_hidden_state is the instruction feature boogu_image / ideogram4
+    consume."""
+
+    aitk_subfolder = "text_encoder"
+    aitk_tokenizer_subfolder = "tokenizer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["language_model.layers"]
+
+    def drop_vision_tower(self):
+        if getattr(self, "visual", None) is not None:
+            self.visual = None
+        return self
+
+    def patch_vision_patch_embed(self) -> int:
+        return patch_qwen_vl_patch_embed(self)
+
+
+class Qwen3VLTextOnlyEncoder(Qwen3VLTextModel, OstrisTransformersMixin):
+    """The Qwen3-VL text tower alone (prx_pixel)."""
+
+    aitk_subfolder = "text_encoder"
+    aitk_tokenizer_subfolder = "tokenizer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["layers"]

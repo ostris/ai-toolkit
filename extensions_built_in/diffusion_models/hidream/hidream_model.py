@@ -10,6 +10,7 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
 from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
+from toolkit.models.v2.text_encoders.llama import LlamaTextEncoder
 from toolkit.models.v2.text_encoders.clip import CLIPTextEncoderWithProjection
 from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from diffusers import TorchAoConfig
@@ -96,11 +97,12 @@ class HidreamModel(BaseModel):
             use_fast=False
         )
         
-        text_encoder_4 = LlamaForCausalLM.from_pretrained(
+        text_encoder_4 = LlamaTextEncoder.load_model(
             llama_model_path,
+            dtype=torch.bfloat16,
+            subfolder="",
             output_hidden_states=True,
             output_attentions=True,
-            torch_dtype=torch.bfloat16,
         )
         text_encoder_4.to(self.device_torch, dtype=dtype)
         

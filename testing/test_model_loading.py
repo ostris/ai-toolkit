@@ -174,6 +174,19 @@ MODEL_TESTS = {
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 4.0},
         "needs_control_image": True,
     },
+    # ---- legacy monolith archs (components adopted into v2 on load) ----
+    "sd1": {
+        "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 20, "guidance_scale": 7.5, "seed": 42},
+    },
+    "sdxl": {
+        "model": {"name_or_path": "stabilityai/stable-diffusion-xl-base-1.0"},
+        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 6.0, "seed": 42},
+    },
+    "ace_step_15": {
+        "model": {"name_or_path": "ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors", "quantize": True, "quantize_te": True},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 20, "guidance_scale": 4.0, "seed": 42},
+    },
     "f-lite": {
         "model": {"name_or_path": "Freepik/F-Lite", "quantize": True, "quantize_te": True},
         "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
@@ -217,9 +230,12 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
 
     model_config = ModelConfig(arch=arch, dtype="bf16", **entry["model"])
     ModelClass = get_model_class(model_config)
-    # get_model_class silently falls back to the legacy SD class on an
-    # unknown arch; that is never what a registered test wants
-    if getattr(ModelClass, "arch", None) not in (arch, model_config.arch):
+    from toolkit.util.get_model import LEGACY_ARCHS
+
+    if (
+        getattr(ModelClass, "arch", None) not in (arch, model_config.arch)
+        and model_config.arch not in LEGACY_ARCHS
+    ):
         raise ValueError(
             f"arch {arch!r} resolved to {ModelClass.__name__} "
             f"(arch={getattr(ModelClass, 'arch', None)!r}) — registry mismatch"
@@ -228,6 +244,26 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     sampler = None
     if hasattr(ModelClass, "get_train_scheduler"):
         sampler = ModelClass.get_train_scheduler()
+    else:
+        # legacy monolith archs build their scheduler the way training does
+        from toolkit.sampler import get_sampler
+
+        legacy_arch = "sd"
+        if model_config.is_pixart:
+            legacy_arch = "pixart"
+        elif model_config.is_flux:
+            legacy_arch = "flux"
+        elif model_config.is_lumina2:
+            legacy_arch = "lumina2"
+        sampler = get_sampler(
+            "ddpm",
+            {
+                "prediction_type": "v_prediction"
+                if model_config.is_v_pred
+                else "epsilon",
+            },
+            arch=legacy_arch,
+        )
 
     sd = ModelClass(
         device=device,
@@ -255,7 +291,11 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
         output_ext="png",
         **sample_kwargs,
     )
-    sd.generate_images([gen])
+    gen_kwargs = {}
+    if not hasattr(ModelClass, "get_train_scheduler"):
+        # the legacy monolith takes the sampler NAME at generate time
+        gen_kwargs["sampler"] = "ddpm"
+    sd.generate_images([gen], **gen_kwargs)
 
     produced = [
         p

@@ -230,8 +230,8 @@ class MageFlowModel(BaseModel):
         vae_path = self.model_config.model_kwargs.get("vae_path", None)
         if vae_path is None:
             vae_path = self._get_model_file("vae/diffusion_pytorch_model.safetensors")
-        vae = MageVAE(
-            ckpt_path=vae_path,
+        vae = MageVAE.load_model(
+            vae_path,
             sample_posterior=bool(
                 self.model_config.model_kwargs.get("vae_sample_posterior", True)
             ),

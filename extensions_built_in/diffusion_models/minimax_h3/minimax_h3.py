@@ -52,6 +52,7 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextEncoder
 from toolkit.models.v2.resolver import (
     find_file_recursive,
     repo_id_from_name_or_path,
@@ -69,7 +70,7 @@ from optimum.quanto import freeze
 from .src import packing
 
 packing_video_exts = [".mp4", ".avi", ".mov", ".webm", ".mkv", ".wmv", ".m4v", ".flv"]
-from .src.audio_vae import MiniMaxH3AudioVAE, fold_audio_vae_weight_norm
+from .src.audio_vae import MiniMaxH3AudioVAE
 from .src.packing import (
     KEYFRAME_ENCODE_SEED,
     KEYFRAME_NOISE_AUG_T,
@@ -404,7 +405,7 @@ class MinimaxH3Model(BaseModel):
             )
             config = AutoConfig.from_pretrained(te_path)
             config.text_config.num_hidden_layers = TEXT_ENCODER_LAYER
-            text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
+            text_encoder = Qwen3VLTextEncoder.from_pretrained(
                 te_path, config=config, torch_dtype=self.te_torch_dtype
             )
         else:
@@ -426,7 +427,7 @@ class MinimaxH3Model(BaseModel):
             config.text_config.num_hidden_layers = TEXT_ENCODER_LAYER
             config.tie_word_embeddings = False
             with init_empty_weights():
-                text_encoder = Qwen3VLForConditionalGeneration(config)
+                text_encoder = Qwen3VLTextEncoder(config)
             text_encoder.lm_head = None
 
             state_dict = load_file(te_file)
@@ -481,38 +482,9 @@ class MinimaxH3Model(BaseModel):
 
     def _load_vaes(self) -> MiniMaxH3VaeBundle:
         self.print_and_status_update("Loading video VAE")
-        video_sd = load_file(self._resolve_comfy_file("video_vae"))
-        # normalization stats ride along in the comfy file; the module holds
-        # them as non-persistent buffers, keep them float32
-        video_stats = {
-            k: video_sd.pop(k).float()
-            for k in ("latents_mean", "latents_std")
-            if k in video_sd
-        }
-        video_vae = MiniMaxH3VideoVAE()
-        video_vae.load_state_dict(video_sd, strict=True, assign=True)
-        for k, v in video_stats.items():
-            getattr(video_vae, k).copy_(v)
-        video_vae.eval().requires_grad_(False)
-        del video_sd
-
+        video_vae = MiniMaxH3VideoVAE.load_model(self._resolve_comfy_file("video_vae"))
         self.print_and_status_update("Loading audio VAE")
-        audio_sd = load_file(self._resolve_comfy_file("audio_vae"))
-        audio_stats = {
-            k: audio_sd.pop(k).float()
-            for k in ("latents_mean", "latents_std")
-            if k in audio_sd
-        }
-        # comfy repack ships the weight norm already folded; fold only if the
-        # raw parametrization is present (original-repo file)
-        if any(k.endswith("weight_g") for k in audio_sd.keys()):
-            audio_sd = fold_audio_vae_weight_norm(audio_sd)
-        audio_vae = MiniMaxH3AudioVAE()
-        audio_vae.load_state_dict(audio_sd, strict=True, assign=True)
-        for k, v in audio_stats.items():
-            getattr(audio_vae, k).copy_(v)
-        audio_vae.to(torch.float32).eval().requires_grad_(False)
-        del audio_sd
+        audio_vae = MiniMaxH3AudioVAE.load_model(self._resolve_comfy_file("audio_vae"))
         flush()
         return MiniMaxH3VaeBundle(video_vae, audio_vae)
 

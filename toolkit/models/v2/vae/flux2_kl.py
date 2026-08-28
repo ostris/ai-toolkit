@@ -20,6 +20,8 @@ import torch.utils.checkpoint as ckpt
 from einops import rearrange
 from torch import Tensor, nn
 
+from .._mixin import OstrisModelMixin
+
 
 @dataclass
 class AutoEncoderParams:
@@ -354,7 +356,14 @@ class Decoder(nn.Module):
         return h
 
 
-class AutoEncoder(nn.Module):
+class AutoEncoder(nn.Module, OstrisModelMixin):
+    @classmethod
+    def aitk_config_from_state_dict(cls, state_dict):
+        # small decoder builds report 96ch at the first decoder block
+        if state_dict["decoder.up.0.block.0.conv1.bias"].shape[0] == 96:
+            return AutoEncoderSmallDecoderParams()
+        return AutoEncoderParams()
+
     def __init__(self, params: AutoEncoderParams):
         super().__init__()
         self.params = params

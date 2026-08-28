@@ -1,5 +1,6 @@
 from .flux2_model import Flux2Model
 from transformers import Qwen3ForCausalLM, Qwen2Tokenizer
+from toolkit.models.v2.text_encoders.qwen3 import Qwen3TextEncoder
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype
 from toolkit.config_modules import ModelConfig
@@ -40,9 +41,8 @@ class Flux2KleinModel(Flux2Model):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Qwen3")
 
-        text_encoder: Qwen3ForCausalLM = Qwen3ForCausalLM.from_pretrained(
-            self.flux2_klein_te_path,
-            torch_dtype=dtype,
+        text_encoder = Qwen3TextEncoder.load_model(
+            self.flux2_klein_te_path, dtype=dtype, subfolder=""
         )
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Qwen3")
