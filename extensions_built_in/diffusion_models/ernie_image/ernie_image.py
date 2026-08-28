@@ -13,9 +13,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from toolkit.memory_management import MemoryManager
 
 from transformers import AutoTokenizer, AutoModel
 
@@ -88,29 +85,10 @@ class ErnieImageModel(BaseModel):
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
-        transformer = ErnieImageTransformer2DModel.load_model(model_path, dtype=dtype)
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                    transformer.x_embedder,
-                ],
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+        # load + quantize + offload + placement, all driven by model_config
+        transformer = ErnieImageTransformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
+        )
 
         flush()
 
@@ -118,28 +96,10 @@ class ErnieImageModel(BaseModel):
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype
         )
-        text_encoder = Mistral3ModelEncoder.load_model(
-            base_model_path, subfolder="text_encoder", dtype=dtype
+        text_encoder = Mistral3ModelEncoder.load(
+            base_model_path, subfolder="text_encoder", **self.component_load_kwargs("te")
         )
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        text_encoder.to(self.device_torch, dtype=dtype)
         flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
 
         self.print_and_status_update("Loading VAE")
         vae = Flux2KLVAE.load_model(            base_model_path, dtype=dtype

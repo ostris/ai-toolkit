@@ -14,8 +14,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from toolkit.util.quantize import quantize_model
-from toolkit.memory_management import MemoryManager
 
 from transformers import Qwen3VLProcessor
 import torch.nn.functional as F
@@ -100,26 +98,8 @@ class NucleusImageModel(QwenImageVAEHolderMixin, BaseModel):
                 if isinstance(m, SwiGLUExperts):
                     m.use_grouped_mm = False
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                ],
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
 
         flush()
 
@@ -127,8 +107,9 @@ class NucleusImageModel(QwenImageVAEHolderMixin, BaseModel):
         tokenizer = Qwen3VLProcessor.from_pretrained(
             base_model_path, subfolder="processor", torch_dtype=dtype
         )
-        text_encoder = Qwen3VLTextEncoder.load_model(base_model_path, dtype=dtype)
-        self.prepare_text_encoder(text_encoder, dtype=dtype)
+        text_encoder = Qwen3VLTextEncoder.load(
+            base_model_path, **self.component_load_kwargs("te")
+        )
 
         self.print_and_status_update("Loading VAE")
         vae = QwenImageVAE.load_model(

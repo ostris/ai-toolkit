@@ -13,7 +13,7 @@ from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import QTensor
-from toolkit.util.quantize import quantize, quantize_model
+
 from .src import FLitePipeline, DiT
 
 if TYPE_CHECKING:
@@ -76,27 +76,17 @@ class FLiteModel(BaseModel):
 
         self.print_and_status_update("Loading transformer")
 
-        transformer = DiT.load_model(model_path, dtype=dtype)
-        
-        transformer.to(self.quantize_device, dtype=dtype)
-
-        if self.model_config.quantize:
-            # block-streaming quantize (handles dequant-on-save patching,
-            # excludes, ARA, and quantize_kwargs)
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            transformer.to(self.device_torch)
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        transformer = DiT.load(
+            model_path, **self.component_load_kwargs("transformer")
+        )
 
         flush()
 
         self.print_and_status_update("Loading T5")
         tokenizer = T5TextEncoder.load_tokenizer(extras_path, subfolder="tokenizer")
-        text_encoder = T5TextEncoder.load_model(
-            extras_path, dtype=dtype, subfolder="text_encoder"
+        text_encoder = T5TextEncoder.load(
+            extras_path, subfolder="text_encoder", **self.component_load_kwargs("te")
         )
-        self.prepare_text_encoder(text_encoder, dtype=dtype)
 
         self.noise_scheduler = FLiteModel.get_train_scheduler()
         

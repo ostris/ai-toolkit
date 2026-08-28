@@ -49,7 +49,6 @@ from toolkit.accelerator import unwrap_model
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
-from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextEncoder
@@ -64,8 +63,6 @@ from toolkit.util.ostris_quant import OstrisLinear
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.util.quantize import get_qtype, quantize, quantize_model
-from optimum.quanto import freeze
 
 from .src import packing
 
@@ -498,54 +495,16 @@ class MinimaxH3Model(BaseModel):
         if self.model_config.assistant_lora_path is not None:
             self.load_training_adapter(transformer)
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Keeping transformer on CPU")
-            transformer.to("cpu")
-        else:
-            transformer.to(self.device_torch)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         tokenizer, processor, text_encoder = self._load_text_encoder()
-        te_prequantized = any(
-            isinstance(m, OstrisLinear) for m in text_encoder.modules()
-        )
-        if self.model_config.quantize_te and not te_prequantized:
-            self.print_and_status_update("Quantizing text encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-        elif self.model_config.quantize_te:
-            self.print_and_status_update(
-                "Text encoder is already nvfp4/int8 quantized; skipping quantize_te"
-            )
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-        if self.model_config.low_vram:
-            text_encoder.to("cpu")
-        else:
-            text_encoder.to(self.device_torch)
+        if any(isinstance(m, OstrisLinear) for m in text_encoder.modules()):
+            # already nvfp4/int8 quantized; aitk_post_load skips quantize_te
+            text_encoder.aitk_is_quantized = True
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         flush()
 
         vae_bundle = self._load_vaes()

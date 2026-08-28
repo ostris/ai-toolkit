@@ -408,6 +408,40 @@ a legacy scheduler fallback, and the sampler-name pass-through. Full
 monolith decomposition (per-arch v2 loading with comfy candidates) remains
 future work, but every resident component is now poolable by the engine.
 
+## Unified load API (2026-08-28)
+
+Loading policy moved out of the holders into the mixin. The surface:
+
+- `ModelClassName.load(name_or_path, qtype=..., offload=..., dtype=...,
+  device=..., ...)` — sourcing (`load_model`) + `aitk_post_load` in one call.
+- `module.aitk_post_load(**kwargs)` — the post-load half alone, for holders
+  whose checkpoint sourcing is custom (state-dict surgery, combined files).
+  Handles: qtype (incl. `"qtype|ara_path"` accuracy recovery adapters, with
+  prequantized-skip via `aitk_is_quantized`), block-streamed quantization
+  (`quantize_module` in toolkit/util/quantize.py), MemoryManager layer
+  offloading with per-class `get_offload_ignore_modules()` hooks, and device
+  placement (low_vram parks on cpu).
+- `BaseModel.component_load_kwargs(role)` derives the kwargs from
+  model_config for roles "transformer" / "te" / "vae" (qtype/qtype_te, ARA
+  recombination, offload percents, low_vram, te/vae devices).
+
+All holders converted (transformer + TE quantize/offload/placement blocks
+deleted): krea2, z_image, qwen_image, chroma ×2, flux_kontext, f_light,
+nucleus, zeta_chroma, z_image_l2p, wan21 (+ subclasses), wan22_14b (dual:
+per-transformer load, dual-ARA branch kept), boogu, ernie, ideogram4,
+mageflow, prx_pixel, omnigen2, flux2 + klein, hidream + hidream_o1, ltx2 +
+ltx2.5 (prequantized ConvRot flagged via aitk_is_quantized), minimax_h3,
+anima (conditioner rides the transformer quantize flag at qtype_te),
+ace_step_15, example_model (template now teaches the new API).
+New `get_offload_ignore_modules` hooks: wan (scale_shift tables — also fixes
+wan21 offload which previously offloaded them), ltx2 (all four per-block
+tables), gemma3 (embed_tokens), gemma4 (embed_tokens + layer_scalar),
+ideogram4 (rotary inv_freq + input/cond projections), ernie (x_embedder),
+zeta ZImageDCT (pad tokens). New block-name hooks where only the holder had
+them: Flux2, MageFlow, ZImageDCT, Ideogram4Transformer2DModel (+ its exclude
+list on MageFlow). `prepare_text_encoder` remains only as the legacy-monolith
+path.
+
 ## Testing
 
 - [x] `testing/test_model_loading.py`: per-arch load + one small sample through

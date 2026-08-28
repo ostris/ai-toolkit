@@ -20,7 +20,7 @@ from toolkit.models.flux import add_model_gpu_splitter_to_flux, bypass_flux_guid
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
-from toolkit.util.quantize import quantize, quantize_model
+
 from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
@@ -37,8 +37,6 @@ scheduler_config = {
     "shift": 3.0,
     "use_dynamic_shifting": True
 }
-
-
 
 class FluxKontextModel(BaseModel):
     arch = "flux_kontext"
@@ -93,24 +91,17 @@ class FluxKontextModel(BaseModel):
                 base_model_path = model_path
 
         self.print_and_status_update("Loading transformer")
-        transformer = FluxTransformer2DModel.load_model(model_path, dtype=dtype)
-        transformer.to(self.quantize_device, dtype=dtype)
-
-        if self.model_config.quantize:
-            # block-streaming quantize (handles dequant-on-save patching,
-            # excludes, ARA, and quantize_kwargs)
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            transformer.to(self.device_torch)
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        transformer = FluxTransformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
+        )
 
         flush()
 
         self.print_and_status_update("Loading T5")
         tokenizer_2 = T5TextEncoder.load_tokenizer(base_model_path)
-        text_encoder_2 = T5TextEncoder.load_model(base_model_path, dtype=dtype)
-        self.prepare_text_encoder(text_encoder_2, dtype=dtype)
+        text_encoder_2 = T5TextEncoder.load(
+            base_model_path, **self.component_load_kwargs("te")
+        )
 
         self.print_and_status_update("Loading CLIP")
         text_encoder = CLIPTextEncoder.load_model(

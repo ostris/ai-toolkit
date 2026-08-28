@@ -22,7 +22,6 @@ from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
-from toolkit.util.quantize import quantize, get_qtype
 from .src.pipelines.hidream_image.pipeline_hidream_image import HiDreamImagePipeline
 from .src.models.transformers.transformer_hidream_image import HiDreamImageTransformer2DModel
 from .src.schedulers.fm_solvers_unipc import FlowUniPCMultistepScheduler
@@ -97,62 +96,23 @@ class HidreamModel(BaseModel):
             use_fast=False
         )
         
-        text_encoder_4 = LlamaTextEncoder.load_model(
+        # load + quantize + offload + placement, all driven by model_config
+        text_encoder_4 = LlamaTextEncoder.load(
             llama_model_path,
-            dtype=torch.bfloat16,
             subfolder="",
             output_hidden_states=True,
             output_attentions=True,
+            **self.component_load_kwargs("te"),
         )
-        text_encoder_4.to(self.device_torch, dtype=dtype)
-        
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing llama 8b model")
-            quantization_type = get_qtype(self.model_config.qtype_te)
-            quantize(text_encoder_4, weights=quantization_type)
-            freeze(text_encoder_4)
-        
-        if self.low_vram:
-            # unload it for now
-            text_encoder_4.to('cpu')
-            
+
         flush()
-        
+
         self.print_and_status_update("Loading transformer")
-            
-        transformer = self.hidream_transformer_class.load_model(
-            model_path, dtype=torch.bfloat16
+
+        transformer = self.hidream_transformer_class.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-        
-        if not self.low_vram:
-            transformer.to(self.device_torch, dtype=dtype)
-        
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantization_type = get_qtype(self.model_config.qtype)
-            if self.low_vram:
-                # move and quantize only certain pieces at a time.
-                all_blocks = list(transformer.double_stream_blocks) + list(transformer.single_stream_blocks)
-                self.print_and_status_update(" - quantizing transformer blocks")
-                for block in tqdm(all_blocks):
-                    block.to(self.device_torch, dtype=dtype)
-                    quantize(block, weights=quantization_type)
-                    freeze(block)
-                    block.to('cpu')
-                    # flush()
-                
-                self.print_and_status_update(" - quantizing extras")
-                transformer.to(self.device_torch, dtype=dtype)
-                quantize(transformer, weights=quantization_type)
-                freeze(transformer)
-            else: 
-                quantize(transformer, weights=quantization_type)
-                freeze(transformer)
-            
-        if self.low_vram:
-            # unload it for now
-            transformer.to('cpu')
-        
+
         flush()
         
         self.print_and_status_update("Loading vae")
@@ -183,16 +143,11 @@ class HidreamModel(BaseModel):
         flush()
         self.print_and_status_update("Loading T5 encoders")
         
-        text_encoder_3 = T5TextEncoder.load_model(
-            extras_path, dtype=torch.bfloat16, subfolder="text_encoder_3"
-        ).to(self.device_torch, dtype=dtype)
-        
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantization_type = get_qtype(self.model_config.qtype_te)
-            quantize(text_encoder_3, weights=quantization_type)
-            freeze(text_encoder_3)
-            flush()
+        # load + quantize + offload + placement, all driven by model_config
+        text_encoder_3 = T5TextEncoder.load(
+            extras_path, subfolder="text_encoder_3", **self.component_load_kwargs("te")
+        )
+        flush()
         
         tokenizer_3 = T5TextEncoder.load_tokenizer(
             extras_path, subfolder="tokenizer_3", use_fast=False

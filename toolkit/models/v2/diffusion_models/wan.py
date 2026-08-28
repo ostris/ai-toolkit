@@ -80,6 +80,12 @@ class WanTransformer3DModel(DiffusersWanTransformer3DModel, OstrisModelMixin):
     def get_transformer_block_names(cls):
         return ["blocks"]
 
+    def get_offload_ignore_modules(self):
+        # fp32 modulation tables must stay resident on the compute device
+        return [self.scale_shift_table] + [
+            block.scale_shift_table for block in self.blocks
+        ]
+
     @classmethod
     def convert_state_dict_on_load(cls, state_dict):
         # original/comfy wan keys -> diffusers layout via diffusers' own

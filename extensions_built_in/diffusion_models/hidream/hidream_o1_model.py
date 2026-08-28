@@ -16,8 +16,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 from safetensors.torch import load_file, save_file
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from toolkit.memory_management import MemoryManager
 
 from transformers import AutoProcessor
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig
@@ -203,25 +201,8 @@ class HidreamO1Model(BaseModel):
                 torch_dtype=self.torch_dtype,
             )
         flush()
-        if not self.model_config.low_vram:
-            transformer.to(self.device_torch)
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[],
-            )
-
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         # move over to device now if low vram

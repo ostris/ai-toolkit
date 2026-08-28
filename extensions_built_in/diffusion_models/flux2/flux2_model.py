@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, List, Optional
 import huggingface_hub
 import torch
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
-from toolkit.memory_management.manager import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
@@ -13,10 +12,8 @@ from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from optimum.quanto import QTensor
 
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 from toolkit.models.v2.text_encoders.mistral3 import Mistral3TextEncoder
@@ -100,28 +97,11 @@ class Flux2Model(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Mistral")
 
-        text_encoder = Mistral3TextEncoder.load_model(
-            MISTRAL_PATH, dtype=dtype, subfolder=""
+        # load + quantize + offload + placement, all driven by model_config
+        text_encoder = Mistral3TextEncoder.load(
+            MISTRAL_PATH, subfolder="", **self.component_load_kwargs("te")
         )
-        text_encoder.to(self.device_torch, dtype=dtype)
-
         flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Mistral")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
 
         tokenizer = AutoProcessor.from_pretrained(MISTRAL_PATH)
         return text_encoder, tokenizer
@@ -151,31 +131,9 @@ class Flux2Model(BaseModel):
             transformer_state_dict, dtype, config=self.get_flux2_params()
         )
 
-        if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            # Avoid full-model peak VRAM allocation before quantization.
-            self.print_and_status_update("Keeping transformer on CPU for quantization")
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
 
         text_encoder, tokenizer = self.load_te()
 

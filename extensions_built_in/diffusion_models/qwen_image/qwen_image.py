@@ -14,7 +14,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import get_accelerator, unwrap_model
-from toolkit.util.quantize import quantize_model
 import torch.nn.functional as F
 from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
@@ -102,35 +101,10 @@ class QwenImageModel(QwenImageVAEHolderMixin, BaseModel):
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
-        transformer = QwenImageTransformer2DModel.load_model(
-            model_path,
-            dtype=model_dtype,
-            use_comfy_weights=self.model_config.model_kwargs.get(
-                "use_comfy_weights", True
-            ),
+        # load + quantize + offload + placement, all driven by model_config
+        transformer = QwenImageTransformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-
-        if self.model_config.quantize and not getattr(
-            transformer, "aitk_is_quantized", False
-        ):
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-
         flush()
 
         self.print_and_status_update("Text Encoder")
@@ -138,11 +112,12 @@ class QwenImageModel(QwenImageVAEHolderMixin, BaseModel):
         text_encoder = Qwen25VLTextEncoder.load_model(base_model_path, dtype=dtype)
 
         # remove the visual model as it is not needed for image generation
+        # (before quantization, so the dead tower is never quantized)
         self.processor = None
         if not self._qwen_image_keep_visual:
             text_encoder.drop_vision_tower()
 
-        self.prepare_text_encoder(text_encoder, dtype=dtype)
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
 
         self.print_and_status_update("Loading VAE")
         vae = QwenImageVAE.load_model(base_model_path, dtype=dtype)

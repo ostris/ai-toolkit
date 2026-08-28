@@ -122,6 +122,11 @@ class OstrisModelMixin:
         """fnmatch patterns of sensitive modules to keep in full precision."""
         return None
 
+    def get_offload_ignore_modules(self) -> Optional[List]:
+        """Module/parameter objects layer offloading must keep resident (pad
+        tokens, modulation tables, ...). Default: none."""
+        return None
+
     # ---- backend hooks: default to the diffusers ModelMixin API. transformers-lib
     # models (text encoders) override these three to use PreTrainedModel/AutoConfig.
 
@@ -151,6 +156,131 @@ class OstrisModelMixin:
     # ------------------------------------------------------------------
     # loading
     # ------------------------------------------------------------------
+
+    @classmethod
+    def load(
+        cls,
+        name_or_path: str,
+        qtype: Optional[str] = None,
+        offload: float = 0.0,
+        dtype: torch.dtype = torch.bfloat16,
+        device: Optional[torch.device] = None,
+        base_model=None,
+        quantize_device: Optional[torch.device] = None,
+        exclude_quant_modules: Optional[List[str]] = None,
+        config_path: Optional[str] = None,
+        config=None,
+        subfolder: Optional[str] = None,
+        use_comfy_weights: bool = True,
+        **kwargs,
+    ):
+        """One-call component load. Resolves/downloads the source (comfy
+        candidates included), builds the module, quantizes it, attaches layer
+        offloading, and places it — everything a holder used to hand-roll.
+
+        qtype: quantization type; "type|path.safetensors" also attaches an
+        accuracy recovery adapter (requires base_model for the network
+        wiring). Pre-quantized checkpoints skip quantization automatically.
+        offload: layer-offload fraction (0 disables); the class's
+        get_offload_ignore_modules hook pins sensitive pieces.
+        device: final placement. With offload active the memory manager owns
+        staging, so no blanket device move happens.
+        base_model: the holder — supplies status prints, quantize_kwargs, and
+        ARA wiring when given.
+        """
+        model = cls.load_model(
+            name_or_path,
+            dtype=dtype,
+            config_path=config_path,
+            config=config,
+            subfolder=subfolder,
+            use_comfy_weights=use_comfy_weights,
+            **kwargs,
+        )
+        return model.aitk_post_load(
+            qtype=qtype,
+            offload=offload,
+            dtype=dtype,
+            device=device,
+            base_model=base_model,
+            quantize_device=quantize_device,
+            exclude_quant_modules=exclude_quant_modules,
+        )
+
+    def aitk_post_load(
+        self,
+        qtype: Optional[str] = None,
+        offload: float = 0.0,
+        dtype: torch.dtype = torch.bfloat16,
+        device: Optional[torch.device] = None,
+        base_model=None,
+        quantize_device: Optional[torch.device] = None,
+        exclude_quant_modules: Optional[List[str]] = None,
+        **_load_only_kwargs,  # tolerate component_load_kwargs() extras
+    ):
+        """The post-load half of `load` — quantize (incl. "qtype|ara"), attach
+        layer offloading, place on device. Callable directly by holders whose
+        checkpoint sourcing is custom but want the standard policy."""
+        from toolkit.print import print_acc
+
+        status_fn = (
+            base_model.print_and_status_update if base_model is not None else print_acc
+        )
+
+        ara_path = None
+        if qtype is not None and "|" in qtype:
+            qtype, ara_path = qtype.split("|", 1)
+
+        if qtype and not getattr(self, "aitk_is_quantized", False):
+            from toolkit.util.quantize import (
+                attach_ara_and_quantize,
+                quantize_module,
+            )
+
+            exclude = list(exclude_quant_modules or []) + list(
+                self.get_quantization_exclude_modules() or []
+            )
+            if ara_path is not None:
+                if base_model is None:
+                    raise ValueError(
+                        "an accuracy recovery adapter needs base_model= for the "
+                        "network wiring"
+                    )
+                status_fn("Quantizing with accuracy recovery adapter")
+                attach_ara_and_quantize(base_model, self, ara_path, exclude=exclude)
+            else:
+                status_fn(f"Quantizing ({qtype})")
+                quantize_module(
+                    self,
+                    qtype,
+                    device=quantize_device if quantize_device is not None else device,
+                    dtype=dtype,
+                    block_names=self.get_transformer_block_names(),
+                    exclude=exclude,
+                    quantize_kwargs=(
+                        base_model.model_config.quantize_kwargs
+                        if base_model is not None
+                        else None
+                    ),
+                    status_fn=status_fn,
+                )
+            self.aitk_is_quantized = True
+            self.aitk_qtype = qtype
+        elif qtype and getattr(self, "aitk_is_quantized", False):
+            status_fn("Checkpoint is pre-quantized; skipping quantization")
+
+        if offload and offload > 0:
+            from toolkit.memory_management import MemoryManager
+
+            MemoryManager.attach(
+                self,
+                device,
+                offload_percent=offload,
+                ignore_modules=list(self.get_offload_ignore_modules() or []),
+            )
+        elif device is not None:
+            self.to(device)
+        return self
 
     @classmethod
     def load_model(

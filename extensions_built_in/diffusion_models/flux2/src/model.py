@@ -57,6 +57,10 @@ class FakeConfig:
 
 
 class Flux2(nn.Module, OstrisModelMixin):
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["double_blocks", "single_blocks"]
+
     def __init__(self, params: Flux2Params):
         super().__init__()
         self.config = FakeConfig()

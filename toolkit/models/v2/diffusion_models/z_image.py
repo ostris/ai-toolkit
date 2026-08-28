@@ -26,6 +26,9 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
     def get_transformer_block_names(cls):
         return ["layers"]
 
+    def get_offload_ignore_modules(self):
+        return [self.x_pad_token, self.cap_pad_token]
+
     @classmethod
     def get_quantization_exclude_modules(cls):
         # sensitive modules kept in full precision (fnmatch patterns on module

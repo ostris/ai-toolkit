@@ -12,7 +12,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from toolkit.util.quantize import quantize_model
 from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.v2.text_encoders.qwen3 import Qwen3TextEncoder
@@ -182,19 +181,9 @@ class ZImageModel(BaseModel):
         # quantization happens inside load_model unless an adapter has to be merged
         # into the full precision weights first (assistant lora / accuracy recovery
         # adapter); those paths quantize after the merge via quantize_model
-        qtype = None
-        if (
-            self.model_config.quantize
-            and self.model_config.assistant_lora_path is None
-            and self.model_config.accuracy_recovery_adapter is None
-        ):
-            qtype = self.model_config.qtype
-
         transformer = ZImageTransformer2DModel.load_model(
             model_path,
             dtype=dtype,
-            qtype=qtype,
-            quantize_device=self.device_torch,
             config_path=base_model_path if self.is_single_file else None,
             use_comfy_weights=self.model_config.model_kwargs.get(
                 "use_comfy_weights", True
@@ -223,37 +212,15 @@ class ZImageModel(BaseModel):
             if self.model_config.qtype == "qfloat8":
                 self.model_config.qtype = "float8"
 
-        # already quantized inside load_transformer unless an adapter had to merge
-        # into full precision weights first (or the checkpoint was pre-quantized)
-        if self.model_config.quantize and not transformer.aitk_is_quantized:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                    transformer.x_pad_token,
-                    transformer.cap_pad_token,
-                ],
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         self.print_and_status_update("Text Encoder")
         tokenizer = Qwen3TextEncoder.load_tokenizer(base_model_path)
-        text_encoder = Qwen3TextEncoder.load_model(base_model_path, dtype=dtype)
-        self.prepare_text_encoder(text_encoder, dtype=dtype)
+        text_encoder = Qwen3TextEncoder.load(
+            base_model_path, **self.component_load_kwargs("te")
+        )
 
         self.print_and_status_update("Loading VAE")
         vae = KLVAE.load_model(base_model_path, dtype=dtype)

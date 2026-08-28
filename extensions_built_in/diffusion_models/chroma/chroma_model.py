@@ -13,7 +13,6 @@ from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import QTensor
-from toolkit.util.quantize import quantize, quantize_model
 from .pipeline import ChromaPipeline, prepare_latent_image_ids
 from einops import rearrange, repeat
 import random
@@ -158,27 +157,21 @@ class ChromaModel(BaseModel):
             transformer = Chroma.load_from_state_dict(load_file(model_path, "cpu"), dtype)
         # add dtype, not sure why it doesnt have it
         transformer.dtype = dtype
-        transformer.to(self.quantize_device, dtype=dtype)
 
         transformer.config = FakeConfig()
         transformer.config.num_layers = transformer.params.depth
         transformer.config.num_single_layers = transformer.params.depth_single_blocks
 
-        if self.model_config.quantize:
-            # block-streaming quantize (handles dequant-on-save patching,
-            # excludes, ARA, and quantize_kwargs)
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            transformer.to(self.device_torch)
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
 
         flush()
 
         self.print_and_status_update("Loading T5")
         tokenizer_2 = T5TextEncoder.load_tokenizer(extras_path)
-        text_encoder_2 = T5TextEncoder.load_model(extras_path, dtype=dtype)
-        self.prepare_text_encoder(text_encoder_2, dtype=dtype)
+        text_encoder_2 = T5TextEncoder.load(
+            extras_path, **self.component_load_kwargs("te")
+        )
 
         # self.print_and_status_update("Loading CLIP")
         text_encoder = FakeCLIP(device=self.device_torch)

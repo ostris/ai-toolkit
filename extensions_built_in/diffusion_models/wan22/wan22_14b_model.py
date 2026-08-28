@@ -286,62 +286,25 @@ class Wan2214bModel(Wan21):
             # we have a hf path, replace it with transformer_2 subfolder
             subfolder_2 = "transformer_2"
 
+        # per-transformer load kwargs; the ARA (if any) applies to the combined
+        # dual model below, offload attaches per transformer after that
+        per_kwargs = self.component_load_kwargs("transformer")
+        per_kwargs["offload"] = 0.0
+        if self.model_config.accuracy_recovery_adapter is not None:
+            per_kwargs["qtype"] = None
+
         self.print_and_status_update("Loading transformer 1")
-        dtype = self.torch_dtype
-        transformer_1 = WanTransformer3DModel.load_model(
-            transformer_path_1, dtype=dtype, subfolder=subfolder_1
+        transformer_1 = WanTransformer3DModel.load(
+            transformer_path_1, subfolder=subfolder_1, **per_kwargs
         )
-
         flush()
-
-        if self.model_config.low_vram:
-            # quantize on the device
-            transformer_1.to('cpu', dtype=dtype)
-            flush()
-        else:
-            transformer_1.to(self.device_torch, dtype=dtype)
-            flush()
-
-        if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
-            # todo handle two ARAs
-            self.print_and_status_update("Quantizing Transformer 1")
-            quantize_model(self, transformer_1)
-            flush()
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer 1 to CPU")
-            transformer_1.to("cpu")
-        else:
-            transformer_1.to(self.device_torch)
 
         self.print_and_status_update("Loading transformer 2")
-        dtype = self.torch_dtype
-        transformer_2 = WanTransformer3DModel.load_model(
-            transformer_path_2, dtype=dtype, subfolder=subfolder_2
+        transformer_2 = WanTransformer3DModel.load(
+            transformer_path_2, subfolder=subfolder_2, **per_kwargs
         )
-
         flush()
 
-        if self.model_config.low_vram:
-            # quantize on the device
-            transformer_2.to('cpu', dtype=dtype)
-            flush()
-        else:
-            transformer_2.to(self.device_torch, dtype=dtype)
-            flush()
-
-        if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
-            # todo handle two ARAs
-            self.print_and_status_update("Quantizing Transformer 2")
-            quantize_model(self, transformer_2)
-            flush()
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer 2 to CPU")
-            transformer_2.to("cpu")
-        else:
-            transformer_2.to(self.device_torch)
-    
         layer_offloading_transformer = self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0
         # make the combined model
         self.print_and_status_update("Creating DualWanTransformer3DModel")
@@ -362,18 +325,13 @@ class Wan2214bModel(Wan21):
             
         
         if layer_offloading_transformer:
-            MemoryManager.attach(
-                transformer_1,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[transformer_1.scale_shift_table] + [block.scale_shift_table for block in transformer_1.blocks]
-            )
-            MemoryManager.attach(
-                transformer_2,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[transformer_2.scale_shift_table] + [block.scale_shift_table for block in transformer_2.blocks]
-            )
+            for t in (transformer_1, transformer_2):
+                MemoryManager.attach(
+                    t,
+                    self.device_torch,
+                    offload_percent=self.model_config.layer_offloading_transformer_percent,
+                    ignore_modules=t.get_offload_ignore_modules(),
+                )
 
         return transformer
 

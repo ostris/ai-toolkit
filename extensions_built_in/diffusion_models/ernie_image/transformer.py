@@ -298,6 +298,9 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin, OstrisModelMixin):
     def get_transformer_block_names(cls):
         return ["layers"]
 
+    def get_offload_ignore_modules(self):
+        return [self.x_embedder]
+
 
     @register_to_config
     def __init__(

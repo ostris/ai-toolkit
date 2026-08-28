@@ -14,8 +14,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from .src.pipelines.omnigen2.pipeline_omnigen2 import OmniGen2Pipeline
 from .src.models.transformers import OmniGen2Transformer2DModel
 from .src.models.transformers.repo import OmniGen2RotaryPosEmbed
@@ -80,40 +78,18 @@ class OmniGen2Model(BaseModel):
             extras_path, subfolder="processor", use_fast=True
         )
 
-        mllm = Qwen25VLTextEncoder.load_model(
-            extras_path, dtype=torch.bfloat16, subfolder="mllm"
+        # load + quantize + offload + placement, all driven by model_config
+        mllm = Qwen25VLTextEncoder.load(
+            extras_path, subfolder="mllm", **self.component_load_kwargs("te")
         )
-        mllm.to(self.device_torch, dtype=dtype)
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Qwen2.5 VL model")
-            quantization_type = get_qtype(self.model_config.qtype_te)
-            quantize(mllm, weights=quantization_type)
-            freeze(mllm)
-
-        if self.low_vram:
-            # unload it for now
-            mllm.to("cpu")
 
         flush()
 
         self.print_and_status_update("Loading transformer")
 
-        transformer = OmniGen2Transformer2DModel.load_model(
-            model_path, dtype=torch.bfloat16
+        transformer = OmniGen2Transformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-
-        if not self.low_vram:
-            transformer.to(self.device_torch, dtype=dtype)
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            if not self.low_vram:
-                transformer.to(self.device_torch)
-
-        if self.low_vram:
-            # unload it for now
-            transformer.to("cpu")
 
         flush()
 

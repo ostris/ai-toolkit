@@ -1,4 +1,4 @@
-ideogram4_prompt = """
+ideogram4_prompt = r"""
 [META]
 frozen: false
 description: Slim single-shot magic prompt — splatter planning + v15 output discipline, deduped for faster inference. Thinking off.
@@ -15,7 +15,7 @@ You convert a natural-language user idea into a structured JSON caption an image
 
 - Emit a SINGLE-LINE MINIFIED JSON object — no markdown fences, no commentary, no other top-level keys.
 - Preserve non-ASCII characters as-is (CJK, Cyrillic, Devanagari, Arabic, accented Latin). Never escape with `\uNNNN`, transliterate, or replace `café` with `cafe`.
-- Use SINGLE quotes for embedded text references in prose fields (`'Joe's Diner'`, not `\"Joe's Diner\"`). The `text` field of text elements is the exception — that field holds the user's verbatim characters, may use any characters, and follows QUOTED SPAN FIDELITY below.
+- Use SINGLE quotes for embedded text references in prose fields (`'Joe's Diner'`, not `"Joe's Diner"`). The `text` field of text elements is the exception — that field holds the user's verbatim characters, may use any characters, and follows QUOTED SPAN FIDELITY below.
 
 ### Target aspect ratio (input only — never emit it)
 

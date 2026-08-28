@@ -261,6 +261,68 @@ def _has_quantizable_linear(module: torch.nn.Module, weights, exclude=None) -> b
     return False
 
 
+@torch.no_grad()
+def quantize_module(
+    module: torch.nn.Module,
+    qtype: str,
+    device=None,
+    dtype: torch.dtype = torch.bfloat16,
+    block_names: Optional[List[str]] = None,
+    exclude: Optional[List[str]] = None,
+    quantize_kwargs: Optional[dict] = None,
+    status_fn=print_acc,
+):
+    """Module-centric quantization: block-streamed (each repeated block moves
+    to ``device`` for the math and returns to cpu) with a whole-module pass
+    for the extras. This is the core the per-model loaders call; holders'
+    quantize_model wraps it with model_config plumbing."""
+    from toolkit.dequantize import patch_dequantization_on_save
+
+    patch_dequantization_on_save(module)
+    quantization_type = get_qtype(qtype)
+    exclude = list(exclude or [])
+    quantize_kwargs = quantize_kwargs or {}
+
+    all_blocks: List[torch.nn.Module] = []
+    for name in block_names or []:
+        # name may be a dotted path for models that nest their blocks
+        block_list = module
+        for part in name.split("."):
+            block_list = getattr(block_list, part, None)
+            if block_list is None:
+                break
+        if block_list is not None:
+            all_blocks += list(block_list)
+    if all_blocks:
+        status_fn(f" - quantizing {len(all_blocks)} blocks")
+    already_quantized = 0
+    for block in tqdm(all_blocks):
+        if not _has_quantizable_linear(block, quantization_type, exclude):
+            # pre-quantized checkpoint with a matching qtype: nothing in this
+            # block would change — skip the device round-trip and the dtype
+            # cast entirely so the load stays byte-identical
+            already_quantized += 1
+            continue
+        if device is not None:
+            block.to(device, dtype=dtype, non_blocking=True)
+        quantize(block, weights=quantization_type, exclude=exclude, **quantize_kwargs)
+        freeze(block)
+        # NOT non_blocking: an async D2H allocates the cpu destination in pinned
+        # memory, which the caching host allocator keeps forever — that silently
+        # retained a model-sized chunk of host ram
+        if device is not None:
+            block.to("cpu")
+    if already_quantized:
+        status_fn(
+            f" - {already_quantized} blocks already quantized with a matching qtype; left untouched"
+        )
+
+    status_fn(" - quantizing extras")
+    quantize(module, weights=quantization_type, exclude=exclude, **quantize_kwargs)
+    freeze(module)
+    return module
+
+
 def quantize_model(
     base_model: "BaseModel",
     model_to_quantize: torch.nn.Module,
@@ -279,153 +341,176 @@ def quantize_model(
     exclude_modules = base_model.get_quantization_exclude_modules() or []
 
     if base_model.model_config.accuracy_recovery_adapter is not None:
-        from toolkit.config_modules import NetworkConfig
-        from toolkit.lora_special import LoRASpecialNetwork
-
-        # we need to load and quantize with an accuracy recovery adapter
-        # todo handle hf repos
-        load_lora_path = base_model.model_config.accuracy_recovery_adapter
-
-        if not os.path.exists(load_lora_path):
-            # not local file, grab from the hub
-
-            path_split = load_lora_path.split("/")
-            if len(path_split) > 3:
-                raise ValueError(
-                    "The accuracy recovery adapter path must be a local path or for a hf repo, 'username/repo_name/filename.safetensors'."
-                )
-            repo_id = f"{path_split[0]}/{path_split[1]}"
-            print_acc(f"Grabbing lora from the hub: {load_lora_path}")
-            new_lora_path = hf_hub_download(
-                repo_id,
-                filename=path_split[-1],
-            )
-            # replace the path
-            load_lora_path = new_lora_path
-
-        # build the lora config based on the lora weights
-        lora_state_dict = load_file(load_lora_path)
-        
-        if hasattr(base_model, "convert_lora_weights_before_load"):
-            lora_state_dict = base_model.convert_lora_weights_before_load(lora_state_dict)
-        
-        network_config = {
-            "type": "lora",
-            "network_kwargs": {"only_if_contains": []},
-            "transformer_only": False,
-        }
-        first_key = list(lora_state_dict.keys())[0]
-        first_weight = lora_state_dict[first_key]
-        # if it starts with lycoris and includes lokr
-        if first_key.startswith("lycoris") and any(
-            "lokr" in key for key in lora_state_dict.keys()
-        ):
-            network_config["type"] = "lokr"
-        
-        network_kwargs = {}
-
-        # find firse loraA weight
-        if network_config["type"] == "lora":
-            linear_dim = None
-            for key, value in lora_state_dict.items():
-                if "lora_A" in key:
-                    linear_dim = int(value.shape[0])
-                    break
-            linear_alpha = linear_dim
-            network_config["linear"] = linear_dim
-            network_config["linear_alpha"] = linear_alpha
-
-            # we build the keys to match every key
-            only_if_contains = []
-            for key in lora_state_dict.keys():
-                contains_key = key.split(".lora_")[0]
-                if contains_key not in only_if_contains:
-                    only_if_contains.append(contains_key)
-
-            network_kwargs["only_if_contains"] = only_if_contains
-        elif network_config["type"] == "lokr":
-            # find the factor
-            largest_factor = 0
-            for key, value in lora_state_dict.items():
-                if "lokr_w1" in key:
-                    factor = int(value.shape[0])
-                    if factor > largest_factor:
-                        largest_factor = factor
-            network_config["lokr_full_rank"] = True
-            network_config["lokr_factor"] = largest_factor
-
-            only_if_contains = []
-            for key in lora_state_dict.keys():
-                if "lokr_w1" in key:
-                    contains_key = key.split(".lokr_w1")[0]
-                    contains_key = contains_key.replace("lycoris_", "")
-                    if contains_key not in only_if_contains:
-                        only_if_contains.append(contains_key)
-            network_kwargs["only_if_contains"] = only_if_contains
-        
-        if hasattr(base_model, 'target_lora_modules'):
-            network_kwargs['target_lin_modules'] = base_model.target_lora_modules
-
-        # todo auto grab these
-        # get dim and scale
-        network_config = NetworkConfig(**network_config)
-
-        network = LoRASpecialNetwork(
-            text_encoder=None,
-            unet=model_to_quantize,
-            lora_dim=network_config.linear,
-            multiplier=1.0,
-            alpha=network_config.linear_alpha,
-            # conv_lora_dim=self.network_config.conv,
-            # conv_alpha=self.network_config.conv_alpha,
-            train_unet=True,
-            train_text_encoder=False,
-            network_config=network_config,
-            network_type=network_config.type,
-            transformer_only=network_config.transformer_only,
-            is_transformer=base_model.is_transformer,
-            base_model=base_model,
-            is_ara=True,
-            **network_kwargs
-        )
-        network.apply_to(
-            None, model_to_quantize, apply_text_encoder=False, apply_unet=True
-        )
-        network.force_to(base_model.device_torch, dtype=base_model.torch_dtype)
-        network._update_torch_multiplier()
-        network.load_weights(lora_state_dict)
-        network.eval()
-        network.is_active = True
-        network.can_merge_in = False
-        base_model.accuracy_recovery_adapter = network
-
-        # quantize it
-        lora_exclude_modules = []
-        quantization_type = get_qtype(base_model.model_config.qtype)
-        for lora_module in tqdm(network.unet_loras, desc="Attaching quantization"):
-            # the lora has already hijacked the original module
-            orig_module = lora_module.org_module[0]
-            orig_module.to(base_model.torch_dtype)
-            # make the params not require gradients
-            for param in orig_module.parameters():
-                param.requires_grad = False
-            quantize(orig_module, weights=quantization_type)
-            freeze(orig_module)
-            module_name = lora_module.lora_name.replace('$$', '.').replace('transformer.', '')
-            lora_exclude_modules.append(module_name)
-            if base_model.model_config.low_vram:
-                # move it back to cpu
-                orig_module.to("cpu")
-        pass
-        # quantize additional layers
-        print_acc(" - quantizing additional layers")
-        quantization_type = get_qtype('uint8')
-        quantize(
+        attach_ara_and_quantize(
+            base_model,
             model_to_quantize,
-            weights=quantization_type,
-            exclude=lora_exclude_modules + exclude_modules
+            ara_path=base_model.model_config.accuracy_recovery_adapter,
+            exclude=exclude_modules,
         )
     else:
+        _quantize_model_blocks(base_model, model_to_quantize, exclude_modules)
+
+
+@torch.no_grad()
+def attach_ara_and_quantize(
+    base_model: "BaseModel",
+    model_to_quantize: torch.nn.Module,
+    ara_path: str,
+    exclude: Optional[List[str]] = None,
+):
+    """Load an accuracy recovery adapter as a live network on the module and
+    quantize around it (adapter-hijacked linears at the configured qtype,
+    everything else uint8). The network lands on
+    base_model.accuracy_recovery_adapter."""
+    from toolkit.config_modules import NetworkConfig
+    from toolkit.lora_special import LoRASpecialNetwork
+
+    exclude_modules = list(exclude or [])
+    load_lora_path = ara_path
+
+    if not os.path.exists(load_lora_path):
+        # not local file, grab from the hub
+
+        path_split = load_lora_path.split("/")
+        if len(path_split) > 3:
+            raise ValueError(
+                "The accuracy recovery adapter path must be a local path or for a hf repo, 'username/repo_name/filename.safetensors'."
+            )
+        repo_id = f"{path_split[0]}/{path_split[1]}"
+        print_acc(f"Grabbing lora from the hub: {load_lora_path}")
+        new_lora_path = hf_hub_download(
+            repo_id,
+            filename=path_split[-1],
+        )
+        # replace the path
+        load_lora_path = new_lora_path
+
+    # build the lora config based on the lora weights
+    lora_state_dict = load_file(load_lora_path)
+        
+    if hasattr(base_model, "convert_lora_weights_before_load"):
+        lora_state_dict = base_model.convert_lora_weights_before_load(lora_state_dict)
+        
+    network_config = {
+        "type": "lora",
+        "network_kwargs": {"only_if_contains": []},
+        "transformer_only": False,
+    }
+    first_key = list(lora_state_dict.keys())[0]
+    first_weight = lora_state_dict[first_key]
+    # if it starts with lycoris and includes lokr
+    if first_key.startswith("lycoris") and any(
+        "lokr" in key for key in lora_state_dict.keys()
+    ):
+        network_config["type"] = "lokr"
+        
+    network_kwargs = {}
+
+    # find firse loraA weight
+    if network_config["type"] == "lora":
+        linear_dim = None
+        for key, value in lora_state_dict.items():
+            if "lora_A" in key:
+                linear_dim = int(value.shape[0])
+                break
+        linear_alpha = linear_dim
+        network_config["linear"] = linear_dim
+        network_config["linear_alpha"] = linear_alpha
+
+        # we build the keys to match every key
+        only_if_contains = []
+        for key in lora_state_dict.keys():
+            contains_key = key.split(".lora_")[0]
+            if contains_key not in only_if_contains:
+                only_if_contains.append(contains_key)
+
+        network_kwargs["only_if_contains"] = only_if_contains
+    elif network_config["type"] == "lokr":
+        # find the factor
+        largest_factor = 0
+        for key, value in lora_state_dict.items():
+            if "lokr_w1" in key:
+                factor = int(value.shape[0])
+                if factor > largest_factor:
+                    largest_factor = factor
+        network_config["lokr_full_rank"] = True
+        network_config["lokr_factor"] = largest_factor
+
+        only_if_contains = []
+        for key in lora_state_dict.keys():
+            if "lokr_w1" in key:
+                contains_key = key.split(".lokr_w1")[0]
+                contains_key = contains_key.replace("lycoris_", "")
+                if contains_key not in only_if_contains:
+                    only_if_contains.append(contains_key)
+        network_kwargs["only_if_contains"] = only_if_contains
+        
+    if hasattr(base_model, 'target_lora_modules'):
+        network_kwargs['target_lin_modules'] = base_model.target_lora_modules
+
+    # todo auto grab these
+    # get dim and scale
+    network_config = NetworkConfig(**network_config)
+
+    network = LoRASpecialNetwork(
+        text_encoder=None,
+        unet=model_to_quantize,
+        lora_dim=network_config.linear,
+        multiplier=1.0,
+        alpha=network_config.linear_alpha,
+        # conv_lora_dim=self.network_config.conv,
+        # conv_alpha=self.network_config.conv_alpha,
+        train_unet=True,
+        train_text_encoder=False,
+        network_config=network_config,
+        network_type=network_config.type,
+        transformer_only=network_config.transformer_only,
+        is_transformer=base_model.is_transformer,
+        base_model=base_model,
+        is_ara=True,
+        **network_kwargs
+    )
+    network.apply_to(
+        None, model_to_quantize, apply_text_encoder=False, apply_unet=True
+    )
+    network.force_to(base_model.device_torch, dtype=base_model.torch_dtype)
+    network._update_torch_multiplier()
+    network.load_weights(lora_state_dict)
+    network.eval()
+    network.is_active = True
+    network.can_merge_in = False
+    base_model.accuracy_recovery_adapter = network
+
+    # quantize it
+    lora_exclude_modules = []
+    quantization_type = get_qtype(base_model.model_config.qtype)
+    for lora_module in tqdm(network.unet_loras, desc="Attaching quantization"):
+        # the lora has already hijacked the original module
+        orig_module = lora_module.org_module[0]
+        orig_module.to(base_model.torch_dtype)
+        # make the params not require gradients
+        for param in orig_module.parameters():
+            param.requires_grad = False
+        quantize(orig_module, weights=quantization_type)
+        freeze(orig_module)
+        module_name = lora_module.lora_name.replace('$$', '.').replace('transformer.', '')
+        lora_exclude_modules.append(module_name)
+        if base_model.model_config.low_vram:
+            # move it back to cpu
+            orig_module.to("cpu")
+    pass
+    # quantize additional layers
+    print_acc(" - quantizing additional layers")
+    quantization_type = get_qtype('uint8')
+    quantize(
+        model_to_quantize,
+        weights=quantization_type,
+        exclude=lora_exclude_modules + exclude_modules
+    )
+
+
+def _quantize_model_blocks(base_model, model_to_quantize, exclude_modules):
+    if True:
         # quantize model the original way without an accuracy recovery adapter
         # move and quantize only certain pieces at a time.
         quantization_type = get_qtype(base_model.model_config.qtype)

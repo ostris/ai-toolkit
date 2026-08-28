@@ -17,9 +17,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from accelerate import init_empty_weights
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from toolkit.memory_management import MemoryManager
 from toolkit.paths import MODELS_PATH
 from toolkit.util.mixed_precision import attach_per_op_casting, pin_stored_fp32
 from safetensors.torch import load_file
@@ -307,33 +304,8 @@ class LTX2Model(BaseModel):
 
             transformer = LTX2VideoTransformer3DModel.load_model(model_path, dtype=dtype)
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            ignore_modules = []
-            for block in transformer.transformer_blocks:
-                ignore_modules.append(block.scale_shift_table)
-                ignore_modules.append(block.audio_scale_shift_table)
-                ignore_modules.append(block.video_a2v_cross_attn_scale_shift_table)
-                ignore_modules.append(block.audio_a2v_cross_attn_scale_shift_table)
-            ignore_modules.append(transformer.scale_shift_table)
-            ignore_modules.append(transformer.audio_scale_shift_table)
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=ignore_modules,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
 
         flush()
 
@@ -441,25 +413,8 @@ class LTX2Model(BaseModel):
         text_encoder.model.vision_tower = None
         flush()
         
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-                ignore_modules=[
-                    text_encoder.model.language_model.base_model.embed_tokens
-                ],
-            )
-
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
 
@@ -1375,38 +1330,11 @@ class LTX25Model(LTX2Model):
             pin_stored_fp32(transformer)
         flush()
 
-        if self.model_config.quantize:
-            if num_quantized_dit:
-                self.print_and_status_update(
-                    "Transformer is pre-quantized (ConvRot); skipping quantize"
-                )
-            else:
-                self.print_and_status_update("Quantizing Transformer")
-                quantize_model(self, transformer)
-                flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            ignore_modules = []
-            for block in transformer.transformer_blocks:
-                ignore_modules.append(block.scale_shift_table)
-                ignore_modules.append(block.audio_scale_shift_table)
-                ignore_modules.append(block.video_a2v_cross_attn_scale_shift_table)
-                ignore_modules.append(block.audio_a2v_cross_attn_scale_shift_table)
-            ignore_modules.append(transformer.scale_shift_table)
-            ignore_modules.append(transformer.audio_scale_shift_table)
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=ignore_modules,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+        if num_quantized_dit:
+            # pre-quantized (ConvRot) comfy file; aitk_post_load skips quantize
+            transformer.aitk_is_quantized = True
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         self.print_and_status_update("Loading connectors")
@@ -1433,32 +1361,11 @@ class LTX25Model(LTX2Model):
         del te_state_dict
         flush()
 
-        if self.model_config.quantize_te:
-            if num_quantized_te:
-                self.print_and_status_update(
-                    "Text encoder is pre-quantized (ConvRot); skipping quantize"
-                )
-            else:
-                self.print_and_status_update("Quantizing Text Encoder")
-                quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-                freeze(text_encoder)
-                flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            # layer_scalar is a bare tensor buffer on each decoder layer; the
-            # manager never enumerates it, so it must ride along explicitly
-            ignore_modules = [text_encoder.embed_tokens]
-            for layer in text_encoder.layers:
-                ignore_modules.append(layer.layer_scalar)
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-                ignore_modules=ignore_modules,
-            )
+        if num_quantized_te:
+            # pre-quantized (ConvRot) comfy file; aitk_post_load skips quantize
+            text_encoder.aitk_is_quantized = True
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
 
         text_encoder.to(self.device_torch)
         text_encoder.requires_grad_(False)

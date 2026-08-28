@@ -13,8 +13,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from toolkit.util.quantize import quantize_model
-from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
 from optimum.quanto import QTensor
 from toolkit.metadata import get_meta_for_safetensors
@@ -108,37 +106,16 @@ class ZetaChromaModel(BaseModel):
         )
         del transformer_state_dict
 
-        transformer.to(self.quantize_device, dtype=dtype)
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                    transformer.x_pad_token,
-                    transformer.cap_pad_token,
-                ],
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
 
         flush()
 
         self.print_and_status_update("Text Encoder")
         tokenizer = Qwen3TextEncoder.load_tokenizer(base_model_path)
-        text_encoder = Qwen3TextEncoder.load_model(base_model_path, dtype=dtype)
-        self.prepare_text_encoder(text_encoder, dtype=dtype)
+        text_encoder = Qwen3TextEncoder.load(
+            base_model_path, **self.component_load_kwargs("te")
+        )
 
         self.print_and_status_update("Loading VAE")
         vae = FakeVAE(scaling_factor=1.0)

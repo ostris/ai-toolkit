@@ -21,6 +21,18 @@ class LTX2VideoTransformer3DModel(
     def get_transformer_block_names(cls):
         return ["transformer_blocks"]
 
+    def get_offload_ignore_modules(self):
+        # fp32 scale/shift tables (bare tensors) must stay resident
+        mods = []
+        for block in self.transformer_blocks:
+            mods += [
+                block.scale_shift_table,
+                block.audio_scale_shift_table,
+                block.video_a2v_cross_attn_scale_shift_table,
+                block.audio_a2v_cross_attn_scale_shift_table,
+            ]
+        return mods + [self.scale_shift_table, self.audio_scale_shift_table]
+
 
 class LTX2TextConnectors(DiffusersLTX2TextConnectors, OstrisModelMixin):
     aitk_subfolder = "connectors"

@@ -452,6 +452,13 @@ class SimpleMLPAdaLN(nn.Module):
 
 
 class ZImageDCT(nn.Module, OstrisModelMixin):
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["layers"]
+
+    def get_offload_ignore_modules(self):
+        return [self.x_pad_token, self.cap_pad_token]
+
     def __init__(self, params: ZImageDCTParams):
         super().__init__()
         self.config = FakeConfig()

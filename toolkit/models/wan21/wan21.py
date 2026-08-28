@@ -6,7 +6,6 @@ from toolkit.accelerator import unwrap_model
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.dequantize import patch_dequantization_on_save
-from toolkit.memory_management.manager import MemoryManager
 from toolkit.models.base_model import BaseModel
 from toolkit.prompt_utils import PromptEmbeds
 from transformers import AutoTokenizer, UMT5EncoderModel
@@ -42,7 +41,6 @@ from diffusers.pipelines.wan.pipeline_wan import XLA_AVAILABLE
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from typing import Any, Callable, Dict, List, Optional, Union
 from toolkit.models.wan21.wan_lora_convert import convert_to_diffusers, convert_to_original
-from toolkit.util.quantize import quantize_model
 from toolkit.models.v2.text_encoders.umt5 import UMT5TextEncoder
 from toolkit.models.v2.vae.wan import WanVAE
 from toolkit.metadata import get_meta_for_safetensors
@@ -344,22 +342,10 @@ class Wan21(BaseModel):
     
     def load_wan_transformer(self, transformer_path, subfolder=None):
         self.print_and_status_update("Loading transformer")
-        dtype = self.torch_dtype
-        transformer = WanTransformer3DModel.load_model(
-            transformer_path, dtype=dtype, subfolder=subfolder
-        )
 
         if self.model_config.split_model_over_gpus:
             raise ValueError(
                 "Splitting model over gpus is not supported for Wan2.1 models")
-
-        if self.model_config.low_vram:
-            # quantize on the device
-            transformer.to('cpu', dtype=dtype)
-            flush()
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
-            flush()
 
         if self.model_config.assistant_lora_path is not None or self.model_config.inference_lora_path is not None:
             raise ValueError(
@@ -369,23 +355,13 @@ class Wan21(BaseModel):
             raise ValueError(
                 "Loading LoRA is not supported for Wan2.1 models currently")
 
+        # load + quantize + offload + placement, all driven by model_config
+        transformer = WanTransformer3DModel.load(
+            transformer_path,
+            subfolder=subfolder,
+            **self.component_load_kwargs("transformer"),
+        )
         flush()
-        
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-        
-        if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent
-            )
-        
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to('cpu')
 
         return transformer
 
@@ -418,8 +394,9 @@ class Wan21(BaseModel):
         self.print_and_status_update("Loading UMT5EncoderModel")
         
         tokenizer = UMT5TextEncoder.load_tokenizer(te_path)
-        text_encoder = UMT5TextEncoder.load_model(te_path, dtype=dtype)
-        self.prepare_text_encoder(text_encoder, dtype=dtype)
+        text_encoder = UMT5TextEncoder.load(
+            te_path, **self.component_load_kwargs("te")
+        )
 
         if self.model_config.low_vram:
             print("Moving transformer back to GPU")

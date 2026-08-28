@@ -36,9 +36,9 @@ from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
 
-from optimum.quanto import freeze, QTensor
+
+from optimum.quanto import QTensor
 from diffusers import AutoencoderKL
 
 from .src.transformer import BooguImageTransformer2DModel
@@ -164,16 +164,8 @@ class BooguImageModel(BaseModel):
         if attention_backend != "native":
             transformer.set_attention_backend(attention_backend)
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         # --- instruction encoder (Qwen3-VL) + processor ---
@@ -203,18 +195,8 @@ class BooguImageModel(BaseModel):
             )
         flush()
 
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing instruction encoder")
-            text_encoder.to(self.device_torch)
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving instruction encoder to CPU")
-            text_encoder.to("cpu")
-        else:
-            text_encoder.to(self.device_torch)
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         flush()
 
         # --- VAE (FLUX AutoencoderKL) ---
