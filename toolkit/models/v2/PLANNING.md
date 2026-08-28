@@ -408,6 +408,20 @@ Decisions:
       load → comfy save → identical key set + bit-exact quantized entries vs
       the published file → reload → bit-identical quantized forward. Extend
       per arch as saves flip.
+- [x] Full UI-default coverage (2026-08-27): the registry now holds all 31
+      UI-facing archs, and 30/31 load + generate through the new stack with
+      their real UI defaults (mageflow blocked upstream by its hub 404).
+      This round verified the previously-untested tail with real weights:
+      wan22_14b + i2v (comfy fp8 pairs via the legacy importer, candidate
+      keys added for the ai-toolkit bf16 default repos), wan21_i2v, hidream,
+      hidream_e1 (native 768² editing), nucleus, omnigen2, ltx2.5, flux2,
+      flux2_klein_9b, prx_pixel, zeta_chroma, zimage_l2p, both qwen edit
+      archs, f-lite. Fixes found by the run: ltx2.5's fp32 scale_shift
+      tables promoted hidden states into bf16 linears under the diffusers
+      class (ComfyUI casts per-op) — the DiT/connectors now cast to compute
+      dtype after quantized attach (ConvRot storage immune); harness configs
+      for e1 resolution and zeta/l2p extras_name_or_path corrected to match
+      the UI defaults.
 - [ ] Each newly migrated model adds its test in the same PR as its migration.
 
 ## TODO / look at later

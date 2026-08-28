@@ -1374,8 +1374,12 @@ class LTX25Model(LTX2Model):
             transformer, transformer_sd, "transformer"
         )
         del transformer_sd
-        if num_quantized_dit == 0:
-            transformer = transformer.to(dtype)
+        # cast to the compute dtype even when pre-quantized: the comfy file
+        # stores the scale_shift modulation tables in fp32, which promotes
+        # hidden states to fp32 and breaks the (bf16) diffusers attention
+        # linears. Quantized backends are immune (int8 qdata, uint8-viewed
+        # scales survive a dtype cast untouched).
+        transformer = transformer.to(dtype)
         flush()
 
         if self.model_config.quantize:
@@ -1420,8 +1424,7 @@ class LTX25Model(LTX2Model):
             connectors, connectors_sd, "connectors"
         )
         del connectors_sd, dit_sd
-        if num_quantized_connectors == 0:
-            connectors = connectors.to(dtype)
+        connectors = connectors.to(dtype)
         flush()
 
         # ---- text encoder (Gemma-4 12B, single comfy file) ----

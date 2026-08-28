@@ -107,6 +107,77 @@ MODEL_TESTS = {
         "model": {"name_or_path": "black-forest-labs/FLUX.2-klein-base-4B", "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
     },
+    # ---- coverage for every UI-default arch (big downloads on first run) ----
+    "wan22_14b": {
+        "model": {"name_or_path": "ai-toolkit/Wan2.2-T2V-A14B-Diffusers-bf16", "quantize": True, "quantize_te": True, "low_vram": True},
+        "sample": {"width": 480, "height": 480, "num_inference_steps": 20, "guidance_scale": 3.5, "seed": 42, "num_frames": 17},
+    },
+    "wan22_14b_i2v": {
+        "model": {"name_or_path": "ai-toolkit/Wan2.2-I2V-A14B-Diffusers-bf16", "quantize": True, "quantize_te": True, "low_vram": True},
+        "sample": {"width": 480, "height": 480, "num_inference_steps": 20, "guidance_scale": 3.5, "seed": 42, "num_frames": 17},
+        "needs_control_image": True,
+    },
+    "wan21_i2v": {
+        "model": {"name_or_path": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers", "quantize": True, "quantize_te": True},
+        "sample": {"width": 480, "height": 480, "num_inference_steps": 20, "guidance_scale": 5.0, "seed": 42, "num_frames": 17},
+        "needs_control_image": True,
+    },
+    "hidream": {
+        "model": {"name_or_path": "HiDream-ai/HiDream-I1-Full", "quantize": True, "quantize_te": True},
+        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
+    },
+    "hidream_e1": {
+        # editing seq budget fits 768x768 (source+target concat)
+        "model": {"name_or_path": "HiDream-ai/HiDream-E1-1", "quantize": True, "quantize_te": True},
+        "sample": {"width": 768, "height": 768, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
+        "needs_control_image": True,
+    },
+    "nucleus_image": {
+        "model": {"name_or_path": "NucleusAI/Nucleus-Image", "quantize": True, "quantize_te": True},
+        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+    },
+    "omnigen2": {
+        "model": {"name_or_path": "OmniGen2/OmniGen2", "quantize": True, "quantize_te": True},
+        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+    },
+    "ltx2.5": {
+        "model": {"name_or_path": "Lightricks/LTX-2.5", "quantize": True, "quantize_te": True},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 25, "guidance_scale": 3.0, "seed": 42, "num_frames": 25},
+    },
+    "flux2": {
+        "model": {"name_or_path": "black-forest-labs/FLUX.2-dev", "quantize": True, "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
+    },
+    "flux2_klein_9b": {
+        "model": {"name_or_path": "black-forest-labs/FLUX.2-klein-base-9B", "quantize": True, "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
+    },
+    "prx_pixel": {
+        "model": {"name_or_path": "Photoroom/prxpixel-t2i", "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
+    },
+    "zeta_chroma": {
+        "model": {"name_or_path": "lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors", "extras_name_or_path": "Tongyi-MAI/Z-Image-Turbo", "quantize": True, "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
+    },
+    "zimage_l2p": {
+        "model": {"name_or_path": "zhen-nan/L2P/model-1k-merge.safetensors", "extras_name_or_path": "Tongyi-MAI/Z-Image-Turbo", "quantize_te": True},
+        "sample": {**IMG, "guidance_scale": 1.0},
+    },
+    "qwen_image_edit": {
+        "model": {"name_or_path": "Qwen/Qwen-Image-Edit", "quantize": True, "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 4.0},
+        "needs_control_image": True,
+    },
+    "qwen_image_edit_plus": {
+        "model": {"name_or_path": "Qwen/Qwen-Image-Edit-2509", "quantize": True, "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 4.0},
+        "needs_control_image": True,
+    },
+    "f-lite": {
+        "model": {"name_or_path": "Freepik/F-Lite", "quantize": True, "quantize_te": True},
+        "sample": {"width": 1024, "height": 1024, "num_inference_steps": 25, "guidance_scale": 4.0, "seed": 42},
+    },
 }
 
 SKIP_MARKERS = (

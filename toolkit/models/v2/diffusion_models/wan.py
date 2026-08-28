@@ -30,6 +30,19 @@ class WanTransformer3DModel(DiffusersWanTransformer3DModel, OstrisModelMixin):
         ("Wan-AI/Wan2.2-I2V-A14B-Diffusers", "transformer_2"): [
             "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
         ],
+        # the UI defaults point at the ai-toolkit bf16 repacks; same comfy files
+        ("ai-toolkit/Wan2.2-T2V-A14B-Diffusers-bf16", "transformer"): [
+            "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        ],
+        ("ai-toolkit/Wan2.2-T2V-A14B-Diffusers-bf16", "transformer_2"): [
+            "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+        ],
+        ("ai-toolkit/Wan2.2-I2V-A14B-Diffusers-bf16", "transformer"): [
+            "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        ],
+        ("ai-toolkit/Wan2.2-I2V-A14B-Diffusers-bf16", "transformer_2"): [
+            "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        ],
         "Wan-AI/Wan2.1-T2V-1.3B-Diffusers": {
             "repo": "Comfy-Org/Wan_2.1_ComfyUI_repackaged",
             "files": [
