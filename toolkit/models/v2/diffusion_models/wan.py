@@ -1,6 +1,43 @@
+import torch
+import torch.nn.functional as F
 from diffusers import WanTransformer3DModel as DiffusersWanTransformer3DModel
 
 from .._mixin import OstrisModelMixin
+
+
+def patch_wan_patch_embedding(transformer) -> bool:
+    """Wan's patch_embedding is a Conv3d whose kernel == stride (non-overlapping
+    patchify), i.e. a plain linear projection of each flattened patch. bf16
+    Conv3d has no fast cuDNN kernel and falls back to a slow, GPU-underutilizing
+    path — swap the forward for the exactly-equivalent F.linear (a GEMM),
+    returning the conv's own [b, out, t', h', w'] layout so it stays a drop-in.
+    The weight is read lazily so this survives later .to(device)/dtype moves."""
+    conv = getattr(transformer, "patch_embedding", None)
+    if not isinstance(conv, torch.nn.Conv3d):
+        return False
+    if (
+        tuple(conv.kernel_size) != tuple(conv.stride)
+        or any(p != 0 for p in conv.padding)
+        or any(d != 1 for d in conv.dilation)
+        or conv.groups != 1
+    ):
+        return False
+
+    def fast_forward(x, _conv=conv):
+        weight = _conv.weight
+        out_c = weight.shape[0]
+        kt, kh, kw = _conv.kernel_size
+        b, c, t, h, w = x.shape
+        tp, hp, wp = t // kt, h // kh, w // kw
+        # patchify with (c, kt, kh, kw) fastest — matches weight.reshape below
+        x = x.reshape(b, c, tp, kt, hp, kh, wp, kw)
+        x = x.permute(0, 2, 4, 6, 1, 3, 5, 7).reshape(b, tp * hp * wp, -1)
+        w2d = weight.reshape(out_c, -1)
+        x = F.linear(x.to(w2d.dtype), w2d, _conv.bias)
+        return x.transpose(1, 2).reshape(b, out_c, tp, hp, wp)
+
+    conv.forward = fast_forward
+    return True
 
 
 class WanTransformer3DModel(DiffusersWanTransformer3DModel, OstrisModelMixin):
@@ -85,6 +122,11 @@ class WanTransformer3DModel(DiffusersWanTransformer3DModel, OstrisModelMixin):
     @classmethod
     def get_transformer_block_names(cls):
         return ["blocks"]
+
+    def aitk_post_load(self, **kwargs):
+        # slow bf16 Conv3d patchify -> equivalent GEMM, before quantize/offload
+        patch_wan_patch_embedding(self)
+        return super().aitk_post_load(**kwargs)
 
     def get_offload_ignore_modules(self):
         # fp32 modulation tables must stay resident on the compute device
