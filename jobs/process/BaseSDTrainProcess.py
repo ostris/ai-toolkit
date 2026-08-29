@@ -279,8 +279,31 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return generate_image_config_list
 
+    def _text_encoder_is_faked(self) -> bool:
+        from toolkit.unloader import FakeTextEncoder
+
+        text_encoder = getattr(self.sd, "text_encoder", None)
+        encoders = (
+            text_encoder if isinstance(text_encoder, list) else [text_encoder]
+        )
+        return any(
+            isinstance(encoder, FakeTextEncoder) for encoder in encoders
+        )
+
     def sample(self, step=None, is_first=False):
         if not self.accelerator.is_main_process:
+            return
+        if self._text_encoder_is_faked():
+            # cache_text_embeddings replaces the text encoder with
+            # FakeTextEncoder to free memory, so sample prompts cannot be
+            # encoded; crashing here used to kill the whole training run at
+            # the first sample step. Skip sampling instead of aborting.
+            print_acc(
+                "Skipping sampling: the text encoder is unloaded by "
+                "cache_text_embeddings, so sample prompts cannot be encoded. "
+                "Set disable_sampling: true to silence this warning, or "
+                "disable cache_text_embeddings to restore samples."
+            )
             return
         flush()
         sample_folder = os.path.join(self.save_root, 'samples')
