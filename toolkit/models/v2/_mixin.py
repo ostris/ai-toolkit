@@ -279,13 +279,19 @@ class OstrisModelMixin:
                 }
                 - {None}
             )
+            # a checkpoint may deliberately mix backends (minimax's TE: nvfp4
+            # LM linears + int8 embeddings). The request matches when the
+            # requested backend is among the shipped ones — the whole shipped
+            # quantization is then kept exactly as-is.
             matches = (
                 qtype is not None
                 and ara_path is None
-                and shipped == [qtype]
+                and qtype in shipped
             )
             if matches:
-                status_fn(f"Checkpoint is pre-quantized ({qtype}); keeping it")
+                status_fn(
+                    f"Checkpoint is pre-quantized ({'/'.join(shipped)}); keeping it"
+                )
             else:
                 target_is_ostris = qtype is not None and isinstance(
                     get_qtype(qtype), ostristype
@@ -364,9 +370,15 @@ class OstrisModelMixin:
         if offload and offload > 0:
             from toolkit.memory_management import MemoryManager
 
+            # the manager stages layers to the COMPUTE device. `device` is the
+            # component's parking device — "cpu" under low_vram — which must
+            # never become the manager's process device (bounces would stage
+            # to cpu against cuda activations). quantize_device carries the
+            # actual gpu in the holder flow.
+            compute_device = quantize_device if quantize_device is not None else device
             MemoryManager.attach(
                 self,
-                device,
+                torch.device(compute_device),
                 offload_percent=offload,
                 ignore_modules=list(self.get_offload_ignore_modules() or []),
             )
