@@ -7,12 +7,16 @@ from typing import Any, Dict, Tuple
 import torch
 from accelerate import init_empty_weights
 
-from diffusers import (
-    AutoencoderKLLTX2Audio,
-    AutoencoderKLLTX2Video,
+from toolkit.models.v2.diffusion_models.ltx2 import (
+    LTX2TextConnectors,
     LTX2VideoTransformer3DModel,
+    LTX2Vocoder,
+    LTX2VocoderWithBWE,
 )
-from diffusers.pipelines.ltx2 import LTX2TextConnectors, LTX2Vocoder, LTX2VocoderWithBWE
+from toolkit.models.v2.vae.ltx2 import (
+    LTX2AudioVAE as AutoencoderKLLTX2Audio,
+    LTX2VideoVAE as AutoencoderKLLTX2Video,
+)
 from diffusers.utils.import_utils import is_accelerate_available
 
 

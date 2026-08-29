@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.modeling_utils import ModelMixin
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 from diffusers.utils.accelerate_utils import apply_forward_hook
 from einops import rearrange
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
@@ -302,7 +304,13 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3).to(dtype=orig_dtype)
 
 
-class DiT(ModelMixin, ConfigMixin, FromOriginalModelMixin, PeftAdapterMixin):  # type: ignore[misc]
+class DiT(ModelMixin, ConfigMixin, FromOriginalModelMixin, PeftAdapterMixin, OstrisModelMixin):  # type: ignore[misc]
+    aitk_subfolder = "dit_model"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["blocks"]
+
     _supports_gradient_checkpointing = True
     
     @register_to_config

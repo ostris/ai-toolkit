@@ -1,4 +1,5 @@
 import os
+from toolkit.models.v2._mixin import OstrisTransformersMixin
 from typing import List, Optional
 
 import torch
@@ -15,8 +16,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 from safetensors.torch import load_file, save_file
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from toolkit.memory_management import MemoryManager
 
 from transformers import AutoProcessor
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig
@@ -28,6 +27,17 @@ from .src.hidream_o1.model_config import model_config
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
+
+
+class HidreamO1Transformer(Qwen3VLForConditionalGeneration, OstrisTransformersMixin):
+    """The o1 DiT-in-LLM: the vendored Qwen3VL with the image-diffusion heads
+    (x_embedder / t_embedder1 / final_layer2). The generic Qwen3VLTextEncoder
+    must NOT be used here — it drops those keys as unexpected."""
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["model.language_model.layers"]
+
 
 scheduler_config = {
     "num_train_timesteps": 1000,
@@ -130,7 +140,10 @@ class HidreamO1Model(BaseModel):
         self.use_old_lokr_format = False
         self.is_flow_matching = True
         self.is_transformer = True
-        self.target_lora_modules = ["Qwen3VLForConditionalGeneration"]
+        self.target_lora_modules = [
+            "Qwen3VLForConditionalGeneration",
+            "HidreamO1Transformer",
+        ]
         self.noise_scale = self.model_config.model_kwargs.get(
             "noise_scale", DEFAULT_NOISE_SCALE
         )
@@ -189,7 +202,7 @@ class HidreamO1Model(BaseModel):
             )
 
             # transformer.load_state_dict(state_dict, assign=True)
-            transformer = Qwen3VLForConditionalGeneration.from_pretrained(
+            transformer = HidreamO1Transformer.from_pretrained(
                 None,
                 config=Qwen3VLConfig(**model_config),
                 state_dict=state_dict,
@@ -197,30 +210,13 @@ class HidreamO1Model(BaseModel):
             )
             del state_dict  # free memory
         else:
-            transformer = Qwen3VLForConditionalGeneration.from_pretrained(
+            transformer = HidreamO1Transformer.from_pretrained(
                 model_path,
                 torch_dtype=self.torch_dtype,
             )
         flush()
-        if not self.model_config.low_vram:
-            transformer.to(self.device_torch)
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[],
-            )
-
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         # move over to device now if low vram

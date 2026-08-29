@@ -59,6 +59,25 @@ def swap_nvfp4_nibbles(packed: torch.Tensor) -> torch.Tensor:
     return ((packed << 4) | (packed >> 4)).contiguous()
 
 
+def swizzle_nvfp4_scales(scales: torch.Tensor) -> torch.Tensor:
+    """Inverse of unswizzle_nvfp4_scales: row-major (rows, cols) block scales
+    into the cuBLAS 128x4-tile layout ComfyUI checkpoints store (comfy_kitchen's
+    ``to_blocked``). Pads to tile boundaries when needed."""
+    rows, cols = scales.shape
+    n_row_blocks = (rows + 127) // 128
+    n_col_blocks = (cols + 3) // 4
+    padded_rows = n_row_blocks * 128
+    padded_cols = n_col_blocks * 4
+    if (padded_rows, padded_cols) != (rows, cols):
+        padded = scales.new_zeros(padded_rows, padded_cols)
+        padded[:rows, :cols] = scales
+        scales = padded
+    x = scales.reshape(n_row_blocks, 128, n_col_blocks, 4).permute(0, 2, 1, 3)
+    x = x.reshape(n_row_blocks, n_col_blocks, 4, 32, 4)
+    x = x.transpose(2, 3).reshape(-1, 32, 16)
+    return x.reshape(-1).contiguous()
+
+
 class Nvfp4Quantizer(OstrisQuantizer):
     """Block-16 nvfp4 weights, full-precision activations. One instance is
     shareable across modules."""

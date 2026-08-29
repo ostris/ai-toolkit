@@ -12,7 +12,7 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import BaseOutput
-from .autoencoder import AutoEncoder
+from toolkit.models.v2.vae.flux2_kl import AutoEncoder
 from .model import Flux2
 from einops import rearrange
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration
@@ -109,15 +109,19 @@ class Flux2Pipeline(DiffusionPipeline):
         # Process all messages at once
         # with image processing a too short max length can throw an error in here.
         try:
+            # tokenization kwargs ride in processor_kwargs (same values end up
+            # in the same place; loose **kwargs just warn on new transformers)
             inputs = self.tokenizer.apply_chat_template(
                 messages_batch,
                 add_generation_prompt=False,
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
-                padding="max_length",
-                truncation=True,
-                max_length=max_sequence_length,
+                processor_kwargs={
+                    "padding": "max_length",
+                    "truncation": True,
+                    "max_length": max_sequence_length,
+                },
             )
         except ValueError as e:
             print(

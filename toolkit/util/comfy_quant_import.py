@@ -71,6 +71,135 @@ class Int8Embedding(torch.nn.Module):
         return out.to(input_ids.device).reshape(*input_ids.shape, self.embedding_dim)
 
 
+@torch.no_grad()
+def split_fused_quantized_keys(
+    state_dict: Dict[str, torch.Tensor],
+    prefix: str,
+    dst_prefixes,
+) -> Dict[str, torch.Tensor]:
+    """Split one fused quantized comfy entry (``<prefix>.weight`` /
+    ``.weight_scale`` / ``.comfy_quant`` / ...) into equal row ranges under
+    ``dst_prefixes`` (out-dim concat order). Exact for every supported format:
+    int8 rows and their per-row scales slice; fp8's per-tensor scale and
+    nvfp4's weight_scale_2 / pre_quant_scale are shared by every split; nvfp4
+    block scales are unswizzled, row-split, and re-swizzled. Mutates and
+    returns state_dict. Used by classes whose module layout splits a fused
+    checkpoint projection (e.g. qkv -> to_q/to_k/to_v)."""
+    from toolkit.util.nvfp4_quant import swizzle_nvfp4_scales
+
+    marker = state_dict.pop(f"{prefix}.comfy_quant")
+    conf = parse_comfy_quant_blob(marker)
+    fmt = conf.get("format")
+
+    weight = state_dict.pop(f"{prefix}.weight")
+    scale = state_dict.pop(f"{prefix}.weight_scale", None)
+    pts = state_dict.pop(f"{prefix}.weight_scale_2", None)
+    pre = state_dict.pop(f"{prefix}.pre_quant_scale", None)
+    bias = state_dict.pop(f"{prefix}.bias", None)
+    state_dict.pop(f"{prefix}.input_scale", None)
+
+    n = len(dst_prefixes)
+    if weight.shape[0] % n != 0:
+        raise ValueError(
+            f"{prefix}: fused out dim {weight.shape[0]} does not split into {n}"
+        )
+    rows = weight.shape[0] // n
+
+    scale_parts = None
+    if scale is not None:
+        if fmt == "nvfp4":
+            in_features = weight.shape[1] * 2  # packed fp4 pairs
+            full = unswizzle_nvfp4_scales(
+                scale.view(torch.float8_e4m3fn), weight.shape[0], in_features // 16
+            )
+            scale_parts = [
+                swizzle_nvfp4_scales(p).view(torch.float8_e4m3fn)
+                for p in full.split(rows, dim=0)
+            ]
+        elif scale.ndim == 0 or scale.numel() == 1:
+            scale_parts = [scale.clone() for _ in range(n)]
+        else:
+            scale_parts = list(scale.reshape(weight.shape[0], -1).split(rows, dim=0))
+
+    for i, dst in enumerate(dst_prefixes):
+        state_dict[f"{dst}.comfy_quant"] = marker.clone()
+        state_dict[f"{dst}.weight"] = weight[i * rows : (i + 1) * rows].contiguous()
+        if scale_parts is not None:
+            state_dict[f"{dst}.weight_scale"] = scale_parts[i].contiguous()
+        if pts is not None:
+            state_dict[f"{dst}.weight_scale_2"] = pts.clone()
+        if pre is not None:
+            state_dict[f"{dst}.pre_quant_scale"] = pre.clone()
+        if bias is not None:
+            state_dict[f"{dst}.bias"] = bias[i * rows : (i + 1) * rows].contiguous()
+    return state_dict
+
+
+@torch.no_grad()
+def fuse_split_quantized_keys(
+    state_dict: Dict[str, torch.Tensor],
+    src_prefixes,
+    prefix: str,
+) -> Dict[str, torch.Tensor]:
+    """Inverse of split_fused_quantized_keys: concatenate N split quantized
+    comfy entries back into one fused entry (out-dim concat in src order).
+    All parts must share the same format config; fp8 parts must share the same
+    per-tensor scale (true for entries produced by the splitter). Mutates and
+    returns state_dict."""
+    from toolkit.util.nvfp4_quant import swizzle_nvfp4_scales
+
+    markers = [state_dict.pop(f"{p}.comfy_quant") for p in src_prefixes]
+    confs = [parse_comfy_quant_blob(m) for m in markers]
+    if any(c != confs[0] for c in confs[1:]):
+        raise ValueError(f"{prefix}: split parts carry different quant configs")
+    fmt = confs[0].get("format")
+
+    weights = [state_dict.pop(f"{p}.weight") for p in src_prefixes]
+    scales = [state_dict.pop(f"{p}.weight_scale", None) for p in src_prefixes]
+    ptss = [state_dict.pop(f"{p}.weight_scale_2", None) for p in src_prefixes]
+    pres = [state_dict.pop(f"{p}.pre_quant_scale", None) for p in src_prefixes]
+    biases = [state_dict.pop(f"{p}.bias", None) for p in src_prefixes]
+
+    state_dict[f"{prefix}.comfy_quant"] = markers[0]
+    weight = torch.cat(weights, dim=0).contiguous()
+    state_dict[f"{prefix}.weight"] = weight
+    if scales[0] is not None:
+        if fmt == "nvfp4":
+            in_features = weight.shape[1] * 2
+            rows = [w.shape[0] for w in weights]
+            full = torch.cat(
+                [
+                    unswizzle_nvfp4_scales(
+                        s.view(torch.float8_e4m3fn), r, in_features // 16
+                    )
+                    for s, r in zip(scales, rows)
+                ],
+                dim=0,
+            )
+            state_dict[f"{prefix}.weight_scale"] = swizzle_nvfp4_scales(full).view(
+                torch.float8_e4m3fn
+            )
+        elif scales[0].ndim == 0 or scales[0].numel() == 1:
+            if any(
+                not torch.equal(s.reshape(-1), scales[0].reshape(-1)) for s in scales[1:]
+            ):
+                raise ValueError(
+                    f"{prefix}: per-tensor scales differ across split parts"
+                )
+            state_dict[f"{prefix}.weight_scale"] = scales[0]
+        else:
+            state_dict[f"{prefix}.weight_scale"] = torch.cat(
+                [s.reshape(w.shape[0], -1) for s, w in zip(scales, weights)], dim=0
+            ).contiguous()
+    if ptss[0] is not None:
+        state_dict[f"{prefix}.weight_scale_2"] = ptss[0]
+    if pres[0] is not None:
+        state_dict[f"{prefix}.pre_quant_scale"] = pres[0]
+    if biases[0] is not None:
+        state_dict[f"{prefix}.bias"] = torch.cat(biases, dim=0).contiguous()
+    return state_dict
+
+
 def _to_ostris(module: torch.nn.Linear, quantizer, orig_dtype: torch.dtype) -> OstrisLinear:
     if "weight" in module._parameters:
         del module._parameters["weight"]
@@ -128,7 +257,19 @@ def import_comfy_quantized_layers(
                 "expected nn.Linear or nn.Embedding"
             )
 
-        if fmt == "int8_tensorwise":
+        if fmt == "float8_e4m3fn":
+            # fp8_e4m3 weight + fp32 per-tensor scale, dequantized matmul
+            from toolkit.util.float8_quant import Float8Quantizer
+
+            quantizer = get_ostris_quantizer("float8_e4m3fn")
+            Float8Quantizer.attach_(
+                module,
+                weight.view(torch.float8_e4m3fn)
+                if weight.dtype != torch.float8_e4m3fn
+                else weight,
+                weight_scale,
+            )
+        elif fmt == "int8_tensorwise":
             rot = int(conf.get("convrot_groupsize", 256)) if conf.get("convrot") else 1
             quantizer = get_ostris_quantizer("convrot8")
             module.register_buffer("cr8_qdata", weight.contiguous(), persistent=False)
@@ -158,7 +299,7 @@ def import_comfy_quantized_layers(
         else:
             raise ValueError(
                 f"Unsupported comfy quant format {fmt!r} on {prefix} "
-                "(supported: int8_tensorwise, nvfp4)"
+                "(supported: int8_tensorwise, nvfp4, float8_e4m3fn)"
             )
 
         # drop unused calibration extras if present
@@ -173,5 +314,41 @@ def import_comfy_quantized_layers(
                 bias.detach().clone(), requires_grad=False
             )
         converted += 1
+
+    # legacy ComfyUI scaled-fp8 checkpoints (e.g. the wan *_fp8_scaled files):
+    # a top-level ``scaled_fp8`` marker tensor plus per-layer fp8 ``weight``
+    # and scalar fp32 ``scale_weight`` — the float8 backend's exact storage.
+    # ``scale_input`` (activation quant) is dropped; matmuls run dequantized.
+    if "scaled_fp8" in state_dict:
+        from toolkit.util.float8_quant import Float8Quantizer
+
+        state_dict.pop("scaled_fp8")
+        for scale_key in [k for k in state_dict if k.endswith(".scale_weight")]:
+            prefix = scale_key[: -len(".scale_weight")]
+            module_path = key_map(prefix) if key_map is not None else prefix
+            module = root.get_submodule(module_path)
+            if not isinstance(module, torch.nn.Linear):
+                raise ValueError(
+                    f"scaled_fp8 entry {prefix} points at {type(module).__name__}, "
+                    "expected nn.Linear"
+                )
+            weight = state_dict.pop(f"{prefix}.weight")
+            scale = state_dict.pop(scale_key)
+            state_dict.pop(f"{prefix}.scale_input", None)
+            quantizer = get_ostris_quantizer("float8_e4m3fn")
+            Float8Quantizer.attach_(
+                module,
+                weight
+                if weight.dtype == torch.float8_e4m3fn
+                else weight.view(torch.float8_e4m3fn),
+                scale,
+            )
+            _to_ostris(module, quantizer, orig_dtype)
+            bias = state_dict.pop(f"{prefix}.bias", None)
+            if bias is not None and module.bias is not None:
+                module._parameters["bias"] = torch.nn.Parameter(
+                    bias.detach().clone(), requires_grad=False
+                )
+            converted += 1
 
     return state_dict, converted

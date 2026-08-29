@@ -662,7 +662,7 @@ class ConvRotQuantizer(OstrisQuantizer):
         d = module.in_features
         rot = self._rot_for(d)
         if d % BLOCK != 0 or module.out_features % BLOCK != 0 or rot < 16:
-            if d not in _skip_warned:
+            if d not in _skip_warned and d * module.out_features >= 1 << 20:
                 _skip_warned.add(d)
                 print_acc(
                     f"ConvRot: skipping linears with in_features={d} "
@@ -1312,18 +1312,54 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
     def can_quantize(self, module: torch.nn.Linear) -> bool:
         d = module.in_features
         if d % BLOCK != 0 or module.out_features % 8 != 0 or self._rot_for(d) < 16:
-            if d not in _skip_warned:
+            if d not in _skip_warned and d * module.out_features >= 1 << 20:
                 _skip_warned.add(d)
                 print_acc(
                     f"ConvRot: skipping linears with in_features={d} "
                     f"(needs in divisible by 16, out by 8, and a power-of-4 block >= 16)"
                 )
             return False
+        if d < 128 and module.out_features % 16 != 0:
+            # cublasLt has no int8 kernel for K < 128 with N % 16 != 0
+            # (torch._int_mm raises CUBLAS_STATUS_NOT_SUPPORTED), e.g.
+            # omnigen2's 64 -> 2520 x_embedder
+            key = (d, module.out_features)
+            if key not in _skip_warned and d * module.out_features >= 1 << 20:
+                _skip_warned.add(key)
+                print_acc(
+                    f"ConvRot: skipping linears with in_features={d}, "
+                    f"out_features={module.out_features} (int8 gemm needs out "
+                    f"divisible by 16 when in < 128)"
+                )
+            return False
         return True
+
+    # takes the weight in its stored dtype and casts per row-chunk below: a
+    # full-size fp32 copy of a huge layer (e.g. a TE's vocab projection) was
+    # a multi-GB vram transient on top of the full-size rotated fp32 tensor
+    wants_fp32_weight = False
+
+    # fp32 working-set target per chunk; layers under this keep the one-shot
+    # path (identical math and bit-identical output to the historical code)
+    _QUANT_CHUNK_BYTES = 256 * 1024 * 1024
 
     def quantize_(self, module: torch.nn.Linear, weight_fp32: torch.Tensor) -> None:
         rot = self._rot_for(module.in_features)
-        q, scales = quantize_int8_rows(rotate(weight_fp32, rot))
+        rows, in_f = weight_fp32.shape
+        chunk_rows = max(1, self._QUANT_CHUNK_BYTES // (in_f * 4))
+        if rows <= chunk_rows:
+            q, scales = quantize_int8_rows(rotate(weight_fp32.float(), rot))
+        else:
+            # row-chunked: rotation and per-row scaling are row-independent,
+            # so the fp32 transient stays ~3 chunks instead of ~4x the layer
+            q = torch.empty(rows, in_f, dtype=torch.int8, device=weight_fp32.device)
+            scales = torch.empty(rows, dtype=torch.float32, device=weight_fp32.device)
+            for i in range(0, rows, chunk_rows):
+                qc, sc = quantize_int8_rows(
+                    rotate(weight_fp32[i : i + chunk_rows].float(), rot)
+                )
+                q[i : i + chunk_rows] = qc
+                scales[i : i + chunk_rows] = sc
         module.register_buffer("cr8_qdata", q, persistent=False)
         # fp32 scales stored as a uint8 byte view (see convrot4: module.to(dtype=...)
         # would otherwise cast them)
@@ -2256,6 +2292,10 @@ class ConvRotIntNQuantizer(ConvRotInt8Quantizer):
     """ConvRot W{n}A8 backend for n in 2..8: convrot8 numerics with an n-bit
     weight grid and bitpacked storage. One instance per bit-width, shareable
     across modules."""
+
+    # this class's own quantize_ still expects the fp32 copy (the parent's
+    # chunked-cast path does not apply to it)
+    wants_fp32_weight = True
 
     def __init__(self, bits: int, rot_size: int = 256):
         super().__init__(rot_size=rot_size)

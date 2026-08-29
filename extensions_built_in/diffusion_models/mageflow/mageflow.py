@@ -34,8 +34,8 @@ from torchvision.transforms.functional import to_tensor
 from safetensors.torch import load_file, save_file
 
 import huggingface_hub
-from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
-from optimum.quanto import freeze
+from transformers import AutoProcessor, AutoTokenizer
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextEncoder
 
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
@@ -46,8 +46,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from toolkit.metadata import get_meta_for_safetensors
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from toolkit.memory_management import MemoryManager
 
 from .src.transformer import MageFlow, MageFlowParams
 from .src.vae import MageVAE
@@ -177,22 +175,13 @@ class MageFlowModel(BaseModel):
         structure.update(self.model_config.model_kwargs.get("transformer_config", {}))
         params = MageFlowParams(**structure)
 
-        # Build on meta, then materialize straight from the checkpoint.
-        with torch.device("meta"):
-            transformer = MageFlow(params)
-
         self.print_and_status_update("  - fetching transformer weights")
         state_dict = load_file(
             self._get_model_file("transformer/diffusion_pytorch_model.safetensors")
         )
-        state_dict = {
-            k: (v.to(dtype) if v.is_floating_point() else v)
-            for k, v in state_dict.items()
-        }
         self.print_and_status_update("  - loading transformer state dict")
-        transformer.load_state_dict(state_dict, strict=True, assign=True)
-        # The RoPE tables are plain tensors (not buffers/params), so the meta
-        # init left them unmaterialized — rebuild them for real.
+        transformer = MageFlow.load_from_state_dict(state_dict, dtype, config=params)
+        # rebuild the plain-tensor RoPE tables at full precision
         transformer.reset_rope()
         del state_dict
         flush()
@@ -209,8 +198,11 @@ class MageFlowModel(BaseModel):
         self.print_and_status_update(f"Loading Qwen3-VL text encoder from {te_path}")
 
         tokenizer = AutoTokenizer.from_pretrained(te_path, token=HF_TOKEN, **te_kwargs)
-        text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
-            te_path, torch_dtype=dtype, token=HF_TOKEN, **te_kwargs
+        text_encoder = Qwen3VLTextEncoder.load_model(
+            te_path,
+            dtype=dtype,
+            subfolder=te_kwargs.get("subfolder", ""),
+            token=HF_TOKEN,
         )
         vl_processor = None
         if self.is_edit:
@@ -224,8 +216,7 @@ class MageFlowModel(BaseModel):
         else:
             # We only ever encode text, so the vision tower is dead weight --
             # drop it to free VRAM.
-            if getattr(text_encoder.model, "visual", None) is not None:
-                text_encoder.model.visual = None
+            text_encoder.drop_vision_tower()
         text_encoder.eval()
         text_encoder.requires_grad_(False)
         flush()
@@ -236,8 +227,8 @@ class MageFlowModel(BaseModel):
         vae_path = self.model_config.model_kwargs.get("vae_path", None)
         if vae_path is None:
             vae_path = self._get_model_file("vae/diffusion_pytorch_model.safetensors")
-        vae = MageVAE(
-            ckpt_path=vae_path,
+        vae = MageVAE.load_model(
+            vae_path,
             sample_posterior=bool(
                 self.model_config.model_kwargs.get("vae_sample_posterior", True)
             ),
@@ -268,50 +259,13 @@ class MageFlowModel(BaseModel):
 
         transformer = self._load_transformer()
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         tokenizer, vl_processor, text_encoder = self._load_text_encoder()
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing text encoder")
-            text_encoder.to(self.device_torch)
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving text encoder to CPU")
-            text_encoder.to("cpu")
-        else:
-            text_encoder.to(self.device_torch)
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         flush()
 
         vae = self._load_vae()
@@ -629,18 +583,7 @@ class MageFlowModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["transformer_blocks"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        return {
-            k.replace("transformer.", "diffusion_model."): v
-            for k, v in state_dict.items()
-        }
-
-    def convert_lora_weights_before_load(self, state_dict):
-        return {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in state_dict.items()
-        }
-
+    lora_keys_use_comfy_prefix = True
 
 class MageFlowEditModel(MageFlowModel):
     arch = "mageflow_edit"

@@ -6,6 +6,7 @@ from .manager_modules import (
     LinearLayerMemoryManager,
     ConvLayerMemoryManager,
     OstrisLinearLayerMemoryManager,
+    EmbeddingLayerMemoryManager,
     _DEVICE_STATE,
 )
 import random
@@ -92,12 +93,59 @@ class MemoryManager:
         module._mm_to = module.to
         module.to = module._memory_manager.memory_managed_to
 
-        # add ignore modules to unmanaged list
+        # a fully offloaded module's parameters all live on cpu, which makes
+        # ModelMixin.device (and pipelines deriving their execution device
+        # from it) report "cpu" and plant latents/timesteps there. Report the
+        # compute device instead via an in-place subclass (same class-swap
+        # pattern as OstrisLinear/adopt_component); detach() restores it.
+        try:
+            module._mm_orig_class = module.__class__
+            managed_cls = type(
+                module.__class__.__name__,
+                (module.__class__,),
+                {
+                    "device": property(
+                        lambda self: self._memory_manager.process_device,
+                        lambda self, value: self.__dict__.__setitem__(
+                            "_mm_device_shadow", value
+                        ),
+                    )
+                },
+            )
+            # transformers keys per-class registries (e.g. the hidden-states
+            # capture specs) by str(model.__class__); make the subclass
+            # stringify identically so those lookups still hit
+            managed_cls.__module__ = module.__class__.__module__
+            managed_cls.__qualname__ = module.__class__.__qualname__
+            module.__class__ = managed_cls
+        except TypeError:
+            # exotic class layouts (__slots__ etc.): keep the original class
+            module._mm_orig_class = None
+
+        # add ignore modules to unmanaged list; they must stay RESIDENT on the
+        # compute device (fp32 tables, pad tokens) — a model attached while
+        # parked on cpu would otherwise feed cpu tensors into gpu math
         for im in ignore_modules:
             module._memory_manager.unmanaged_modules.append(im)
+            try:
+                if isinstance(im, torch.Tensor):
+                    im.data = im.data.to(device)
+                elif isinstance(im, torch.nn.Module):
+                    im.to(device)
+            except Exception:
+                pass
 
         # count ignore modules as processed
         modules_processed = [x for x in ignore_modules]
+
+        # weights tied to an embedding (lm_head <-> embed_tokens) must not be
+        # managed: pinning the linear's weight to cpu strands the (unmanaged)
+        # embedding that shares the same tensor
+        embedding_weight_ptrs = {
+            m.weight.data_ptr()
+            for m in module.modules()
+            if isinstance(m, torch.nn.Embedding)
+        }
         # attach to all modules
         for name, sub_module in module.named_modules():
             for child_name, child_module in sub_module.named_modules():
@@ -110,6 +158,12 @@ class MemoryManager:
                         # randomly skip some modules
                         if random.random() > offload_percent:
                             skip = True
+                    if (
+                        not getattr(child_module, "is_ostris_quantized", False)
+                        and isinstance(getattr(child_module, "weight", None), torch.Tensor)
+                        and child_module.weight.data_ptr() in embedding_weight_ptrs
+                    ):
+                        skip = True
                     if skip:
                         module._memory_manager.unmanaged_modules.append(child_module)
                     else:
@@ -158,12 +212,40 @@ class MemoryManager:
                                 )
                             modules_processed.append(ara)
                     modules_processed.append(child_module)
+                elif (
+                    isinstance(child_module, torch.nn.Embedding)
+                    and child_module not in modules_processed
+                    and child_module.weight.numel()
+                    * child_module.weight.element_size()
+                    > 64 * 1024 * 1024
+                ):
+                    # (the cpu gather is autograd-transparent, so a trainable
+                    # embedding still gets grads — they just land on cpu)
+                    # large frozen vocab table: cpu-resident, rows gathered on
+                    # cpu (only the looked-up tokens cross the bus)
+                    EmbeddingLayerMemoryManager.attach(
+                        child_module, module._memory_manager
+                    )
+                    # the cpu move replaced weight.data, so a tied lm_head no
+                    # longer matches the (original-ptr) tied guard and gets
+                    # managed normally — correct: the shared weight now lives
+                    # on cpu, so the linear must bounce it
+                    modules_processed.append(child_module)
                 elif child_module.__class__.__name__ in UNMANAGED_MODULES or any(
                     inc in child_module.__class__.__name__
                     for inc in UNMANAGED_MODULES_INCLUDES
                 ):
-                    # unmanaged
-                    module._memory_manager.unmanaged_modules.append(child_module)
+                    # unmanaged — but never re-list a module the nested walk
+                    # already managed (a managed Embedding landing here would
+                    # get hauled back to the gpu by memory_managed_to), and
+                    # don't append duplicates
+                    if (
+                        child_module not in modules_processed
+                        and not hasattr(child_module, "_layer_memory_manager")
+                        and child_module
+                        not in module._memory_manager.unmanaged_modules
+                    ):
+                        module._memory_manager.unmanaged_modules.append(child_module)
                 else:
                     continue
 
@@ -178,6 +260,10 @@ class MemoryManager:
         """
         if not hasattr(module, "_memory_manager"):
             return
+
+        if getattr(module, "_mm_orig_class", None) is not None:
+            module.__class__ = module._mm_orig_class
+            del module._mm_orig_class
 
         for unmanaged in module._memory_manager.unmanaged_modules:
             try:

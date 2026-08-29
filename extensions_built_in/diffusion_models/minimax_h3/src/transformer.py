@@ -30,6 +30,8 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from toolkit.models.v2._mixin import OstrisModelMixin
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -356,7 +358,31 @@ class MiniMaxH3FinalLayer(nn.Module):
         return self.video_out(h), self.audio_out(h)
 
 
-class MiniMaxH3Transformer(nn.Module):
+class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
+    # comfy checkpoints carry a deliberate bf16/fp16/fp32 mix
+    aitk_cast_on_load = False
+
+    @classmethod
+    def aitk_config_from_state_dict(cls, state_dict):
+        params = MiniMaxH3TransformerParams()
+        table = state_dict.get("adaln_t_table", None)
+        if table is not None:
+            # pruned checkpoint: factored timestep table instead of the MLP
+            params.adaln_t_table_size = table.shape[0]
+            params.time_embed_dim = table.shape[1]
+        return params
+
+    @classmethod
+    def aitk_from_config(cls, config):
+        from accelerate import init_empty_weights
+
+        with init_empty_weights(include_buffers=False):
+            return cls(config)
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["blocks"]
+
     def __init__(self, params: Optional[MiniMaxH3TransformerParams] = None):
         super().__init__()
         if params is None:

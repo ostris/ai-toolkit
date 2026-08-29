@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
@@ -681,7 +683,27 @@ class MageFlowParams:
     patch_size: int = 1
 
 
-class MageFlow(nn.Module):
+class MageFlow(nn.Module, OstrisModelMixin):
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["transformer_blocks"]
+
+    @classmethod
+    def get_quantization_exclude_modules(cls):
+        # sensitive modules kept in full precision (fnmatch patterns):
+        #   img_in / txt_in / txt_norm - input projections
+        #   time_text_embed*           - timestep embedder feeding every
+        #                                block's modulation
+        #   norm_out* / proj_out       - final adaptive norm / output projection
+        return [
+            "img_in",
+            "txt_in",
+            "txt_norm",
+            "time_text_embed*",
+            "norm_out*",
+            "proj_out",
+        ]
+
     def __init__(self, params: MageFlowParams):
         super().__init__()
         self.params = params

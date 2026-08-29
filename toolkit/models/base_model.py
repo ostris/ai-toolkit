@@ -98,6 +98,9 @@ UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも
 class BaseModel:
     # override these in child classes
     arch = None
+    # rename LoRA keys transformer. <-> diffusion_model. (the ComfyUI-standard
+    # prefix) on save/load
+    lora_keys_use_comfy_prefix = False
 
     def __init__(
             self,
@@ -1624,13 +1627,59 @@ class BaseModel:
                 encoder.to(*args, **kwargs)
         else:
             self.text_encoder.to(*args, **kwargs)
-    
+
+    def component_load_kwargs(self, role: str = "transformer", dtype=None):
+        """kwargs for a v2 module's .load()/.aitk_post_load(), derived from
+        model_config: qtype (with the accuracy recovery adapter recombined),
+        offload fraction, devices, low_vram placement. Roles: "transformer",
+        "te", "vae"."""
+        mc = self.model_config
+        qtype, offload = None, 0.0
+        if role == "transformer":
+            if mc.quantize:
+                qtype = mc.qtype
+                if mc.accuracy_recovery_adapter and "|" not in (qtype or ""):
+                    qtype = f"{qtype}|{mc.accuracy_recovery_adapter}"
+            if mc.layer_offloading:
+                offload = mc.layer_offloading_transformer_percent
+        elif role == "te":
+            if mc.quantize_te:
+                qtype = mc.qtype_te
+            if mc.layer_offloading:
+                offload = mc.layer_offloading_text_encoder_percent
+        if dtype is None:
+            dtype = self.vae_torch_dtype if role == "vae" else self.torch_dtype
+        device = self.te_device_torch if role == "te" else self.device_torch
+        if mc.low_vram and role in ("transformer", "te"):
+            device = "cpu"
+        elif role == "vae":
+            device = self.vae_device_torch
+        return dict(
+            qtype=qtype,
+            offload=offload,
+            dtype=dtype,
+            device=device,
+            quantize_device=self.device_torch,
+            base_model=self,
+            use_comfy_weights=mc.model_kwargs.get("use_comfy_weights", True),
+        )
+
     def convert_lora_weights_before_save(self, state_dict):
         # can be overridden in child classes to convert weights before saving
+        if self.lora_keys_use_comfy_prefix:
+            return {
+                k.replace("transformer.", "diffusion_model."): v
+                for k, v in state_dict.items()
+            }
         return state_dict
-    
+
     def convert_lora_weights_before_load(self, state_dict):
         # can be overridden in child classes to convert weights before loading
+        if self.lora_keys_use_comfy_prefix:
+            return {
+                k.replace("diffusion_model.", "transformer."): v
+                for k, v in state_dict.items()
+            }
         return state_dict
     
     def condition_noisy_latents(self, latents: torch.Tensor, batch:'DataLoaderBatchDTO'):
