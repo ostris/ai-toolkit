@@ -368,6 +368,7 @@ class AnimaModel(BaseModel):
 
         if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
+            self.pipeline.vae.enable_tiling()
         self.vae.eval()
         self.vae.requires_grad_(False)
 
@@ -391,6 +392,7 @@ class AnimaModel(BaseModel):
         latents = latents.squeeze(2).to(device, dtype=dtype)
         if self.model_config.low_vram:
             self.vae.to("cpu")
+            self.pipeline.vae.disable_tiling()
             flush()
         return latents
 
@@ -402,6 +404,7 @@ class AnimaModel(BaseModel):
 
         if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
+            self.pipeline.vae.enable_tiling()
         latents = latents.to(device, dtype=dtype).unsqueeze(2)
         latents_mean = (
             torch.tensor(self.vae.config.latents_mean)
@@ -441,6 +444,7 @@ class AnimaModel(BaseModel):
 
         if pipeline.vae.device != self.device_torch:
             pipeline.vae.to(self.device_torch, dtype=self.vae_torch_dtype)
+            pipeline.vae.enable_tiling()
         pipeline.guider.guidance_scale = gen_config.guidance_scale
 
         try:
@@ -464,6 +468,7 @@ class AnimaModel(BaseModel):
         finally:
             if self.model_config.low_vram:
                 pipeline.vae.to("cpu")
+                self.pipeline.vae.disable_tiling()
                 flush()
 
     def get_noise_prediction(
