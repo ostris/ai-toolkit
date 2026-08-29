@@ -4,7 +4,14 @@ from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
-import torchaudio
+
+# torchaudio is optional at import time: it has no wheels on some platforms
+# (e.g. Linux aarch64). Audio save jobs that need it raise a clear error at
+# use time instead of crashing every toolkit import.
+try:
+    import torchaudio
+except Exception:
+    torchaudio = None
 
 from toolkit.audio.album_artwork import add_album_artwork
 from toolkit.prompt_utils import PromptEmbeds
@@ -1330,6 +1337,11 @@ class GenerateImageConfig:
         elif self.output_ext in ['wav', 'mp3', 'flac', 'ogg']:
             # save audio file
             audio_path = self.get_image_path(count, max_count)
+            if torchaudio is None:
+                raise RuntimeError(
+                    "Saving audio outputs requires torchaudio, which is not "
+                    "installed. Install it with `pip install torchaudio`."
+                )
             torchaudio.save(
                 audio_path, 
                 image[0].to('cpu'),
