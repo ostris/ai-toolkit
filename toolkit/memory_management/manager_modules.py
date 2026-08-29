@@ -312,6 +312,12 @@ class _BouncingLinearFn(torch.autograd.Function):
             ctx.device = torch.device("cpu")
             return out.to(x.device)
 
+        if x.device != device:
+            # a pipeline that derives its execution device from the module's
+            # (fully offloaded -> "cpu") parameters can feed cpu activations;
+            # compute happens on the staged device and the output stays there
+            x = x.to(device, non_blocking=True)
+
         state = _get_device_state(device)
         # the guard makes current_stream() (used by the staging helpers' event
         # waits/records) resolve to the process device; without it they hit
@@ -460,6 +466,11 @@ class _BouncingConv2dFn(torch.autograd.Function):
             ctx.save_for_backward(x.to("cpu"), weight_cpu, bias_cpu)
             ctx.meta = ("cpu", stride, padding, dilation, groups, target_dtype)
             return out.to(x.device)
+
+        if x.device != device:
+            # cpu activations from a fully-offloaded pipeline: see
+            # _BouncingLinearFn.forward
+            x = x.to(device, non_blocking=True)
 
         state = _get_device_state(device)
         # device guard: see _BouncingLinearFn.forward
@@ -631,6 +642,42 @@ class BaseLayerMemoryManager:
             param._is_memory_managed = True
 
 
+class EmbeddingLayerMemoryManager(BaseLayerMemoryManager):
+    """Offloads a (large, frozen) nn.Embedding by keeping the weight on cpu
+    and doing the row gather THERE: instead of staging a multi-GB vocab table
+    to the gpu, only the looked-up rows (tokens x dim, ~KBs) cross the bus.
+    Lookups happen once per prompt, so the cpu gather is free."""
+
+    def __init__(self, module: nn.Module, manager: "MemoryManager"):
+        super().__init__(module, manager)
+
+        # cpu-resident weight; no pinning — the weight never crosses the bus
+        module.weight.data = module.weight.data.to("cpu")
+
+        self._original_forward = module.forward
+
+        def _mm_forward(input_ids, *args, **kwargs):
+            if args or kwargs:
+                return self._original_forward(input_ids, *args, **kwargs)
+            out_device = (
+                input_ids.device
+                if input_ids.device.type == "cuda"
+                else self.manager.process_device
+            )
+            out = F.embedding(
+                input_ids.to("cpu"),
+                self.module.weight,
+                self.module.padding_idx,
+                self.module.max_norm,
+                self.module.norm_type,
+                self.module.scale_grad_by_freq,
+                self.module.sparse,
+            )
+            return out.to(out_device, non_blocking=True)
+
+        module.forward = _mm_forward
+
+
 class LinearLayerMemoryManager(BaseLayerMemoryManager):
     def __init__(
         self,
@@ -738,6 +785,11 @@ class OstrisLinearLayerMemoryManager(BaseLayerMemoryManager):
             if not cpu_bufs and bias_cpu is None:
                 # already resident on device
                 return self._original_forward(x)
+
+            if x.device != device:
+                # cpu activations from a fully-offloaded pipeline: see
+                # _BouncingLinearFn.forward
+                x = x.to(device, non_blocking=True)
 
             state = _get_device_state(device)
             d = state["depth"]

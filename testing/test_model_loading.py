@@ -338,6 +338,71 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     gen_profile.disable()
     gen_profile.dump_stats(os.path.join(out_dir, "gen.prof"))
 
+    # ---- 100% offload forward: attach full layer offloading to the DiT and
+    # text encoder(s), then run a 1-step sample so the offload path (TE
+    # encode + denoise + decode with every layer staged from cpu) is proven
+    # for every arch ----
+    import torch
+
+    from toolkit.memory_management import MemoryManager
+
+    prof.stage("offload 100%: attach")
+    offload_targets = []
+    model_module = getattr(sd, "model", None)
+    if model_module is not None:
+        subs = [
+            getattr(model_module, name, None)
+            for name in ("transformer_1", "transformer_2")
+        ]
+        if all(s is not None for s in subs):
+            # dual-DiT wrappers (wan22 14b): pipelines hold and .to() the
+            # sub-transformers directly, so each needs its own manager
+            offload_targets.extend(subs)
+        else:
+            offload_targets.append(model_module)
+    tes = getattr(sd, "text_encoder", None)
+    for te in tes if isinstance(tes, list) else [tes]:
+        offload_targets.append(te)
+    # auxiliary conditioning stacks where archs have them (ltx connectors,
+    # i2v vision towers)
+    offload_targets.append(getattr(sd, "image_encoder", None))
+    offload_targets.append(getattr(getattr(sd, "pipeline", None), "connectors", None))
+    attached = 0
+    for m in offload_targets:
+        if not isinstance(m, torch.nn.Module):
+            continue
+        if type(m).__name__.startswith("Fake"):
+            continue
+        if next(m.parameters(), None) is None:
+            continue
+        get_ignore = getattr(m, "get_offload_ignore_modules", None)
+        ignore = get_ignore() if callable(get_ignore) else None
+        MemoryManager.attach(
+            m,
+            torch.device(device),
+            offload_percent=1.0,
+            ignore_modules=list(ignore or []),
+        )
+        attached += 1
+
+    prof.stage("offload 100%: generate")
+    offload_profile = cProfile.Profile()
+    offload_profile.enable()
+    t_off0 = time.perf_counter()
+    # 2 steps, not 1: diffusers' shift_terminal stretch divides by
+    # one_minus_z[-1], which is zero for a single step — NaN timesteps and a
+    # NaN image would mask real numerical breakage in the offload path
+    gen_offload = GenerateImageConfig(
+        prompt="a photo of a cat sitting on a wooden table",
+        output_folder=out_dir,
+        output_ext="png",
+        **{**sample_kwargs, "num_inference_steps": 2},
+    )
+    sd.generate_images([gen_offload], **gen_kwargs)
+    offload_seconds = time.perf_counter() - t_off0
+    offload_profile.disable()
+    offload_profile.dump_stats(os.path.join(out_dir, "offload.prof"))
+
     stages = prof.finish()
 
     produced = [
@@ -350,8 +415,6 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     if not produced:
         raise RuntimeError(f"no output file produced in {out_dir}")
 
-    import torch
-
     result = {
         "arch": arch,
         "status": "PASS",
@@ -360,12 +423,16 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
         "qtype_te": model_config.qtype_te if model_kwargs.get("quantize_te") else None,
         "load_seconds": round(load_seconds, 3),
         "gen_seconds": round(gen_seconds, 3),
+        "offload_seconds": round(offload_seconds, 3),
+        "offload_modules_attached": attached,
         "stages": stages,
         "profile": {
             "load_top": profile_top(load_profile),
             "gen_top": profile_top(gen_profile, limit=15),
+            "offload_top": profile_top(offload_profile, limit=15),
             "load_prof": os.path.join(out_dir, "load.prof"),
             "gen_prof": os.path.join(out_dir, "gen.prof"),
+            "offload_prof": os.path.join(out_dir, "offload.prof"),
         },
         "env": {
             "torch_num_threads": torch.get_num_threads(),
@@ -577,7 +644,8 @@ def main():
     total = len(MODEL_TESTS)
     sweep_t0 = time.perf_counter()
     for i, arch in enumerate(MODEL_TESTS, start=1):
-        print(f"\n===== {arch} ({i}/{total}) =====")
+        # flush so tail -f shows headers/progress live when stdout is a file
+        print(f"\n===== {arch} ({i}/{total}) =====", flush=True)
         result_path = os.path.join(OUTPUT_ROOT, f".{arch.replace('/', '_')}.result.json")
         cmd = [
             sys.executable,
@@ -610,7 +678,8 @@ def main():
         print(
             f">>> progress: {i}/{total} ({i * 100 // total}%) — "
             f"{tally['PASS']} pass, {tally['FAIL']} fail, {tally['SKIP']} skip — "
-            f"elapsed {elapsed / 60:.0f}m, eta ~{eta / 60:.0f}m"
+            f"elapsed {elapsed / 60:.0f}m, eta ~{eta / 60:.0f}m",
+            flush=True,
         )
 
     print("\n===== summary =====")

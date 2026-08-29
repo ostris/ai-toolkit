@@ -470,11 +470,75 @@ metrics_baseline.json). Profiling findings and fixes:
 - posix_fadvise(WILLNEED) readahead on single-file loads (mixin._readahead)
   — ~10-15% on cold reads, free when warm, no-op off POSIX.
 
+Round 2 (same day):
+- ARA path (`attach_ara_and_quantize`) now quantizes each hijacked linear on
+  the gpu (was: wherever it lived, historically the cpu) with the same
+  keep_on_device policy; the uint8 extras pass follows suit. Verified with
+  hidream + its uint3 ARA end to end.
+- `quantize_model` delegates its non-ARA branch to `quantize_module`
+  (keep_on_device derived from model_config); dead `_quantize_model_blocks`
+  removed; `patch_dequantization_on_save` made idempotent (double-patching
+  would have recursed on save).
+- Local-first hub loads: `_local_first` wraps from_pretrained / load_config /
+  AutoTokenizer / AutoProcessor — fully-cached repos load with
+  local_files_only (13x on VAE metadata, 0.53s -> 0.04s; a failed local
+  attempt is instant, so uncached repos fall through to the online path at
+  zero cost). Tokenizer-load slowness was DIAGNOSED as these per-process hub
+  etag HEADs, not the use_fast=False sites.
+
+Round 3 — vram spike elimination (2026-08-28):
+- keep_on_device's extras pass had moved the whole unquantized remainder to
+  the gpu in bf16 before quantizing (+7-10GB transient over final residency
+  on big-extras models). Now `quantize(keep_on_quantize_device=True)`
+  quantizes each extra layer on the gpu and leaves it — transient is one
+  layer; non-quantized leftovers move only at final placement. Same for the
+  ARA uint8 pass.
+- convrot8 `quantize_` chunked: takes the weight at stored dtype
+  (wants_fp32_weight=False; ConvRotIntN keeps True) and rotates+quantizes in
+  256MB row-chunks — a 152k-vocab TE projection's transient fell 7.6GB ->
+  1.4GB. Sub-threshold layers keep the one-shot path, verified bit-identical.
+- qwen_image measured: standard load peak 35.3 -> 27.5GB (below the 28.0
+  baseline; process peak now set by generation); low_vram load quantizes the
+  whole 20B stack never holding >2.4GB gpu.
+
 Ideas not yet done: pinned-buffer staged h2d (~+60% warm-upload bandwidth,
 9.5 vs 5.8GB/s measured), overlapping h2d with quantize kernels (small — the
 kernels are ~2% of the pass), wan22 low_vram generate choreography (165s of
-unload/reload per sample), extending keep_on_device to the legacy
-quantize_model/trainer path.
+unload/reload per sample), holders' legacy "just to make sure" .to(device)
+lines that move quantized TEs to gpu even under low_vram (qwen's Preparing
+Model stage parks 7.6GB — policy question, not a quantize spike).
+
+## Offload hardening + final certification (2026-08-28)
+
+The harness gained a per-arch 100%-offload probe (attach MemoryManager at
+offload_percent=1.0 to the DiT + TEs + connectors/vision towers, then a
+2-step sample — 2 not 1: diffusers' shift_terminal stretch divides by zero
+at a single step). It flushed out and fixed, in the manager:
+- fully-offloaded modules now REPORT the compute device (class swap with
+  stringification-stable __module__/__qualname__ — transformers keys its
+  hidden-states capture registry by str(class)); bouncing ops also pull cpu
+  activations to the staged device
+- weights tied to embeddings (lm_head <-> embed_tokens) are never pinned out
+  from under the unmanaged embedding
+- ignore_modules are moved to the compute device at attach
+- the nested attach walk no longer double-lists managed modules as unmanaged
+  (a managed Embedding was getting hauled back to gpu by pipeline.to)
+- NEW: bouncing embeddings — vocab tables >64MB stay cpu-resident with the
+  row gather done ON cpu (only looked-up rows cross the bus); tied lm_heads
+  fall through to normal bouncing
+- wan22's dual wrapper skips its whole-14B .to() swaps when memory-managed,
+  and offload attaches per sub-transformer (pipelines hold those directly)
+
+Measured offload-phase peaks: wan22_14b 14.7 -> 1.5GB, ltx2.5 14.0 ->
+11.8GB (remainder: video activations + resident VAEs/vocoder by design),
+most image archs 1-4GB vs 10-53GB resident. flux2's Mistral warnings
+silenced behavior-preservingly (tie_word_embeddings=False, explicit
+fix_mistral_regex=False, processor_kwargs — tokenization verified
+bit-identical). ConvRot skip notices gated to layers >=1M weights.
+
+FINAL CERTIFICATION: full sweep, 33/34 PASS, 0 FAIL, 1 SKIP (mageflow
+upstream 404) — load + convrot8 quantize + generate + 100%-offload forward
+for every arch on the complete optimized stack.
 
 ## Testing
 

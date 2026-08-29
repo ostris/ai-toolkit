@@ -133,6 +133,7 @@ def quantize(
     include: Optional[Union[str, List[str]]] = None,
     exclude: Optional[Union[str, List[str]]] = None,
     quantize_device: Optional[torch.device] = None,
+    keep_on_quantize_device: bool = False,
 ):
     """Quantize the specified model submodules
 
@@ -163,6 +164,11 @@ def quantize(
             If provided, each module is moved to this device to quantize, then moved
             back to the device its weights were on initially. Lets a CPU-resident
             model (low vram) quantize layer-by-layer on the GPU.
+        keep_on_quantize_device (`bool`):
+            With quantize_device set: leave each layer on the quantize device after
+            quantizing instead of moving it back. The gpu transient is then one
+            bf16 layer at a time — never the whole unquantized remainder at once —
+            for models whose final home is that device.
     """
     if include is not None:
         include = [include] if isinstance(include, str) else include
@@ -237,7 +243,7 @@ def quantize(
                         optimizer=optimizer,
                     )
             finally:
-                if orig_device is not None:
+                if orig_device is not None and not keep_on_quantize_device:
                     # quanto replaces the module in its parent, so re-fetch by name
                     model.get_submodule(name).to(orig_device)
         except Exception as e:
@@ -361,10 +367,21 @@ def quantize_module(
 
     status_fn(" - quantizing extras")
     if keep_on_device:
-        # blocks already live on the gpu; bring the remainder over and run the
-        # extras pass there (fast kernels instead of an all-cores cpu burst)
+        # blocks already live on the gpu; quantize each remaining layer there
+        # one at a time and leave it — the transient is one bf16 layer, never
+        # the whole unquantized remainder at once (that transient bump could
+        # exceed the model's final footprint by GBs on big-extras models)
+        quantize(
+            module,
+            weights=quantization_type,
+            exclude=exclude,
+            quantize_device=device,
+            keep_on_quantize_device=True,
+            **quantize_kwargs,
+        )
+        # non-quantized leftovers (norms, embeddings, buffers) follow — final
+        # residency, not a transient
         module.to(device)
-        quantize(module, weights=quantization_type, exclude=exclude, **quantize_kwargs)
     else:
         # cpu-resident model: quantize each extra layer with a gpu round-trip
         quantize(
@@ -395,15 +412,35 @@ def quantize_model(
     # sensitive modules to keep in full precision (fnmatch patterns)
     exclude_modules = base_model.get_quantization_exclude_modules() or []
 
-    if base_model.model_config.accuracy_recovery_adapter is not None:
+    mc = base_model.model_config
+    device = base_model.device_torch
+    keep_on_device = (
+        not mc.low_vram
+        and not (mc.layer_offloading and mc.layer_offloading_transformer_percent > 0)
+        and torch.device(device).type != "cpu"
+    )
+
+    if mc.accuracy_recovery_adapter is not None:
         attach_ara_and_quantize(
             base_model,
             model_to_quantize,
-            ara_path=base_model.model_config.accuracy_recovery_adapter,
+            ara_path=mc.accuracy_recovery_adapter,
             exclude=exclude_modules,
+            device=device,
+            keep_on_device=keep_on_device,
         )
     else:
-        _quantize_model_blocks(base_model, model_to_quantize, exclude_modules)
+        quantize_module(
+            model_to_quantize,
+            mc.qtype,
+            device=device,
+            dtype=base_model.torch_dtype,
+            block_names=base_model.get_transformer_block_names(),
+            exclude=exclude_modules,
+            quantize_kwargs=mc.quantize_kwargs,
+            status_fn=base_model.print_and_status_update,
+            keep_on_device=keep_on_device,
+        )
 
 
 @torch.no_grad()
@@ -412,11 +449,18 @@ def attach_ara_and_quantize(
     model_to_quantize: torch.nn.Module,
     ara_path: str,
     exclude: Optional[List[str]] = None,
+    device=None,
+    keep_on_device: bool = False,
 ):
     """Load an accuracy recovery adapter as a live network on the module and
     quantize around it (adapter-hijacked linears at the configured qtype,
     everything else uint8). The network lands on
-    base_model.accuracy_recovery_adapter."""
+    base_model.accuracy_recovery_adapter.
+
+    ``device``: quantize each hijacked linear there (gpu kernels) instead of
+    wherever it happens to live (historically the cpu — slow). With
+    ``keep_on_device`` the quantized linears stay there (final home is that
+    gpu); otherwise each returns to the device it came from."""
     from toolkit.config_modules import NetworkConfig
     from toolkit.lora_special import LoRASpecialNetwork
 
@@ -537,12 +581,19 @@ def attach_ara_and_quantize(
     base_model.accuracy_recovery_adapter = network
 
     # quantize it
+    keep_on_device = keep_on_device and device is not None
     lora_exclude_modules = []
     quantization_type = get_qtype(base_model.model_config.qtype)
     for lora_module in tqdm(network.unet_loras, desc="Attaching quantization"):
         # the lora has already hijacked the original module
         orig_module = lora_module.org_module[0]
-        orig_module.to(base_model.torch_dtype)
+        orig_device = None
+        if device is not None:
+            param = next(orig_module.parameters(), None)
+            orig_device = param.device if param is not None else None
+            orig_module.to(device, dtype=base_model.torch_dtype)
+        else:
+            orig_module.to(base_model.torch_dtype)
         # make the params not require gradients
         for param in orig_module.parameters():
             param.requires_grad = False
@@ -550,78 +601,23 @@ def attach_ara_and_quantize(
         freeze(orig_module)
         module_name = lora_module.lora_name.replace('$$', '.').replace('transformer.', '')
         lora_exclude_modules.append(module_name)
-        if base_model.model_config.low_vram:
-            # move it back to cpu
+        if not keep_on_device and orig_device is not None:
+            orig_module.to(orig_device)
+        elif base_model.model_config.low_vram and device is None:
+            # legacy behavior when no quantize device was given
             orig_module.to("cpu")
-    pass
     # quantize additional layers
     print_acc(" - quantizing additional layers")
     quantization_type = get_qtype('uint8')
     quantize(
         model_to_quantize,
         weights=quantization_type,
-        exclude=lora_exclude_modules + exclude_modules
+        exclude=lora_exclude_modules + exclude_modules,
+        quantize_device=device,
+        keep_on_quantize_device=keep_on_device,
     )
+    if keep_on_device:
+        # non-quantized leftovers follow — final residency, not a transient
+        model_to_quantize.to(device)
 
 
-def _quantize_model_blocks(base_model, model_to_quantize, exclude_modules):
-    if True:
-        # quantize model the original way without an accuracy recovery adapter
-        # move and quantize only certain pieces at a time.
-        quantization_type = get_qtype(base_model.model_config.qtype)
-        quantize_kwargs = base_model.model_config.quantize_kwargs or {}
-        # all_blocks = list(model_to_quantize.transformer_blocks)
-        all_blocks: List[torch.nn.Module] = []
-        transformer_block_names = base_model.get_transformer_block_names() or []
-        for name in transformer_block_names:
-            # name may be a dotted path for models that nest their blocks
-            # (e.g. hidream_o1's "model.language_model.layers").
-            block_list = model_to_quantize
-            for part in name.split('.'):
-                block_list = getattr(block_list, part, None)
-                if block_list is None:
-                    break
-            if block_list is not None:
-                all_blocks += list(block_list)
-        base_model.print_and_status_update(
-            f" - quantizing {len(all_blocks)} transformer blocks"
-        )
-        already_quantized = 0
-        for block in tqdm(all_blocks):
-            if not _has_quantizable_linear(block, quantization_type, exclude_modules):
-                # pre-quantized checkpoint with a matching qtype: nothing in
-                # this block would change — skip the device round-trip and the
-                # dtype cast entirely so the load stays byte-identical
-                already_quantized += 1
-                continue
-            block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
-            # exclude patterns with a leading wildcard (e.g. "*adaln_proj*")
-            # also apply inside blocks, where names are block-relative
-            quantize(
-                block,
-                weights=quantization_type,
-                exclude=exclude_modules,
-                **quantize_kwargs,
-            )
-            freeze(block)
-            # NOT non_blocking: an async D2H allocates the cpu destination in pinned
-            # memory, which the caching host allocator keeps forever (with power-of-2
-            # bucket rounding on top) — that silently retained a model-sized chunk of
-            # host ram after the weights moved back to the gpu for training
-            block.to("cpu")
-        if already_quantized:
-            base_model.print_and_status_update(
-                f" - {already_quantized} blocks already quantized with a matching qtype; left untouched"
-            )
-
-        # todo, on extras find a universal way to quantize them on device and move them back to their original
-        # device without having to move the transformer blocks to the device first
-        base_model.print_and_status_update(" - quantizing extras")
-        # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
-        quantize(
-            model_to_quantize,
-            weights=quantization_type,
-            exclude=exclude_modules,
-            **quantize_kwargs,
-        )
-        freeze(model_to_quantize)

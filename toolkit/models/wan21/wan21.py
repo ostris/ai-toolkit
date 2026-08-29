@@ -433,7 +433,10 @@ class Wan21(BaseModel):
         pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        text_encoder.to(self.device_torch)
+        # low_vram: the text encoder stays on cpu; get_prompt_embeds moves it
+        # to the gpu on demand
+        if not self.model_config.low_vram:
+            text_encoder.to(self.device_torch)
         text_encoder.requires_grad_(False)
         text_encoder.eval()
         pipe.transformer = pipe.transformer.to(self.device_torch)

@@ -95,6 +95,13 @@ class DualWanTransformer3DModel(torch.nn.Module):
     def dtype(self) -> torch.dtype:
         return self.torch_dtype
 
+    def get_offload_ignore_modules(self):
+        # both DiTs' fp32 modulation tables stay resident on the compute device
+        return (
+            self.transformer_1.get_offload_ignore_modules()
+            + self.transformer_2.get_offload_ignore_modules()
+        )
+
     @property
     def config(self):
         return self.transformer_1.config
@@ -128,17 +135,26 @@ class DualWanTransformer3DModel(torch.nn.Module):
             else:
                 t_name = "transformer_2"
 
+            # memory-managed transformers own their placement (layers bounce
+            # from cpu per forward); whole-model swaps would haul the full
+            # 14B up and defeat the offloading
+            managed = (
+                hasattr(self, "_memory_manager")
+                or hasattr(self.transformer_1, "_memory_manager")
+                or hasattr(self.transformer_2, "_memory_manager")
+            )
+
             # check if we are changing the active transformer, if so, we need to swap the one in
             # vram if low_vram is enabled
             # todo swap the loras as well
             if t_name != self._active_transformer_name:
-                if self.low_vram:
+                if self.low_vram and not managed:
                     getattr(self, self._active_transformer_name).to("cpu")
                     getattr(self, t_name).to(self.device_torch)
                     torch.cuda.empty_cache()
                 self._active_transformer_name = t_name
 
-        if self.transformer.device != hidden_states.device:
+        if not managed and self.transformer.device != hidden_states.device:
             if self.low_vram:
                 # move other transformer to cpu
                 other_tname = (

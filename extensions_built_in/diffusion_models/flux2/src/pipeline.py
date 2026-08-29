@@ -109,15 +109,19 @@ class Flux2Pipeline(DiffusionPipeline):
         # Process all messages at once
         # with image processing a too short max length can throw an error in here.
         try:
+            # tokenization kwargs ride in processor_kwargs (same values end up
+            # in the same place; loose **kwargs just warn on new transformers)
             inputs = self.tokenizer.apply_chat_template(
                 messages_batch,
                 add_generation_prompt=False,
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
-                padding="max_length",
-                truncation=True,
-                max_length=max_sequence_length,
+                processor_kwargs={
+                    "padding": "max_length",
+                    "truncation": True,
+                    "max_length": max_sequence_length,
+                },
             )
         except ValueError as e:
             print(

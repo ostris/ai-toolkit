@@ -139,13 +139,29 @@ class OstrisModelMixin:
 
     @classmethod
     def aitk_from_pretrained(cls, path, subfolder=None, dtype=None, **kwargs):
-        return cls.from_pretrained(
-            path, subfolder=subfolder, torch_dtype=dtype, **kwargs
+        return cls._local_first(
+            cls.from_pretrained, path, subfolder=subfolder, torch_dtype=dtype, **kwargs
         )
 
     @classmethod
     def aitk_load_config(cls, path, subfolder=None):
-        return cls.load_config(path, subfolder=subfolder)
+        return cls._local_first(cls.load_config, path, subfolder=subfolder)
+
+    @staticmethod
+    def _local_first(loader, *args, **kwargs):
+        """Serve fully-cached repos without touching the hub. Online
+        from_pretrained does an etag HEAD round-trip per file (seconds of pure
+        network latency on every warm load); a local_files_only attempt is
+        instant when the cache can't satisfy it, so failing over to the
+        online path costs nothing."""
+        import os as _os
+
+        if _os.environ.get("HF_HUB_OFFLINE") == "1":
+            return loader(*args, **kwargs)
+        try:
+            return loader(*args, local_files_only=True, **kwargs)
+        except Exception:
+            return loader(*args, **kwargs)
 
     @classmethod
     def aitk_from_config(cls, config):
@@ -247,6 +263,17 @@ class OstrisModelMixin:
             exclude = list(exclude_quant_modules or []) + list(
                 self.get_quantization_exclude_modules() or []
             )
+            q_device = quantize_device if quantize_device is not None else device
+            # final home is the quantize gpu (no offloading, no cpu
+            # parking): quantized weights stay put — one bus crossing
+            # instead of three, and no model-sized host-ram copy
+            keep_on_device = (
+                not offload
+                and device is not None
+                and q_device is not None
+                and torch.device(device) == torch.device(q_device)
+                and torch.device(device).type != "cpu"
+            )
             if ara_path is not None:
                 if base_model is None:
                     raise ValueError(
@@ -254,20 +281,16 @@ class OstrisModelMixin:
                         "network wiring"
                     )
                 status_fn("Quantizing with accuracy recovery adapter")
-                attach_ara_and_quantize(base_model, self, ara_path, exclude=exclude)
+                attach_ara_and_quantize(
+                    base_model,
+                    self,
+                    ara_path,
+                    exclude=exclude,
+                    device=q_device,
+                    keep_on_device=keep_on_device,
+                )
             else:
                 status_fn(f"Quantizing ({qtype})")
-                q_device = quantize_device if quantize_device is not None else device
-                # final home is the quantize gpu (no offloading, no cpu
-                # parking): quantized weights stay put — one bus crossing
-                # instead of three, and no model-sized host-ram copy
-                keep_on_device = (
-                    not offload
-                    and device is not None
-                    and q_device is not None
-                    and torch.device(device) == torch.device(q_device)
-                    and torch.device(device).type != "cpu"
-                )
                 quantize_module(
                     self,
                     qtype,
@@ -623,8 +646,8 @@ class OstrisModelMixin:
             os.path.join(source, subfolder)
         ):
             subfolder = None
-        return AutoTokenizer.from_pretrained(
-            source, subfolder=subfolder or "", **kwargs
+        return cls._local_first(
+            AutoTokenizer.from_pretrained, source, subfolder=subfolder or "", **kwargs
         )
 
     @classmethod
@@ -645,8 +668,8 @@ class OstrisModelMixin:
             os.path.join(source, subfolder)
         ):
             subfolder = None
-        return AutoProcessor.from_pretrained(
-            source, subfolder=subfolder or "", **kwargs
+        return cls._local_first(
+            AutoProcessor.from_pretrained, source, subfolder=subfolder or "", **kwargs
         )
 
     # ------------------------------------------------------------------
@@ -778,15 +801,17 @@ class OstrisTransformersMixin(OstrisModelMixin):
 
     @classmethod
     def aitk_from_pretrained(cls, path, subfolder=None, dtype=None, **kwargs):
-        return cls.from_pretrained(
-            path, subfolder=subfolder or "", torch_dtype=dtype, **kwargs
+        return cls._local_first(
+            cls.from_pretrained, path, subfolder=subfolder or "", torch_dtype=dtype, **kwargs
         )
 
     @classmethod
     def aitk_load_config(cls, path, subfolder=None):
         from transformers import AutoConfig
 
-        return AutoConfig.from_pretrained(path, subfolder=subfolder or "")
+        return cls._local_first(
+            AutoConfig.from_pretrained, path, subfolder=subfolder or ""
+        )
 
     @classmethod
     def aitk_from_config(cls, config):
