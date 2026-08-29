@@ -556,6 +556,7 @@ class SDTrainer(BaseSDTrainProcess):
             noise_pred = noise_pred * self.train_config.pred_scaler
 
         target = None
+        dopsd_normal_target = None
 
         if self.train_config.target_noise_multiplier != 1.0:
             noise = noise * self.train_config.target_noise_multiplier
@@ -623,6 +624,18 @@ class SDTrainer(BaseSDTrainProcess):
             assert not self.train_config.train_turbo
             # matching adapter prediction
             target = prior_pred
+            if getattr(self.sd, 'dopsd_self_ref', False):
+                # D-OPSD bleed: also train against the normal (non-teacher) target
+                if hasattr(self.sd, 'get_loss_target'):
+                    dopsd_normal_target = self.sd.get_loss_target(
+                        noise=noise,
+                        batch=batch,
+                        timesteps=timesteps,
+                    ).detach()
+                elif self.sd.is_flow_matching:
+                    dopsd_normal_target = (noise - batch.latents).detach()
+                else:
+                    dopsd_normal_target = noise
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
@@ -944,6 +957,17 @@ class SDTrainer(BaseSDTrainProcess):
                 elif len(loss.shape) == 5:
                     timestep_weight = timestep_weight.view(-1, 1, 1, 1, 1).detach()
                 loss = loss * timestep_weight
+
+        if dopsd_normal_target is not None:
+            if self.train_config.loss_type == "mae":
+                bleed_loss = torch.nn.functional.l1_loss(pred.float(), dopsd_normal_target.float(), reduction="none")
+            else:
+                bleed_loss = torch.nn.functional.mse_loss(pred.float(), dopsd_normal_target.float(), reduction="none")
+            # scale normal loss to the dopsd loss magnitude, then apply bleed strength
+            with torch.no_grad():
+                bleed_scale = loss.detach().mean() / bleed_loss.detach().mean().clamp(min=1e-8)
+            bleed_strength = float(getattr(self.sd, 'dopsd_bleed_strength', 1.0))
+            loss = loss + bleed_loss * bleed_scale * bleed_strength
 
         if self.train_config.do_prior_divergence and prior_pred is not None:
             loss = loss + (torch.nn.functional.mse_loss(pred.float(), prior_pred.float(), reduction="none") * -1.0)

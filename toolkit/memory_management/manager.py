@@ -146,6 +146,9 @@ class MemoryManager:
             for m in module.modules()
             if isinstance(m, torch.nn.Embedding)
         }
+        # weights of embeddings that get MANAGED (cpu-resident bouncing): a
+        # linear sharing one of these must be managed too, not left resident
+        managed_embedding_ptrs = set()
         # attach to all modules
         for name, sub_module in module.named_modules():
             for child_name, child_module in sub_module.named_modules():
@@ -162,6 +165,8 @@ class MemoryManager:
                         not getattr(child_module, "is_ostris_quantized", False)
                         and isinstance(getattr(child_module, "weight", None), torch.Tensor)
                         and child_module.weight.data_ptr() in embedding_weight_ptrs
+                        and child_module.weight.data_ptr()
+                        not in managed_embedding_ptrs
                     ):
                         skip = True
                     if skip:
@@ -226,10 +231,11 @@ class MemoryManager:
                     EmbeddingLayerMemoryManager.attach(
                         child_module, module._memory_manager
                     )
-                    # the cpu move replaced weight.data, so a tied lm_head no
-                    # longer matches the (original-ptr) tied guard and gets
-                    # managed normally — correct: the shared weight now lives
-                    # on cpu, so the linear must bounce it
+                    # a tied lm_head must bounce the (now cpu-resident) shared
+                    # weight rather than stay resident; record both the pre-
+                    # and post-move ptrs (a cpu->cpu move keeps the tensor)
+                    managed_embedding_ptrs.add(child_module.weight.data_ptr())
+                    embedding_weight_ptrs.add(child_module.weight.data_ptr())
                     modules_processed.append(child_module)
                 elif child_module.__class__.__name__ in UNMANAGED_MODULES or any(
                     inc in child_module.__class__.__name__
@@ -248,6 +254,22 @@ class MemoryManager:
                         module._memory_manager.unmanaged_modules.append(child_module)
                 else:
                     continue
+
+        # everything NOT managed is the resident set and must live on the
+        # compute device. A model attached while parked on cpu (the offload
+        # load flow) otherwise keeps its rotary buffers / norms / conv towers
+        # on cpu and the first forward explodes on a device mismatch. Managed
+        # layers (pinned-cpu weights, cpu-resident bouncing embeddings) are
+        # skipped via their _layer_memory_manager.
+        for sub in module.modules():
+            if hasattr(sub, "_layer_memory_manager"):
+                continue
+            for p in sub.parameters(recurse=False):
+                if p is not None and p.device != device:
+                    p.data = p.data.to(device)
+            for name, b in sub._buffers.items():
+                if b is not None and b.device != device:
+                    sub._buffers[name] = b.to(device)
 
     @classmethod
     def detach(cls, module: torch.nn.Module):

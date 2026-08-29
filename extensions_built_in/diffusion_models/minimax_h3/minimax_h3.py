@@ -1153,6 +1153,9 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         if self.dopsd:
             self.dopsd_self_ref = True
             self.require_pixel_tensor_cache = True
+            self.dopsd_bleed_strength = float(
+                self.model_config.model_kwargs.get("dopsd_bleed_strength", 1.0)
+            )
 
     def _dit_component(self) -> str:
         partition = str(

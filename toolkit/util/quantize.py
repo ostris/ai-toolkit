@@ -125,6 +125,22 @@ def requantize_module_weight(module, fp_weight, orig_dtype, config) -> None:
         torchao_quantize_(module, config)
 
 
+def _wrap_qlinear_ndim(qlinear: torch.nn.Module) -> None:
+    """quanto QLinear forward that tolerates >3D activations by flattening
+    the leading dims for the mm and restoring them after (no-op otherwise)."""
+    orig_forward = qlinear.forward
+
+    def forward(x):
+        if x.ndim > 3:
+            lead = x.shape[:-1]
+            out = orig_forward(x.reshape(-1, x.shape[-1]))
+            return out.reshape(*lead, out.shape[-1])
+        return orig_forward(x)
+
+    qlinear.forward = forward
+    qlinear._aitk_ndim_wrapped = True
+
+
 def quantize(
     model: torch.nn.Module,
     weights: Optional[Union[str, qtype, aotype]] = None,
@@ -242,6 +258,14 @@ def quantize(
                         activations=activations,
                         optimizer=optimizer,
                     )
+                    # quanto's qbytes_mm only takes 2D/3D activations; video
+                    # patch embeds feed their linears >3D tensors (convrot/
+                    # torchao reshape internally). Flatten around the QLinear.
+                    replaced = model.get_submodule(name)
+                    if replaced.__class__.__name__ == "QLinear" and not getattr(
+                        replaced, "_aitk_ndim_wrapped", False
+                    ):
+                        _wrap_qlinear_ndim(replaced)
             finally:
                 if orig_device is not None and not keep_on_quantize_device:
                     # quanto replaces the module in its parent, so re-fetch by name
@@ -277,6 +301,39 @@ def _has_quantizable_linear(module: torch.nn.Module, weights, exclude=None) -> b
         if weights.quantizer.can_quantize(m):
             return True
     return False
+
+
+@torch.no_grad()
+def dequantize_ostris_to_linear(module: torch.nn.Module) -> int:
+    """Replace every OstrisLinear with a plain nn.Linear holding the full-
+    precision weight (activation-side transforms folded), in place, layer by
+    layer — the full-precision transient never exceeds one layer. Used when a
+    pre-quantized checkpoint is loaded but a DIFFERENT quantization (or none,
+    e.g. full finetuning) was requested. Returns the number of layers
+    restored."""
+    replaced = 0
+    for parent in module.modules():
+        for child_name, child in list(parent.named_children()):
+            if not isinstance(child, OstrisLinear):
+                continue
+            weight = child.ostris_quantizer.dequantize_folded(child).to(
+                child.ostris_orig_dtype
+            )
+            new = torch.nn.Linear(
+                child.in_features,
+                child.out_features,
+                bias=child.bias is not None,
+                device="meta",
+                dtype=weight.dtype,
+            )
+            new.weight = torch.nn.Parameter(weight)
+            if child.bias is not None:
+                new.bias = torch.nn.Parameter(
+                    child.bias.data.to(weight.device, weight.dtype)
+                )
+            setattr(parent, child_name, new)
+            replaced += 1
+    return replaced
 
 
 @torch.no_grad()

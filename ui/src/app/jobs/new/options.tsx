@@ -967,8 +967,10 @@ export const modelArchs: ModelArch[] = [
           const kwargs = { ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}) };
           if (value === 'dopsd') {
             kwargs.dopsd = true;
+            kwargs.dopsd_bleed_strength = 1.0;
           } else {
             delete kwargs.dopsd;
+            delete kwargs.dopsd_bleed_strength;
           }
           setJobConfig(kwargs, 'config.process[0].model.model_kwargs');
           if (value === 'cg') {

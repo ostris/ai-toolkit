@@ -188,6 +188,10 @@ class ZImageModel(BaseModel):
             use_comfy_weights=self.model_config.model_kwargs.get(
                 "use_comfy_weights", True
             ),
+            # comfy candidate ranking hint only (aitk_post_load quantizes):
+            # a matching pre-quantized file loads with no requant work
+            qtype=self.model_config.qtype if self.model_config.quantize else None,
+            quantize_on_load=False,
         )
         flush()
 

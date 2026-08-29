@@ -132,6 +132,8 @@ MODEL_TESTS = {
         "model": {"name_or_path": "HiDream-ai/HiDream-E1-1", "quantize": True, "quantize_te": True},
         "sample": {"width": 768, "height": 768, "num_inference_steps": 28, "guidance_scale": 5.0, "seed": 42},
         "needs_control_image": True,
+        # native editing seq assert: other resolutions hard-fail
+        "size_locked": True,
     },
     "nucleus_image": {
         "model": {"name_or_path": "NucleusAI/Nucleus-Image", "quantize": True, "quantize_te": True},
@@ -219,9 +221,18 @@ def classify_error(err: BaseException) -> str:
     return "FAIL"
 
 
-def run_one(arch: str, device: str, allow_download: bool) -> dict:
+def run_one(
+    arch: str,
+    device: str,
+    allow_download: bool,
+    qtype_override: str = None,
+    quant_only: bool = False,
+    no_sample: bool = False,
+) -> dict:
     entry = MODEL_TESTS[arch]
     out_dir = os.path.join(OUTPUT_ROOT, arch.replace("/", "_").replace(":", "_"))
+    if qtype_override:
+        out_dir = os.path.join(out_dir, f"qtype_{qtype_override}")
     os.makedirs(out_dir, exist_ok=True)
     for old in glob.glob(os.path.join(out_dir, "*")):
         os.remove(old)
@@ -231,10 +242,17 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
 
     # quantization always tests the convrot8 backend (per-entry override wins)
     model_kwargs = dict(entry["model"])
-    if model_kwargs.get("quantize"):
-        model_kwargs.setdefault("qtype", "convrot8")
-    if model_kwargs.get("quantize_te"):
-        model_kwargs.setdefault("qtype_te", "convrot8")
+    if qtype_override:
+        # quant smoke: force quantization of transformer + TE at this qtype
+        model_kwargs["quantize"] = True
+        model_kwargs["quantize_te"] = True
+        model_kwargs["qtype"] = qtype_override
+        model_kwargs["qtype_te"] = qtype_override
+    else:
+        if model_kwargs.get("quantize"):
+            model_kwargs.setdefault("qtype", "convrot8")
+        if model_kwargs.get("quantize_te"):
+            model_kwargs.setdefault("qtype_te", "convrot8")
 
     model_config = ModelConfig(arch=arch, dtype="bf16", **model_kwargs)
     ModelClass = get_model_class(model_config)
@@ -307,6 +325,17 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     load_profile.dump_stats(os.path.join(out_dir, "load.prof"))
 
     sample_kwargs = dict(entry["sample"])
+    if quant_only:
+        # quant smoke: one tiny pass just to prove the quantized forward runs.
+        # Kernel-shape bugs live in layer dims (K/N), not token count, so a
+        # small image exercises them; 2 steps not 1 (shift_terminal NaNs).
+        sample_kwargs["num_inference_steps"] = 2
+        if not entry.get("size_locked"):
+            # 384 divides every bucket size in the registry (16/32/64)
+            sample_kwargs["width"] = min(sample_kwargs["width"], 384)
+            sample_kwargs["height"] = min(sample_kwargs["height"], 384)
+            if "num_frames" in sample_kwargs:
+                sample_kwargs["num_frames"] = min(sample_kwargs["num_frames"], 9)
     if entry.get("needs_control_image"):
         # edit/kontext models require a control image; a flat gray input is fine
         from PIL import Image
@@ -329,6 +358,16 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
         # the legacy monolith takes the sampler NAME at generate time
         gen_kwargs["sampler"] = "ddpm"
 
+    if quant_only and no_sample:
+        # load+quantize only — no forward at all; catches quantize-time
+        # errors but NOT broken quantized kernels (those need the sample)
+        stages = prof.finish()
+        return _finish_result(
+            arch, out_dir, model_config, model_kwargs, load_seconds,
+            None, None, 0, stages, load_profile, None, None,
+            require_output=False,
+        )
+
     prof.stage("generate")
     gen_profile = cProfile.Profile()
     gen_profile.enable()
@@ -343,6 +382,17 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     # encode + denoise + decode with every layer staged from cpu) is proven
     # for every arch ----
     import torch
+
+    offload_seconds = None
+    attached = 0
+    offload_profile = None
+    if quant_only:
+        stages = prof.finish()
+        return _finish_result(
+            arch, out_dir, model_config, model_kwargs, load_seconds,
+            gen_seconds, offload_seconds, attached, stages,
+            load_profile, gen_profile, offload_profile,
+        )
 
     from toolkit.memory_management import MemoryManager
 
@@ -404,6 +454,21 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
     offload_profile.dump_stats(os.path.join(out_dir, "offload.prof"))
 
     stages = prof.finish()
+    return _finish_result(
+        arch, out_dir, model_config, model_kwargs, load_seconds,
+        gen_seconds, offload_seconds, attached, stages,
+        load_profile, gen_profile, offload_profile,
+    )
+
+
+def _finish_result(
+    arch, out_dir, model_config, model_kwargs, load_seconds, gen_seconds,
+    offload_seconds, attached, stages, load_profile, gen_profile,
+    offload_profile, require_output=True,
+):
+    import torch
+
+    from testing.stage_profiler import profile_top
 
     produced = [
         p
@@ -412,9 +477,19 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
         and os.path.getsize(p) > 1024
         and not p.endswith((".txt", ".prof", ".json"))
     ]
-    if not produced:
+    if not produced and require_output:
         raise RuntimeError(f"no output file produced in {out_dir}")
 
+    profile = {
+        "load_top": profile_top(load_profile),
+        "load_prof": os.path.join(out_dir, "load.prof"),
+    }
+    if gen_profile is not None:
+        profile["gen_top"] = profile_top(gen_profile, limit=15)
+        profile["gen_prof"] = os.path.join(out_dir, "gen.prof")
+    if offload_profile is not None:
+        profile["offload_top"] = profile_top(offload_profile, limit=15)
+        profile["offload_prof"] = os.path.join(out_dir, "offload.prof")
     result = {
         "arch": arch,
         "status": "PASS",
@@ -422,18 +497,13 @@ def run_one(arch: str, device: str, allow_download: bool) -> dict:
         "qtype": model_config.qtype if model_kwargs.get("quantize") else None,
         "qtype_te": model_config.qtype_te if model_kwargs.get("quantize_te") else None,
         "load_seconds": round(load_seconds, 3),
-        "gen_seconds": round(gen_seconds, 3),
-        "offload_seconds": round(offload_seconds, 3),
+        "gen_seconds": round(gen_seconds, 3) if gen_seconds is not None else None,
+        "offload_seconds": (
+            round(offload_seconds, 3) if offload_seconds is not None else None
+        ),
         "offload_modules_attached": attached,
         "stages": stages,
-        "profile": {
-            "load_top": profile_top(load_profile),
-            "gen_top": profile_top(gen_profile, limit=15),
-            "offload_top": profile_top(offload_profile, limit=15),
-            "load_prof": os.path.join(out_dir, "load.prof"),
-            "gen_prof": os.path.join(out_dir, "gen.prof"),
-            "offload_prof": os.path.join(out_dir, "offload.prof"),
-        },
+        "profile": profile,
         "env": {
             "torch_num_threads": torch.get_num_threads(),
             "cpu_count": os.cpu_count(),
@@ -575,6 +645,27 @@ def main():
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--json-result", type=str, default=None)
     parser.add_argument(
+        "--quant-test",
+        action="store_true",
+        help="quant smoke: for each arch (or --arch), force-quantize the "
+        "transformer + TE at each qtype in --qtypes, run one tiny 2-step "
+        "pass, no offload probe — just proves each backend loads/quantizes/"
+        "runs without errors",
+    )
+    parser.add_argument(
+        "--qtypes",
+        type=str,
+        default="convrot8,qfloat8,float8",
+        help="comma-separated qtypes for --quant-test",
+    )
+    parser.add_argument("--qtype-override", type=str, default=None)
+    parser.add_argument(
+        "--no-sample",
+        action="store_true",
+        help="with --quant-test: load+quantize only, skip the 2-step sample "
+        "(faster, but does not exercise the quantized kernels)",
+    )
+    parser.add_argument(
         "--report-only",
         action="store_true",
         help="rebuild report.md from each arch's saved metrics.json, no runs",
@@ -608,13 +699,73 @@ def main():
     if not args.allow_download:
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+    if args.quant_test and args.qtype_override is None:
+        # quant smoke: (archs x qtypes) grid, one subprocess per cell so each
+        # backend gets a clean CUDA context
+        qtypes = [q.strip() for q in args.qtypes.split(",") if q.strip()]
+        archs = [args.arch] if args.arch else list(MODEL_TESTS)
+        results = []
+        total = len(archs) * len(qtypes)
+        i = 0
+        t0 = time.perf_counter()
+        for arch in archs:
+            for qt in qtypes:
+                i += 1
+                print(f"\n===== {arch} [{qt}] ({i}/{total}) =====", flush=True)
+                result_path = os.path.join(
+                    OUTPUT_ROOT, f".{arch.replace('/', '_')}.{qt}.result.json"
+                )
+                cmd = [
+                    sys.executable, os.path.abspath(__file__),
+                    "--arch", arch, "--device", args.device,
+                    "--qtype-override", qt, "--quant-test",
+                    "--json-result", result_path,
+                ]
+                if args.allow_download:
+                    cmd.append("--allow-download")
+                if args.no_sample:
+                    cmd.append("--no-sample")
+                subprocess.run(cmd, cwd=TOOLKIT_ROOT)
+                if os.path.exists(result_path):
+                    with open(result_path) as f:
+                        r = json.load(f)
+                    os.remove(result_path)
+                else:
+                    r = {"arch": arch, "status": "FAIL", "error": "subprocess died"}
+                r["qtype_tested"] = qt
+                results.append(r)
+                elapsed = time.perf_counter() - t0
+                print(
+                    f">>> quant-test progress: {i}/{total} — elapsed "
+                    f"{elapsed / 60:.0f}m, eta ~{(elapsed / i) * (total - i) / 60:.0f}m",
+                    flush=True,
+                )
+        print("\n===== quant-test summary =====")
+        fails = 0
+        for r in results:
+            line = f"[{r['status']}] {r['arch']} [{r['qtype_tested']}]"
+            if r["status"] != "PASS":
+                line += f" — {r.get('error', '')[:140]}"
+                fails += r["status"] == "FAIL"
+            print(line)
+        if fails:
+            sys.exit(1)
+        return
+
     if args.arch is not None:
         if args.arch not in MODEL_TESTS:
             raise SystemExit(
                 f"arch {args.arch!r} is not registered; --list shows options"
             )
         try:
-            result = run_one(args.arch, args.device, args.allow_download)
+            result = run_one(
+                args.arch,
+                args.device,
+                args.allow_download,
+                qtype_override=args.qtype_override,
+                quant_only=args.quant_test,
+                no_sample=args.no_sample,
+            )
         except BaseException as err:
             status = classify_error(err)
             result = {"arch": args.arch, "status": status, "error": f"{type(err).__name__}: {err}"}

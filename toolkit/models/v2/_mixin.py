@@ -218,6 +218,11 @@ class OstrisModelMixin:
             config=config,
             subfolder=subfolder,
             use_comfy_weights=use_comfy_weights,
+            # comfy candidate ranking prefers the file whose shipped
+            # quantization matches the request (strip any ARA suffix);
+            # quantization itself happens in aitk_post_load below
+            qtype=(qtype or "").split("|", 1)[0] or None,
+            quantize_on_load=False,
             **kwargs,
         )
         return model.aitk_post_load(
@@ -253,6 +258,53 @@ class OstrisModelMixin:
         ara_path = None
         if qtype is not None and "|" in qtype:
             qtype, ara_path = qtype.split("|", 1)
+
+        # pre-quantized checkpoint: keep the shipped quantization IFF it
+        # exactly matches the request. Anything else — no quantization
+        # requested (full finetuning), a different backend, or an ARA —
+        # restores/requantizes to what was asked for.
+        if getattr(self, "aitk_is_quantized", False):
+            from toolkit.util.ostris_quant import OstrisLinear
+            from toolkit.util.quantize import (
+                dequantize_ostris_to_linear,
+                get_qtype,
+                ostristype,
+            )
+
+            shipped = sorted(
+                {
+                    getattr(m.ostris_quantizer, "qtype", None)
+                    for m in self.modules()
+                    if isinstance(m, OstrisLinear)
+                }
+                - {None}
+            )
+            matches = (
+                qtype is not None
+                and ara_path is None
+                and shipped == [qtype]
+            )
+            if matches:
+                status_fn(f"Checkpoint is pre-quantized ({qtype}); keeping it")
+            else:
+                target_is_ostris = qtype is not None and isinstance(
+                    get_qtype(qtype), ostristype
+                )
+                if qtype is None or ara_path is not None or not target_is_ostris:
+                    # full precision requested, an ARA (quantizes fresh from
+                    # full weights), or a quanto/torchao backend that cannot
+                    # re-quantize an OstrisLinear: dequantize first
+                    status_fn(
+                        f"Dequantizing shipped {'/'.join(shipped)} weights "
+                        f"-> {qtype or 'full precision'}"
+                    )
+                    dequantize_ostris_to_linear(self)
+                else:
+                    # ostris -> ostris: quantize_module re-quantizes each
+                    # layer in place (dequant -> requant, one layer at a time)
+                    status_fn(f"Requantizing {'/'.join(shipped)} -> {qtype}")
+                self.aitk_is_quantized = False
+                self.aitk_qtype = None
 
         if qtype and not getattr(self, "aitk_is_quantized", False):
             from toolkit.util.quantize import (
@@ -308,8 +360,6 @@ class OstrisModelMixin:
                 )
             self.aitk_is_quantized = True
             self.aitk_qtype = qtype
-        elif qtype and getattr(self, "aitk_is_quantized", False):
-            status_fn("Checkpoint is pre-quantized; skipping quantization")
 
         if offload and offload > 0:
             from toolkit.memory_management import MemoryManager
@@ -337,6 +387,7 @@ class OstrisModelMixin:
         config=None,
         subfolder: Optional[str] = None,
         use_comfy_weights: bool = True,
+        quantize_on_load: bool = True,
         **kwargs,
     ):
         """Load a model universally from a given name or path.
@@ -370,7 +421,9 @@ class OstrisModelMixin:
             and not name_or_path.endswith(".safetensors")
             and not os.path.exists(name_or_path)
         ):
-            comfy_path = cls.resolve_comfy_weights(name_or_path, subfolder=subfolder)
+            comfy_path = cls.resolve_comfy_weights(
+                name_or_path, subfolder=subfolder, qtype=qtype
+            )
             if comfy_path is not None:
                 if config_path is None:
                     # the standard repo supplies the config for the comfy file
@@ -399,7 +452,9 @@ class OstrisModelMixin:
                 name_or_path, subfolder=subfolder, dtype=dtype, **kwargs
             )
 
-        if qtype is not None:
+        # quantize_on_load=False: qtype was only a comfy-candidate ranking
+        # hint (the .load() path quantizes in aitk_post_load instead)
+        if qtype is not None and quantize_on_load:
             model.quantize_(
                 qtype, device=quantize_device, exclude=exclude_quant_modules
             )
@@ -589,6 +644,7 @@ class OstrisModelMixin:
         local_only: bool = False,
         hf_token: Optional[str] = None,
         status_fn: Optional[callable] = None,
+        qtype: Optional[str] = None,
     ) -> Optional[str]:
         """The comfy-format weight file replacing a standard ``name_or_path``,
         or None when this class has none registered for it. Best-ranked local
@@ -618,6 +674,7 @@ class OstrisModelMixin:
             hf_token=hf_token,
             status_fn=status_fn,
             local_only=local_only,
+            qtype=qtype,
         )
 
     # ------------------------------------------------------------------

@@ -16,22 +16,41 @@ from typing import Callable, Iterable, Optional
 from toolkit.paths import MODELS_PATH
 
 
-def comfy_precision_rank(filename: str) -> int:
-    """Load-preference rank for a comfy weight filename:
-    convrot8 (0) > float8 mixed (1) > float8 (2) > bf16 (3) > fp16 (4) >
-    anything else, e.g. nvfp4 or unmarked (5)."""
+def comfy_precision_rank(filename: str, qtype: Optional[str] = None) -> int:
+    """Load-preference rank for a comfy weight filename, given the REQUESTED
+    quantization. A file whose shipped quantization matches the request loads
+    with no work; anything else costs a dequantize/requantize pass, so:
+
+    - convrot* requested: convrot (0) > fp8 mixed (1) > fp8 (2) > bf16 (3) >
+      fp16 (4) > other (5)
+    - float8/qfloat8 requested: fp8 mixed (0) > fp8 (1) > bf16 (2) > fp16 (3)
+      > convrot (4) > other (5)
+    - nvfp4 requested: nvfp4 (0) > bf16 (1) > fp16 (2) > convrot (3) > fp8
+      (4) > other (5)
+    - no quantization requested (full precision) or any other fresh-quant
+      backend: bf16 (0) > fp16 (1) > convrot (2) > fp8 mixed (3) > fp8 (4) >
+      other (5) — clean weights beat paying a dequantize
+    """
     name = os.path.basename(filename).lower()
-    if "convrot" in name:
-        return 0
-    is_fp8 = "fp8" in name or "float8" in name or "e4m3" in name
-    if is_fp8 and "mixed" in name:
-        return 1
-    if is_fp8:
-        return 2
-    if "bf16" in name:
-        return 3
-    if "fp16" in name:
-        return 4
+    is_convrot = "convrot" in name
+    is_nvfp4 = "nvfp4" in name
+    is_fp8 = ("fp8" in name or "float8" in name or "e4m3" in name) and not is_nvfp4
+    is_fp8_mixed = is_fp8 and "mixed" in name
+    is_bf16 = "bf16" in name
+    is_fp16 = "fp16" in name and not is_fp8
+
+    qt = (qtype or "").lower()
+    if qt.startswith("convrot"):
+        order = [is_convrot, is_fp8_mixed, is_fp8, is_bf16, is_fp16]
+    elif "float8" in qt or qt == "qfloat8":
+        order = [is_fp8_mixed, is_fp8, is_bf16, is_fp16, is_convrot]
+    elif "nvfp4" in qt:
+        order = [is_nvfp4, is_bf16, is_fp16, is_convrot, is_fp8]
+    else:
+        order = [is_bf16, is_fp16, is_convrot, is_fp8_mixed, is_fp8]
+    for rank, flag in enumerate(order):
+        if flag:
+            return rank
     return 5
 
 
@@ -51,15 +70,17 @@ def resolve_comfy_candidates(
     hf_token: Optional[str] = None,
     status_fn: Optional[Callable[[str], None]] = None,
     local_only: bool = False,
+    qtype: Optional[str] = None,
 ) -> Optional[str]:
     """Pick the best comfy weight file among precision variants of one
-    component (repo-relative paths, ranked by comfy_precision_rank then list
-    order). The best-ranked LOCAL candidate wins; only when no candidate is
-    local is the best-ranked one downloaded to its comfy-layout location
-    under MODELS_PATH."""
+    component (repo-relative paths, ranked by comfy_precision_rank for the
+    requested qtype, then list order). The best-ranked LOCAL candidate wins;
+    only when no candidate is local is the best-ranked one downloaded to its
+    comfy-layout location under MODELS_PATH."""
     candidates = list(candidates)
     ordered = sorted(
-        candidates, key=lambda c: (comfy_precision_rank(c), candidates.index(c))
+        candidates,
+        key=lambda c: (comfy_precision_rank(c, qtype=qtype), candidates.index(c)),
     )
     for repo_rel in ordered:
         found = resolve_comfy_file(
