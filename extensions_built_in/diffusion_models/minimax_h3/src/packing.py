@@ -546,12 +546,26 @@ def remap_sigma(
 
 
 def build_sigma_schedule(
-    num_inference_steps: int, shift: float = VIDEO_SIGMA_SHIFT
+    num_inference_steps: int,
+    shift: float = VIDEO_SIGMA_SHIFT,
+    t1000_ladder: bool = False,
 ) -> torch.Tensor:
     """The released sampling grid: linspace(1, 0, steps + 1) through the
     exponential shift, consecutive duplicates collapsed — `steps` yields
     `steps` model evaluations (the released repo counts the terminal 0 in
-    `steps`; we don't, so sample_steps means model evals)."""
-    base = torch.linspace(1.0, 0.0, num_inference_steps + 1, dtype=torch.float32)
+    `steps`; we don't, so sample_steps means model evals).
+
+    ``t1000_ladder`` uses FastH3's trained ladder instead: rounded indices on
+    the shared 1000-step grid ([999, 749, 500, 250] at 4 steps), one forward
+    per entry, each scheduler applying its own shift."""
+    if t1000_ladder:
+        base = (
+            torch.linspace(0.0, 999.0, num_inference_steps + 1, dtype=torch.float32)
+            .round()
+            .flip(0)
+            / 1000.0
+        )
+    else:
+        base = torch.linspace(1.0, 0.0, num_inference_steps + 1, dtype=torch.float32)
     sigmas = shift_sigma(base, shift)
     return torch.unique_consecutive(sigmas)

@@ -200,9 +200,11 @@ class MiniMaxH3Pipeline:
         audio_rows = pack_audio_latents(audio_noise)  # (1, 2*A, 32)
 
         # --- schedules -----------------------------------------------------
-        sigmas_v = build_sigma_schedule(num_inference_steps, VIDEO_SIGMA_SHIFT).to(
-            device
-        )
+        sigmas_v = build_sigma_schedule(
+            num_inference_steps,
+            VIDEO_SIGMA_SHIFT,
+            t1000_ladder=getattr(model, "t1000_sample_ladder", False),
+        ).to(device)
         # the audio schedule follows the video grid through the closed-form
         # shift remap so both streams sit at the same underlying position
         sigmas_a = remap_sigma(sigmas_v, VIDEO_SIGMA_SHIFT, AUDIO_SIGMA_SHIFT)
@@ -240,6 +242,8 @@ class MiniMaxH3Pipeline:
                 video_indices=video_indices,
                 audio_indices=audio_indices,
                 text_indices=text_indices,
+                # target-video token grid (patch 1x2x2); consumed only by VSA models
+                vsa_video_grid=(t_lat, h_lat // 2, w_lat // 2),
             )
             v_video = video_pred[:, num_cond:].float()
             v_audio = audio_pred[:, layout.num_condition_audio_rows :].float()

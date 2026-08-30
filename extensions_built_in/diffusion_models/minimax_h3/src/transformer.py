@@ -60,6 +60,9 @@ class MiniMaxH3TransformerParams:
     norm_eps: float = 1e-5
     qk_norm_eps: float = 1e-5
     final_norm_eps: float = 1e-5
+    # VSA-trained checkpoints (FastVideo FastH3) carry a per-token gate for
+    # the coarse compression branch: blocks.N.attn.to_gate_compress
+    gate_compress: bool = False
     # "pruned" checkpoints (e.g. Comfy-Org *_pruned_*) replace the timestep
     # MLP with a small lookup table: ``adaln_t_table`` of shape
     # (adaln_t_table_size, time_embed_dim) sampled by linear interpolation at
@@ -146,7 +149,14 @@ class MiniMaxH3TimeEmbedder(nn.Module):
 class MiniMaxH3Attention(nn.Module):
     """Fused-QKV self-attention with per-head RMSNorm on q/k and partial RoPE."""
 
-    def __init__(self, hidden: int, heads: int, head_dim: int, qk_norm_eps: float):
+    def __init__(
+        self,
+        hidden: int,
+        heads: int,
+        head_dim: int,
+        qk_norm_eps: float,
+        gate_compress: bool = False,
+    ):
         super().__init__()
         self.heads = heads
         self.head_dim = head_dim
@@ -155,12 +165,16 @@ class MiniMaxH3Attention(nn.Module):
         self.q_norm = nn.RMSNorm(head_dim, eps=qk_norm_eps)
         self.k_norm = nn.RMSNorm(head_dim, eps=qk_norm_eps)
         self.out_proj = nn.Linear(inner, hidden, bias=False)
+        self.to_gate_compress = (
+            nn.Linear(hidden, inner, bias=False) if gate_compress else None
+        )
 
     def forward(
         self,
         x: torch.Tensor,  # (B, S, hidden)
         rotary_emb=None,  # (cos, sin) each (B, S, rot) or None
         attn_mask: Optional[torch.Tensor] = None,  # (B, 1, 1, S) bool, True = attend
+        vsa=None,  # H3VSAContext or None (dense)
     ) -> torch.Tensor:
         b, s, _ = x.shape
         q, k, v = self.qkv_proj(x).chunk(3, dim=-1)
@@ -173,6 +187,13 @@ class MiniMaxH3Attention(nn.Module):
         if rotary_emb is not None:
             q = apply_rotary_emb(q, *rotary_emb)
             k = apply_rotary_emb(k, *rotary_emb)
+
+        if vsa is not None and self.to_gate_compress is not None:
+            from .vsa import vsa_attention
+
+            gate = self.to_gate_compress(x).view(b, s, self.heads, self.head_dim)
+            out = vsa_attention(q, k, v, gate, vsa)
+            return self.out_proj(out.reshape(b, s, -1))
 
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
@@ -282,7 +303,11 @@ class MiniMaxH3Block(nn.Module):
         self.norm1 = nn.RMSNorm(p.hidden_size, eps=p.norm_eps)
         self.norm2 = nn.RMSNorm(p.hidden_size, eps=p.norm_eps)
         self.attn = MiniMaxH3Attention(
-            p.hidden_size, p.num_attention_heads, p.attention_head_dim, p.qk_norm_eps
+            p.hidden_size,
+            p.num_attention_heads,
+            p.attention_head_dim,
+            p.qk_norm_eps,
+            gate_compress=p.gate_compress,
         )
         self.mlp = MiniMaxH3Mlp(p.hidden_size, p.ffn_hidden_size)
         self.adaln_proj = MiniMaxH3AdalnProj(
@@ -301,6 +326,7 @@ class MiniMaxH3Block(nn.Module):
         adaln_indices: torch.Tensor,  # (B, S) long into the (M * 3) table
         rotary_emb,  # (cos, sin)
         attn_mask: Optional[torch.Tensor] = None,
+        vsa=None,  # H3VSAContext or None (dense)
     ) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaln_proj(temb)
@@ -310,7 +336,9 @@ class MiniMaxH3Block(nn.Module):
         h = self.norm1(x) * (1.0 + scale_msa[adaln_indices].to(dt)) + shift_msa[
             adaln_indices
         ].to(dt)
-        x = x + gate_msa[adaln_indices].to(dt) * self.attn(h, rotary_emb, attn_mask)
+        x = x + gate_msa[adaln_indices].to(dt) * self.attn(
+            h, rotary_emb, attn_mask, vsa
+        )
 
         h = self.norm2(x) * (1.0 + scale_mlp[adaln_indices].to(dt)) + shift_mlp[
             adaln_indices
@@ -370,6 +398,7 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
             # pruned checkpoint: factored timestep table instead of the MLP
             params.adaln_t_table_size = table.shape[0]
             params.time_embed_dim = table.shape[1]
+        params.gate_compress = "blocks.0.attn.to_gate_compress.weight" in state_dict
         return params
 
     @classmethod
@@ -416,6 +445,9 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
         self.final_layer = MiniMaxH3FinalLayer(p)
 
         self.gradient_checkpointing = False
+        # None = dense attention. Set by the FastH3 model wrapper; only takes
+        # effect on gate_compress checkpoints when the caller passes the grid.
+        self.vsa_sparsity: Optional[float] = None
 
     # float32 islands of the shipped checkpoint; used by the loader to keep
     # these keys at full precision when the rest is cast to bf16
@@ -469,6 +501,9 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
         video_indices: torch.Tensor,  # (Nv,) long positions of video rows in the pack
         audio_indices: torch.Tensor,  # (Na,) long
         text_indices: torch.Tensor,  # (L,) long
+        vsa_video_grid: Optional[
+            Tuple[int, int, int]
+        ] = None,  # target-video token grid (t, h, w)
     ):
         """Returns (video_out (B, Nv, 96), audio_out (B, Na, 32)) — the
         data-ward velocity ``clean - noise`` for every row, in input order.
@@ -510,6 +545,28 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
         temb = self._time_embedding(unique_t)
         adaln_indices = inverse * MODALITY_NUM + token_tags.clamp(min=0)
 
+        vsa_ctx = None
+        if (
+            self.vsa_sparsity is not None
+            and self.params.gate_compress
+            and vsa_video_grid is not None
+        ):
+            from .vsa import build_vsa_context, vsa_is_available
+
+            # no triton -> warn once and run every block dense instead
+            vsa_ctx = (
+                None
+                if not vsa_is_available()
+                else build_vsa_context(
+                    seq_len=seq_len,
+                    num_text_rows=int(text_indices.shape[0]),
+                    video_grid=tuple(int(g) for g in vsa_video_grid),
+                    token_tags=token_tags,
+                    sparsity=self.vsa_sparsity,
+                    device=x.device,
+                )
+            )
+
         for block in self.blocks:
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 x = checkpoint(
@@ -519,10 +576,11 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
                     adaln_indices,
                     rotary_emb,
                     attn_mask,
+                    vsa_ctx,
                     use_reentrant=False,
                 )
             else:
-                x = block(x, temb, adaln_indices, rotary_emb, attn_mask)
+                x = block(x, temb, adaln_indices, rotary_emb, attn_mask, vsa_ctx)
 
         video_all, audio_all = self.final_layer(x, temb, inverse)
         video_out = video_all.index_select(1, video_indices)

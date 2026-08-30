@@ -48,6 +48,7 @@ try:
         convert_ltx2_audio_vae,
         convert_ltx2_vocoder,
         convert_ltx2_connectors,
+        split_transformer_and_connector_state_dict,
         dequantize_state_dict,
         convert_comfy_gemma3_to_transformers,
         convert_lora_original_to_diffusers,
@@ -294,6 +295,16 @@ class LTX2Model(BaseModel):
                 original_dit_ckpt, version=self.ltx_version
             )
             transformer = transformer.to(dtype)
+            # the transformer holds these tensors (assign=True); drop the dict refs
+            # so each block's bf16 original frees as it quantizes instead of the
+            # whole dit staying in RAM. Connector keys stay — converted later.
+            transformer_sd, _ = split_transformer_and_connector_state_dict(
+                original_dit_ckpt
+            )
+            for key in transformer_sd:
+                combined_state_dict.pop(dit_prefix + key, None)
+            del transformer_sd, original_dit_ckpt
+            flush()
         else:
             if os.path.exists(model_path):
                 # check if the path is a full checkpoint.
@@ -1322,6 +1333,13 @@ class LTX25Model(LTX2Model):
             transformer, transformer_sd, "transformer"
         )
         del transformer_sd
+        # dit_sd still references every transformer tensor (assign=True sharing);
+        # drop them so each block frees as it quantizes. Connector keys stay for
+        # the convert_ltx2_connectors call below.
+        trans_sd, _ = split_transformer_and_connector_state_dict(dit_sd)
+        for key in trans_sd:
+            dit_sd.pop(key, None)
+        del trans_sd
         if num_quantized_dit == 0:
             transformer = transformer.to(dtype)
         else:
