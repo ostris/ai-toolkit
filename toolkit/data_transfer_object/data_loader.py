@@ -9,6 +9,7 @@ import av
             
 from toolkit import image_utils
 from toolkit.basic import get_quick_signature_string
+from toolkit.dto import DTO
 from toolkit.dataloader_mixins import (
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
@@ -239,7 +240,6 @@ class DataLoaderBatchDTO:
             )
             self.audio_tensor: Union[torch.Tensor, None] = None
             self.first_frame_latents: Union[torch.Tensor, None] = None
-            self.audio_latents: Union[torch.Tensor, None] = None
             # control-video reference paths (encoded + disk-cached lazily by
             # models with supports_video_control_images)
             self.control_video_paths_list: Union[List, None] = None
@@ -249,30 +249,8 @@ class DataLoaderBatchDTO:
                     for x in self.file_items
                 ]
 
-            # just for holding noise and preds during training
-            self.audio_target: Union[torch.Tensor, None] = None
-            self.audio_pred: Union[torch.Tensor, None] = None
-            # the noise drawn for the audio stream on the primary (grad enabled)
-            # prediction. Secondary passes (cfg / guidance loss / prior preds)
-            # reuse it so their noisy audio matches the stored audio_target.
-            self.audio_noise: Union[torch.Tensor, None] = None
-            # audio predictions from the non primary passes. Kept separate so
-            # they cannot stomp the primary pred we backprop through.
-            self.audio_pred_uncond: Union[torch.Tensor, None] = None
-            self.audio_pred_prior: Union[torch.Tensor, None] = None
-            self.audio_pred_preservation: Union[torch.Tensor, None] = None
-            # which of the above the current secondary pass writes to. None (the
-            # default) means no secondary pass is in flight: any grad-enabled
-            # prediction is a primary one and writes audio_pred (and the
-            # noisy/sigma bookkeeping) directly. The trainer sets this around
-            # its prior / guidance-unconditional / preservation passes.
-            self.audio_pred_slot: Union[str, None] = None
             # set by the trainer around the D-OPSD teacher pass
             self.dopsd_teacher_pass: bool = False
-            # noisy audio rows and audio sigma of the primary pass, used to
-            # rebuild the clean audio estimate for perceptual losses
-            self.audio_noisy: Union[torch.Tensor, None] = None
-            self.audio_sigma: Union[torch.Tensor, None] = None
 
             self.num_frames: int = self.file_items[0].num_frames
 
@@ -289,10 +267,9 @@ class DataLoaderBatchDTO:
             # if we have encoded latents, we concatenate them
             self.latents: Union[torch.Tensor, None] = None
             if is_latents_cached:
-                # this get_latent call with trigger loading all cached items from the disk
-                self.latents = torch.cat(
-                    [x.get_latent().unsqueeze(0) for x in self.file_items]
-                )
+                # this get_latent call with trigger loading all cached items from the disk.
+                # DTO.stack keeps any extra streams (audio, ...) riding on the batch latents
+                self.latents = DTO.stack([x.get_latent() for x in self.file_items])
                 if any(
                     [x._cached_first_frame_latent is not None for x in self.file_items]
                 ):
@@ -310,22 +287,6 @@ class DataLoaderBatchDTO:
                             for x in self.file_items
                         ]
                     )
-                if any([x._cached_audio_latent is not None for x in self.file_items]):
-                    # find one to use as a base; item 0 may not have one
-                    base_audio_latent = None
-                    for x in self.file_items:
-                        if x._cached_audio_latent is not None:
-                            base_audio_latent = x._cached_audio_latent
-                            break
-                    self.audio_latents = torch.cat(
-                        [
-                            x._cached_audio_latent.unsqueeze(0)
-                            if x._cached_audio_latent is not None
-                            else torch.zeros_like(base_audio_latent).unsqueeze(0)
-                            for x in self.file_items
-                        ]
-                    )
-
             self.prompt_embeds: Union[PromptEmbeds, None] = None
             # diff output preservation embeds (trigger word replaced with class)
             self.dop_prompt_embeds: Union[PromptEmbeds, None] = None
@@ -576,14 +537,31 @@ class DataLoaderBatchDTO:
     ):
         return [x.caption_short for x in self.file_items]
 
-    def set_secondary_audio_pred(self, pred):
-        """Route an audio prediction from a non primary pass (prior,
-        unconditional/guidance, preservation) to its own slot so it cannot
-        stomp the primary prediction the loss backprops through. Passes that
-        did not declare a slot (e.g. a trainer's extra no_grad prediction)
-        are simply not stored."""
-        if self.audio_pred_slot is not None:
-            setattr(self, self.audio_pred_slot, pred)
+    @property
+    def latents(self) -> Union[torch.Tensor, None]:
+        return self._latents
+
+    @latents.setter
+    def latents(self, value):
+        # math on a DTO returns a plain tensor, so trainer code that rescales
+        # or re-noises the latents would silently drop the extra streams
+        # (audio, ...) riding on them. Re-attach them here so assignments stay
+        # plain tensor code everywhere else.
+        prev = getattr(self, '_latents', None)
+        if isinstance(prev, DTO) and value is not None and not isinstance(value, DTO):
+            value = DTO(value, **prev.extras)
+        self._latents = value
+
+    @latents.deleter
+    def latents(self):
+        self._latents = None
+
+    @property
+    def audio_latents(self) -> Union[torch.Tensor, None]:
+        # cached audio rides inside the latents DTO
+        if isinstance(self.latents, DTO):
+            return self.latents.get('audio')
+        return None
 
     def cleanup(self):
         del self.latents
@@ -591,16 +569,7 @@ class DataLoaderBatchDTO:
         del self.control_tensor
         del self.audio_tensor
         del self.audio_data
-        del self.audio_target
-        del self.audio_pred
-        del self.audio_noise
-        del self.audio_pred_uncond
-        del self.audio_pred_prior
-        del self.audio_pred_preservation
-        del self.audio_noisy
-        del self.audio_sigma
         del self.first_frame_latents
-        del self.audio_latents
         for file_item in self.file_items:
             file_item.cleanup()
 

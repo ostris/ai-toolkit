@@ -433,7 +433,6 @@ class TrainConfig:
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
-        self.latent_multiplier = kwargs.get('latent_multiplier', 1.0)
         self.negative_prompt = kwargs.get('negative_prompt', None)
         self.max_negative_prompts = kwargs.get('max_negative_prompts', 1)
         # multiplier applied to loos on regularization images
@@ -502,7 +501,6 @@ class TrainConfig:
 
         # standardize inputs to the meand std of the model knowledge
         self.standardize_images = kwargs.get('standardize_images', False)
-        self.standardize_latents = kwargs.get('standardize_latents', False)
 
         # if self.train_turbo and not self.noise_scheduler.startswith("euler"):
         #     raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
