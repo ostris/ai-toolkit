@@ -21,6 +21,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -235,7 +236,10 @@ def run_one(
         out_dir = os.path.join(out_dir, f"qtype_{qtype_override}")
     os.makedirs(out_dir, exist_ok=True)
     for old in glob.glob(os.path.join(out_dir, "*")):
-        os.remove(old)
+        if os.path.isdir(old):
+            shutil.rmtree(old)
+        else:
+            os.remove(old)
 
     from toolkit.config_modules import GenerateImageConfig, ModelConfig
     from toolkit.util.get_model import get_model_class

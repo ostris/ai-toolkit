@@ -76,9 +76,23 @@ def pin_stored_fp32(root: nn.Module):
         if probe.dtype == torch.float32:
             return orig_apply(fn, *args, **kwargs)
 
+        # where fn sends a tensor depends on where it already is: a dtype-only
+        # cast keeps a cuda tensor on cuda (probing from cpu would wrongly
+        # report cpu and drag pinned tables off the gpu); an explicit device
+        # move relocates it. Probe per source device.
+        target_by_device = {}
+
+        def _target_device(dev):
+            if dev not in target_by_device:
+                target_by_device[dev] = fn(
+                    torch.zeros((), dtype=torch.float32, device=dev)
+                ).device
+            return target_by_device[dev]
+
         def fn_pinned(t):
             if getattr(t, "_pin_dtype", False):
-                out = t if t.device == probe.device else t.to(probe.device)
+                target = _target_device(t.device)
+                out = t if t.device == target else t.to(target)
                 out._pin_dtype = True
                 return out
             return fn(t)

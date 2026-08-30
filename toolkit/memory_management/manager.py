@@ -55,13 +55,33 @@ class MemoryManager:
         self.unmanaged_modules: list[torch.nn.Module] = []
 
     def memory_managed_to(self, *args, **kwargs):
-        # first move all the unmanaged modules
-        for module in self.unmanaged_modules:
-            if isinstance(module, torch.Tensor):
-                # Parameters and bare tensor buffers cannot move this way
-                module.data = module.data.to(*args, **kwargs)
-            else:
-                module.to(*args, **kwargs)
+        # the manager owns placement: the resident (unmanaged/ignore) set must
+        # live on the compute device for forwards to work. Legacy parking
+        # gestures (.to("cpu") between phases) would strand it there — the
+        # swapped .device property keeps reporting the compute device, so no
+        # holder heal ever brings it back. Honor device moves only TO the
+        # compute device; skip the device part of anything else (dtype
+        # handling below is unaffected).
+        target_device = kwargs.get("device", None)
+        for arg in args:
+            if isinstance(arg, (torch.device, str)) and not isinstance(arg, torch.dtype):
+                try:
+                    target_device = torch.device(arg)
+                except (TypeError, RuntimeError):
+                    pass
+            elif isinstance(arg, torch.device):
+                target_device = arg
+        move_resident = target_device is not None and (
+            torch.device(target_device) == torch.device(self.process_device)
+        )
+        if target_device is None or move_resident:
+            # first move all the unmanaged modules
+            for module in self.unmanaged_modules:
+                if isinstance(module, torch.Tensor):
+                    # Parameters and bare tensor buffers cannot move this way
+                    module.data = module.data.to(*args, **kwargs)
+                else:
+                    module.to(*args, **kwargs)
         # check for a dtype argument
         dtype = None
         if "dtype" in kwargs:

@@ -14,8 +14,10 @@ class Gemma3TextEncoder(Gemma3ForConditionalGeneration, OstrisTransformersMixin)
         # both layouts seen across transformers versions; missing paths skip
         return ["model.language_model.layers", "language_model.model.layers"]
 
-    def get_offload_ignore_modules(self):
-        return [self.model.language_model.base_model.embed_tokens]
+    # embed_tokens is NOT an ignore module: the manager's bouncing embedding
+    # keeps it cpu-resident with a cpu-side row gather (an ignore pin kept
+    # 2GB on the gpu and stranded it when legacy .to("cpu") gestures moved
+    # the resident set off-device)
 
 
 try:
@@ -33,10 +35,9 @@ try:
 
         def get_offload_ignore_modules(self):
             # layer_scalar is a bare tensor buffer on each decoder layer; the
-            # manager never enumerates it, so it must ride along explicitly
-            return [self.embed_tokens] + [
-                layer.layer_scalar for layer in self.layers
-            ]
+            # manager never enumerates it, so it must ride along explicitly.
+            # (embed_tokens is handled by the bouncing embedding manager.)
+            return [layer.layer_scalar for layer in self.layers]
 
 except ImportError:
     Gemma4TextEncoder = None
