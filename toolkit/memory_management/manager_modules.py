@@ -653,6 +653,10 @@ class EmbeddingLayerMemoryManager(BaseLayerMemoryManager):
 
         # cpu-resident weight; no pinning — the weight never crosses the bus
         module.weight.data = module.weight.data.to("cpu")
+        # subclass buffers (gemma's embed_scale) must join the cpu-side math
+        for buf_name, buf in module._buffers.items():
+            if buf is not None:
+                module._buffers[buf_name] = buf.to("cpu")
 
         self._original_forward = module.forward
 
@@ -664,15 +668,9 @@ class EmbeddingLayerMemoryManager(BaseLayerMemoryManager):
                 if input_ids.device.type == "cuda"
                 else self.manager.process_device
             )
-            out = F.embedding(
-                input_ids.to("cpu"),
-                self.module.weight,
-                self.module.padding_idx,
-                self.module.max_norm,
-                self.module.norm_type,
-                self.module.scale_grad_by_freq,
-                self.module.sparse,
-            )
+            # the original forward preserves subclass behavior (scaled word
+            # embeddings multiply by embed_scale; raw F.embedding would not)
+            out = self._original_forward(input_ids.to("cpu"))
             return out.to(out_device, non_blocking=True)
 
         module.forward = _mm_forward
