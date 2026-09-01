@@ -62,11 +62,11 @@ const GpuMonitor: React.FC = () => {
       );
     }
 
-    if (!gpuData.hasNvidiaSmi && !gpuData.isMac && !gpuData.hasRocmSmi) {
+    if (!gpuData.hasNvidiaSmi && !gpuData.isMac && !gpuData.hasRocmSmi && !gpuData.hasAmdSmi) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
           <strong className="font-bold">No GPUs detected!</strong>
-          <span className="block sm:inline"> Neither nvidia-smi, rocm-smi, nor macOS GPU monitoring is available.</span>
+          <span className="block sm:inline"> Neither nvidia-smi, amd-smi, rocm-smi, nor macOS GPU monitoring is available.</span>
           {gpuData.error && <p className="mt-2 text-sm">{gpuData.error}</p>}
         </div>
       );
