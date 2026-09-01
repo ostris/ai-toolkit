@@ -36,6 +36,12 @@ if os.environ.get("TORCH_USE_HIP_DSA") is None:
     os.environ["TORCH_USE_HIP_DSA"] = "1"  # Enable device-side assertions
 if os.environ.get("HSA_ENABLE_SDMA") is None:
     os.environ["HSA_ENABLE_SDMA"] = "0"  # Disable SDMA for APU compatibility
+if os.environ.get("HSA_XNACK") is None:
+    os.environ["HSA_XNACK"] = "1"  # Enable XNACK for unified memory on Strix Halo APU
+if os.environ.get("GPU_MAX_HEAP_SIZE") is None:
+    os.environ["GPU_MAX_HEAP_SIZE"] = "100"  # Allow full heap for APU
+if os.environ.get("GPU_MAX_ALLOC_PERCENT") is None:
+    os.environ["GPU_MAX_ALLOC_PERCENT"] = "100"
 if os.environ.get("PYTORCH_ROCM_ALLOC_CONF") is None:
     os.environ["PYTORCH_ROCM_ALLOC_CONF"] = "max_split_size_mb:768,garbage_collect=1"  # Better VRAM fragmentation
 
