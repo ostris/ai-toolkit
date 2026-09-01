@@ -8,8 +8,12 @@ Compares speed (ms/step) and peak VRAM across:
   - Adafactor
   - Automagic v1
   - Automagic v2 (fused-backward)
-  - Automagic v3 (fused-backward)
+  - Automagic v3 (fused-backward and traditional/unfused)
+  - Automagic AdamW (fused-backward and traditional/unfused)
   - Prodigy
+
+Pass optimizer keys as CLI args to run a subset (all when none passed), e.g.:
+  python test_optimizers.py adamw8bit automagic3 automagicEXPERIMENT
 """
 import contextlib
 import gc
@@ -176,25 +180,39 @@ def main():
     from toolkit.optimizers.automagic import Automagic
     from toolkit.optimizers.automagic2 import Automagic2
     from toolkit.optimizers.automagic3 import Automagic3
+    from toolkit.optimizers.automagicEXPERIMENT import AutomagicEXPERIMENT
     from toolkit.optimizers.adafactor import Adafactor
     from prodigyopt import Prodigy
     import bitsandbytes as bnb
 
     optimizers = [
-        ("AdamW", lambda p: torch.optim.AdamW(p, lr=1e-4, eps=1e-6, foreach=False, fused=False)),
-        ("AdamW8bit", lambda p: bnb.optim.AdamW8bit(p, lr=1e-4, eps=1e-6)),
-        ("Adafactor", lambda p: Adafactor(p, lr=1e-4, scale_parameter=False, relative_step=False, warmup_init=False)),
-        ("Automagic v1", lambda p: Automagic(p, lr=1e-4)),
-        ("Automagic v2", lambda p: Automagic2(p, lr=1e-4)),
-        ("Automagic v3", lambda p: Automagic3(p, lr=1e-4)),
-        ("Prodigy", lambda p: Prodigy(p, lr=1.0, eps=1e-6)),
+        ("adamw", "AdamW", lambda p: torch.optim.AdamW(p, lr=1e-4, eps=1e-6, foreach=False, fused=False)),
+        ("adamw8bit", "AdamW8bit", lambda p: bnb.optim.AdamW8bit(p, lr=1e-4, eps=1e-6)),
+        ("adafactor", "Adafactor", lambda p: Adafactor(p, lr=1e-4, scale_parameter=False, relative_step=False, warmup_init=False)),
+        ("automagic", "Automagic v1", lambda p: Automagic(p, lr=1e-4)),
+        ("automagic2", "Automagic v2", lambda p: Automagic2(p, lr=1e-4)),
+        ("automagic3", "Automagic v3 fused", lambda p: Automagic3(p, lr=1e-4, fused=True)),
+        ("automagic3", "Automagic v3 unfused", lambda p: Automagic3(p, lr=1e-4, fused=False)),
+        ("automagicEXPERIMENT", "AutomagicEXPERIMENT", lambda p: AutomagicEXPERIMENT(p, lr=1e-4, fused=True)),
+        ("automagicEXPERIMENT", "AutomagicEXPERIMENT", lambda p: AutomagicEXPERIMENT(p, lr=1e-4, fused=False)),
+        ("prodigy", "Prodigy", lambda p: Prodigy(p, lr=1.0, eps=1e-6)),
     ]
+
+    selected = [a.lower() for a in sys.argv[1:]]
+    if selected:
+        valid = {key for key, _, _ in optimizers}
+        unknown = [a for a in selected if a not in valid]
+        if unknown:
+            print(f"Unknown optimizer keys: {', '.join(unknown)}")
+            print(f"Valid keys: {', '.join(sorted(valid))}")
+            sys.exit(1)
+        optimizers = [o for o in optimizers if o[0] in selected]
 
     for dtype in DTYPES:
         dtype_name = str(dtype).replace("torch.", "")
         print(f"\n=== Round: {dtype_name} ===")
         results: list = []
-        for label, factory in optimizers:
+        for _, label, factory in optimizers:
             benchmark(results, label, factory, dtype)
         print_table(results, dtype_name)
 

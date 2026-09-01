@@ -69,6 +69,7 @@ config:
       sample:
         sampler: "flowmatch"
         sample_every: 250 # sample every this many steps
+        sample_start_step: 0 # start sampling at this step
         width: 832
         height: 480
         num_frames: 40

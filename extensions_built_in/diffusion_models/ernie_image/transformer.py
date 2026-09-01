@@ -33,6 +33,8 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 from diffusers.models.normalization import RMSNorm
 
 
@@ -288,8 +290,17 @@ class ErnieImageAdaLNContinuous(nn.Module):
         return x
 
 
-class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
+class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin, OstrisModelMixin):
     _supports_gradient_checkpointing = True
+    aitk_subfolder = "transformer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["layers"]
+
+    def get_offload_ignore_modules(self):
+        return [self.x_embedder]
+
 
     @register_to_config
     def __init__(

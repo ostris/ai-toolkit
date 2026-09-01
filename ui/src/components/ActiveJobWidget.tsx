@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { CgSpinner } from 'react-icons/cg';
 import useJobsList from '@/hooks/useJobsList';
-import { JobConfig } from '@/types';
+import { getTotalSteps } from '@/utils/jobs';
 
 export default function ActiveJobWidget() {
   const { jobs } = useJobsList({ onlyActive: true, reloadInterval: 5000 });
@@ -17,19 +17,19 @@ export default function ActiveJobWidget() {
           {jobs.map(job => {
             let totalSteps: number | undefined;
             try {
-              const cfg: JobConfig = JSON.parse(job.job_config);
-              totalSteps = cfg.config.process[0].train?.steps;
+              totalSteps = getTotalSteps(job);
             } catch {
               totalSteps = undefined;
             }
-            const isTrain = job.job_type === 'train';
-            const pct = isTrain && totalSteps ? Math.min(100, (job.step / totalSteps) * 100) : 0;
+            const pct = totalSteps ? Math.min(100, (job.step / totalSteps) * 100) : 0;
             const isRunning = job.status === 'running' || job.status === 'stopping';
 
             let label = job.name;
+            let href = `/jobs/${job.id}`;
             if (job.job_type === 'caption') {
               const splits = (job.job_ref ?? '').split(/[/\\]/);
               label = splits[splits.length - 1] || job.name;
+              href = `/datasets/${label}`;
             }
 
             let statusColor = 'text-gray-400';
@@ -40,14 +40,14 @@ export default function ActiveJobWidget() {
             return (
               <li key={job.id} className="min-w-0">
                 <Link
-                  href={`/jobs/${job.id}`}
+                  href={href}
                   className="block px-3 py-2 bg-gray-800 hover:bg-gray-950 rounded-lg transition-colors min-w-0"
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
                     {isRunning && <CgSpinner className="animate-spin text-blue-400 flex-shrink-0" />}
                     <span className="text-xs text-gray-100 truncate min-w-0 flex-1">{label}</span>
                   </div>
-                  {isTrain && totalSteps ? (
+                  {totalSteps ? (
                     <div className="mt-1.5">
                       <div className="bg-gray-700 rounded-full h-1">
                         <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${pct}%` }} />

@@ -1,17 +1,22 @@
 # ref https://github.com/huggingface/diffusers/blob/17b53f08661732caca6a546295950fc4b1696ad7/scripts/convert_ltx2_to_diffusers.py
 
 from contextlib import nullcontext
+import json
 from typing import Any, Dict, Tuple
 
 import torch
 from accelerate import init_empty_weights
 
-from diffusers import (
-    AutoencoderKLLTX2Audio,
-    AutoencoderKLLTX2Video,
+from toolkit.models.v2.diffusion_models.ltx2 import (
+    LTX2TextConnectors,
     LTX2VideoTransformer3DModel,
+    LTX2Vocoder,
+    LTX2VocoderWithBWE,
 )
-from diffusers.pipelines.ltx2 import LTX2TextConnectors, LTX2Vocoder, LTX2VocoderWithBWE
+from toolkit.models.v2.vae.ltx2 import (
+    LTX2AudioVAE as AutoencoderKLLTX2Audio,
+    LTX2VideoVAE as AutoencoderKLLTX2Video,
+)
 from diffusers.utils.import_utils import is_accelerate_available
 
 
@@ -319,9 +324,12 @@ def get_ltx2_transformer_config(
         }
         rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
         special_keys_remap = LTX_2_0_TRANSFORMER_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
+        # LTX-2.5 keeps the 2.3 transformer config; its checkpoint-level deltas
+        # (bias-free video feedforward, keyframes_abs_pos_embedding) are applied
+        # as module surgery in convert_ltx2_transformer.
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "in_channels": 128,
                 "out_channels": 128,
@@ -422,9 +430,11 @@ def get_ltx2_connectors_config(
         }
         rename_dict = LTX_2_0_CONNECTORS_KEYS_RENAME_DICT
         special_keys_remap = LTX_2_0_CONNECTORS_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
+        # LTX-2.5's Gemma-4 12B text encoder has the same hidden size and layer
+        # count as 2.3's Gemma-3 12B, so the connector dims are unchanged.
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "caption_channels": 3840,
                 "text_proj_in_factor": 49,
@@ -456,7 +466,7 @@ def get_ltx2_connectors_config(
 
 
 def convert_ltx2_transformer(
-    original_state_dict: Dict[str, Any], version: str = "2.0"
+    original_state_dict: Dict[str, Any], version: str = "2.0", load: bool = True
 ) -> Dict[str, Any]:
     config, rename_dict, special_keys_remap = get_ltx2_transformer_config(version)
     diffusers_config = config["diffusers_config"]
@@ -483,12 +493,38 @@ def convert_ltx2_transformer(
                 continue
             handler_fn_inplace(key, transformer_state_dict)
 
+    if version == "2.5":
+        # 2.5 checkpoints drop the video feedforward biases (audio_ff keeps
+        # them) and carry a learned keyframe absolute-position embedding; the
+        # pinned diffusers class predates both, so rebuild those pieces here.
+        # The keyframe embedding is not consumed by the regular forward pass.
+        for block in transformer.transformer_blocks:
+            proj = block.ff.net[0].proj
+            block.ff.net[0].proj = torch.nn.Linear(
+                proj.in_features, proj.out_features, bias=False, device="meta"
+            )
+            out = block.ff.net[2]
+            block.ff.net[2] = torch.nn.Linear(
+                out.in_features, out.out_features, bias=False, device="meta"
+            )
+        keyframes_embedding = transformer_state_dict.get(
+            "keyframes_abs_pos_embedding", None
+        )
+        if keyframes_embedding is not None:
+            transformer.keyframes_abs_pos_embedding = torch.nn.Parameter(
+                torch.empty_like(keyframes_embedding, device="meta"),
+                requires_grad=False,
+            )
+
+    if not load:
+        return transformer, transformer_state_dict
+
     transformer.load_state_dict(transformer_state_dict, strict=True, assign=True)
     return transformer
 
 
 def convert_ltx2_connectors(
-    original_state_dict: Dict[str, Any], version: str = "2.0"
+    original_state_dict: Dict[str, Any], version: str = "2.0", load: bool = True
 ) -> LTX2TextConnectors:
     config, rename_dict, special_keys_remap = get_ltx2_connectors_config(version)
     diffusers_config = config["diffusers_config"]
@@ -513,6 +549,9 @@ def convert_ltx2_connectors(
             if special_key not in key:
                 continue
             handler_fn_inplace(key, connector_state_dict)
+
+    if not load:
+        return connectors, connector_state_dict
 
     connectors.load_state_dict(connector_state_dict, strict=True, assign=True)
     return connectors
@@ -606,9 +645,12 @@ def get_ltx2_video_vae_config(
         }
         rename_dict = LTX_2_0_VIDEO_VAE_RENAME_DICT
         special_keys_remap = LTX_2_0_VAE_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
+        # 2.5's conv video VAE ("-conv-" file) is architecturally identical to
+        # 2.3's; the default 2.5 vae file is a new diffusion-decoder VAE that
+        # is not supported here.
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "in_channels": 3,
                 "out_channels": 3,
@@ -717,9 +759,9 @@ def get_ltx2_audio_vae_config(
         }
         rename_dict = LTX_2_0_AUDIO_VAE_RENAME_DICT
         special_keys_remap = LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "base_channels": 128,
                 "output_channels": 2,
@@ -797,9 +839,9 @@ def get_ltx2_vocoder_config(
         }
         rename_dict = LTX_2_0_VOCODER_RENAME_DICT
         special_keys_remap = LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
-    elif version == "2.3":
+    elif version in ("2.3", "2.5"):
         config = {
-            "model_id": "Lightricks/LTX-2.3",
+            "model_id": f"Lightricks/LTX-{version}",
             "diffusers_config": {
                 "in_channels": 128,
                 "hidden_channels": 1536,
@@ -847,7 +889,7 @@ def convert_ltx2_vocoder(
 ) -> Dict[str, Any]:
     config, rename_dict, special_keys_remap = get_ltx2_vocoder_config(version)
     diffusers_config = config["diffusers_config"]
-    if version == "2.3":
+    if version in ("2.3", "2.5"):
         vocoder_cls = LTX2VocoderWithBWE
     else:
         vocoder_cls = LTX2Vocoder
@@ -899,26 +941,76 @@ def get_model_state_dict_from_combined_ckpt(
     return model_state_dict
 
 
+# scale/metadata side keys that accompany quantized weights.
+# weight_scale/weight_scale_2/input_scale + comfy_quant is ComfyUI's current quant format,
+# scale_weight/scale_input + a scaled_fp8 marker is the legacy scaled fp8 naming.
+QUANT_SIDE_KEY_SUFFIXES = (
+    ".weight_scale",
+    ".weight_scale_2",
+    ".pre_quant_scale",
+    ".input_scale",
+    ".comfy_quant",
+    ".scale_weight",
+    ".scale_input",
+)
+
+
+def _dequantize_weight(w_q: torch.Tensor, w_scale: torch.Tensor = None):
+    w = w_q.to(torch.float32)
+    if w_scale is not None:
+        w_scale = w_scale.to(torch.float32)
+        if w_scale.numel() == 1:
+            w = w * w_scale
+        elif w_scale.numel() == w.shape[0]:
+            # per output channel scale
+            w = w * w_scale.reshape(-1, *([1] * (w.ndim - 1)))
+        else:
+            raise ValueError(
+                f"Unsupported weight scale shape {tuple(w_scale.shape)} for weight of shape {tuple(w.shape)}"
+            )
+    return w.to(torch.bfloat16)
+
+
 def dequantize_state_dict(state_dict: Dict[str, Any]):
     keys = list(state_dict.keys())
     state_out = {}
     for k in keys:
-        if k.endswith(
-            (".weight_scale", ".weight_scale_2", ".pre_quant_scale", ".input_scale")
-        ):
+        if k.endswith(QUANT_SIDE_KEY_SUFFIXES) or k.split(".")[-1] == "scaled_fp8":
             continue
 
         t = state_dict[k]
 
         if k.endswith(".weight"):
             prefix = k[: -len(".weight")]
-            wscale_k = prefix + ".weight_scale"
-            if wscale_k in state_dict:
-                w_q = t
-                w_scale = state_dict[wscale_k]
-                # Comfy quant = absmax per-tensor weight quant, nothing fancy
-                w_bf16 = w_q.to(torch.bfloat16) * w_scale.to(torch.bfloat16)
-                state_out[k] = w_bf16
+            w_scale = state_dict.get(prefix + ".weight_scale")
+            if w_scale is None:
+                w_scale = state_dict.get(prefix + ".scale_weight")
+
+            quant_conf_t = state_dict.get(prefix + ".comfy_quant")
+            if quant_conf_t is not None:
+                # comfy_quant is a uint8 tensor holding json metadata for the layer
+                quant_conf = json.loads(bytes(quant_conf_t.cpu().numpy().tobytes()))
+                quant_format = quant_conf.get("format")
+                params_conf = quant_conf.get("params", {})
+                if not isinstance(params_conf, dict):
+                    params_conf = {}
+                if quant_format in ("float8_e4m3fn", "float8_e5m2", "int8_tensorwise"):
+                    if quant_conf.get("convrot", params_conf.get("convrot", False)):
+                        raise ValueError(
+                            f"Layer {prefix} uses convrot int8 quantization which cannot be dequantized here. "
+                            "Please use an fp8 scaled or full precision checkpoint."
+                        )
+                    state_out[k] = _dequantize_weight(t, w_scale)
+                    continue
+                raise ValueError(
+                    f"Layer {prefix} is quantized with unsupported format '{quant_format}'. "
+                    "Only fp8/int8 tensorwise quantized checkpoints can be dequantized for training. "
+                    "Please use an fp8 scaled or full precision checkpoint."
+                )
+
+            if w_scale is not None:
+                # absmax per-tensor weight quant, nothing fancy
+                state_out[k] = _dequantize_weight(t, w_scale)
                 continue
 
         state_out[k] = t
@@ -979,7 +1071,7 @@ def convert_lora_original_to_diffusers(
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
-    if version == "2.3":
+    if version in ("2.3", "2.5"):
         rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT
 
     for k, v in lora_state_dict.items():
@@ -1013,7 +1105,7 @@ def convert_lora_diffusers_to_original(
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
-    if version == "2.3":
+    if version in ("2.3", "2.5"):
         rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT
 
     inv_rename = {v: k for k, v in rename_dict.items()}

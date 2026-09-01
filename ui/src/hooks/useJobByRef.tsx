@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export default function useJobByRef(jobRef: string | null, reloadInterval: null | number = null) {
   const [job, setJob] = useState<Job | null>(null);
@@ -10,7 +11,7 @@ export default function useJobByRef(jobRef: string | null, reloadInterval: null 
 
   const refreshJob = () => {
     setStatus('loading');
-    apiClient
+    return apiClient
       .get(`/api/jobs?job_ref=${jobRef}`)
       .then(res => res.data)
       .then(data => {
@@ -24,19 +25,7 @@ export default function useJobByRef(jobRef: string | null, reloadInterval: null 
       });
   };
 
-  useEffect(() => {
-    refreshJob();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshJob();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [jobRef, reloadInterval]);
+  usePollLoop(refreshJob, reloadInterval, [jobRef]);
 
   return { job, setJob, status, refreshJob };
 }

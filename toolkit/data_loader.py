@@ -431,9 +431,14 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 # only look for audio files
                 extensions = audio_extensions
             elif self.is_video:
-                # only look for videos
-                extensions = video_extensions
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.')]
+                # look for videos and images. Video models can train on both;
+                # images are bucketed separately as single-frame items
+                extensions = video_extensions + image_extensions
+            # prune hidden dirs (.thumbs, .tmp) so their contents never train
+            file_list = []
+            for root, dirs, files in os.walk(self.dataset_path):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                file_list.extend(os.path.join(root, file) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.'))
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
@@ -533,6 +538,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
+                    encode_first_frame_in_text_embeddings=getattr(self.sd, 'encode_first_frame_in_text_embeddings', False) if self.sd else False,
+                    dopsd_self_ref=getattr(self.sd, 'dopsd_self_ref', False) if self.sd else False,
                     text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
@@ -554,7 +561,12 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             json.dump(self.size_database, f)
         
         if self.is_video:
-            print_acc(f"  -  Found {len(self.file_list)} videos")
+            num_videos = len([x for x in self.file_list if x.is_video])
+            num_images = len(self.file_list) - num_videos
+            if num_images > 0:
+                print_acc(f"  -  Found {num_videos} videos and {num_images} images")
+            else:
+                print_acc(f"  -  Found {num_videos} videos")
             assert len(self.file_list) > 0, f"no videos found in {self.dataset_path}"
         else:
             print_acc(f"  -  Found {len(self.file_list)} images")
@@ -606,14 +618,42 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 self.setup_controls()
         self.epoch_num += 1
 
+    def __getstate__(self):
+        # on Windows/macOS dataloader workers are spawned, which pickles the dataset.
+        # sd (the model) is not picklable (weakrefs, cuda tensors) and is only needed
+        # for caching, which runs in the main process before iteration starts.
+        state = self.__dict__.copy()
+        state['sd'] = None
+        return state
+
     def __len__(self):
         if self.dataset_config.buckets:
             return len(self.batch_indices)
         return len(self.file_list)
 
-    def _get_single_item(self, index) -> 'FileItemDTO':
+    def _get_replacement_index(self, index) -> int:
+        # when an image fails to load we have to swap in a different one. With buckets the
+        # replacement must come from the same bucket so the collated shapes still match.
+        if self.dataset_config.buckets:
+            for bucket in self.buckets.values():
+                if index in bucket.file_list_idx:
+                    candidates = [i for i in bucket.file_list_idx if i != index]
+                    if candidates:
+                        return random.choice(candidates)
+                    break
+        return random.randint(0, len(self.file_list) - 1)
+
+    def _get_single_item(self, index, _attempts=0) -> 'FileItemDTO':
         file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
-        file_item.load_and_process_image(self.transform)
+        try:
+            file_item.load_and_process_image(self.transform)
+        except Exception as e:
+            print(f"Error loading image, skipping and loading a different one: {file_item.path} ({e})")
+            if _attempts >= 10:
+                # avoid infinite recursion if many files are corrupt
+                raise
+            new_index = self._get_replacement_index(index)
+            return self._get_single_item(new_index, _attempts=_attempts + 1)
         file_item.load_caption(self.caption_dict)
         return file_item
 
@@ -630,6 +670,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         else:
             # Dataloader is batching
             return self._get_single_item(item)
+
+
+def dto_collation(batch: List['FileItemDTO']):
+    # must be a module level function so spawned dataloader workers can pickle it
+    return DataLoaderBatchDTO(
+        file_items=batch
+    )
 
 
 def get_dataloader_from_datasets(
@@ -658,7 +705,9 @@ def get_dataloader_from_datasets(
     for config in dataset_config_list:
 
         if config.type == 'image':
-            dataset = AiToolkitDataset(config, batch_size=batch_size, sd=sd)
+            # dataset level batch_size overrides the train config batch_size when set
+            dataset_batch_size = config.batch_size if config.batch_size is not None else batch_size
+            dataset = AiToolkitDataset(config, batch_size=dataset_batch_size, sd=sd)
             datasets.append(dataset)
             if config.buckets:
                 has_buckets = True
@@ -672,22 +721,26 @@ def get_dataloader_from_datasets(
     # todo build scheduler that can get buckets from all datasets that match
     # todo and evenly distribute reg images
 
-    def dto_collation(batch: List['FileItemDTO']):
-        # create DTO batch
-        batch = DataLoaderBatchDTO(
-            file_items=batch
-        )
-        return batch
-
     # check if is caching latents
 
     dataloader_kwargs = {}
-    
-    if is_native_windows() or is_macos():
-        dataloader_kwargs['num_workers'] = 0
-    else:
-        dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+
+    dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+    if dataloader_kwargs['num_workers'] > 0:
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        # keep workers alive across epochs. Without this, spawn platforms (Windows/macOS)
+        # boot new worker processes every epoch, which can take longer than the epoch
+        # itself on small datasets. The dataset is static after epoch 0 (setup_epoch only
+        # does work on the first call) and per-epoch shuffling happens in the main process
+        # sampler, so workers never hold stale state.
+        dataloader_kwargs['persistent_workers'] = True
+        # spawned workers re-import the full stack at boot and would repeat every
+        # import-time warning the parent already printed. Children inherit these env
+        # vars; the parent is unaffected since its imports already happened.
+        os.environ.setdefault('PYTHONWARNINGS', 'ignore::FutureWarning')
+        os.environ.setdefault('TORCH_LOGS', '-torch.utils._pytree')
+        os.environ.setdefault('DIFFUSERS_VERBOSITY', 'error')
+        os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
 
     if has_buckets:
         # make sure they all have buckets
@@ -703,6 +756,13 @@ def get_dataloader_from_datasets(
             **dataloader_kwargs
         )
     else:
+        # without buckets the dataloader batches across all datasets at once,
+        # so a dataset level batch_size cannot apply
+        for config in dataset_config_list:
+            if config.batch_size is not None:
+                raise ValueError(
+                    f"Dataset level batch_size requires buckets to be enabled. Dataset {config.folder_path or config.dataset_path} has buckets disabled."
+                )
         data_loader = DataLoader(
             concatenated_dataset,
             batch_size=batch_size,

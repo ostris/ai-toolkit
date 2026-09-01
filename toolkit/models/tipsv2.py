@@ -427,6 +427,26 @@ class VisionTransformer(nn.Module):
             return tuple(zip(outputs, class_tokens))
         return tuple(outputs)
 
+    def forward_hidden_states(self, x: torch.Tensor):
+        """Per-layer hidden states for use as a perceptual feature stack.
+
+        Returns a tuple ``(embeddings, block_1_out, ..., block_L_out)`` of length
+        ``depth + 1`` (HuggingFace ``output_hidden_states`` convention), each
+        ``(B, 1 + num_register_tokens + num_patches, embed_dim)``. No final norm is
+        applied; intermediate layers are returned raw."""
+        x = self.prepare_tokens_with_masks(x)
+        hidden_states = [x]
+        # Gate checkpointing on grad tracking (not self.training) so the no_grad
+        # target pass doesn't pay for wasted recompute.
+        use_ckpt = self.gradient_checkpointing and torch.is_grad_enabled()
+        for blk in self.blocks:
+            if use_ckpt:
+                x = torch.utils.checkpoint.checkpoint(blk, x, use_reentrant=False)
+            else:
+                x = blk(x)
+            hidden_states.append(x)
+        return tuple(hidden_states)
+
     def forward(self, x: torch.Tensor, is_training: bool = False):
         ret = self.forward_features(x)
         if is_training:
@@ -445,6 +465,18 @@ def _vit_base(patch_size: int = 14, **kwargs) -> VisionTransformer:
         depth=12,
         num_heads=12,
         mlp_ratio=4,
+        num_register_tokens=1,
+        **kwargs,
+    )
+
+
+def _vit_so400m(patch_size: int = 14, **kwargs) -> VisionTransformer:
+    return VisionTransformer(
+        patch_size=patch_size,
+        embed_dim=1152,
+        depth=27,
+        num_heads=16,
+        mlp_ratio=4304 / 1152,
         num_register_tokens=1,
         **kwargs,
     )
@@ -872,6 +904,133 @@ class TIPSv2DPTModel(nn.Module):
 
         merged = {**dpt_state, **backbone_state}
         missing, unexpected = model.load_state_dict(merged, strict=False)
+        if missing:
+            print(
+                f"[tipsv2] Missing keys ({len(missing)}): {missing[:8]}{'...' if len(missing) > 8 else ''}"
+            )
+        if unexpected:
+            print(
+                f"[tipsv2] Unexpected keys ({len(unexpected)}): {unexpected[:8]}{'...' if len(unexpected) > 8 else ''}"
+            )
+
+        model.to(device=device, dtype=dtype)
+        return model
+
+
+# ─────────────────────── Vision-only encoder (no DPT) ───────────────────────
+
+
+_VISION_BUILDERS = {"vit_base": _vit_base, "vit_so400m": _vit_so400m}
+
+
+@dataclass
+class TIPSv2VisionOutput:
+    """HF-style vision output. ``hidden_states`` follows the ``output_hidden_states``
+    convention: ``(embeddings, block_1_out, ..., block_L_out)``."""
+
+    last_hidden_state: torch.Tensor
+    pooler_output: Optional[torch.Tensor] = None
+    hidden_states: Optional[Tuple[torch.Tensor, ...]] = None
+
+
+class _VisionEncoderConfig:
+    def __init__(self, num_hidden_layers, num_register_tokens, patch_size, hidden_size):
+        self.num_hidden_layers = num_hidden_layers
+        self.num_register_tokens = num_register_tokens
+        self.patch_size = patch_size
+        self.hidden_size = hidden_size
+
+
+class TIPSv2VisionModel(nn.Module):
+    """Vision-only TIPSv2 encoder exposing per-layer hidden states.
+
+    Loads just the ``vision_encoder.*`` weights from a TIPSv2 repo (e.g.
+    ``google/tipsv2-so400m14``); the text encoder and DPT heads are never built.
+    Inputs are expected in ``[0, 1]`` — TIPSv2 applies no image normalization.
+    Used as a perceptual feature extractor (see TipsV2FE).
+    """
+
+    def __init__(self, config: dict):
+        super().__init__()
+        self.config = config
+        vision_fn = config.get("vision_fn", "vit_base")
+        if vision_fn not in _VISION_BUILDERS:
+            raise NotImplementedError(f"vision_fn={vision_fn!r} not supported")
+        self.vision_encoder = _VISION_BUILDERS[vision_fn](
+            img_size=config.get("img_size", 448),
+            patch_size=config.get("patch_size", 14),
+            ffn_layer=config.get("ffn_layer", "mlp"),
+            init_values=config.get("init_values", 1.0),
+            interpolate_antialias=True,
+            interpolate_offset=0.0,
+        )
+        self.vision_config = _VisionEncoderConfig(
+            num_hidden_layers=self.vision_encoder.n_blocks,
+            num_register_tokens=self.vision_encoder.num_register_tokens,
+            patch_size=self.vision_encoder.patch_size,
+            hidden_size=self.vision_encoder.embed_dim,
+        )
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(self.parameters()).dtype
+
+    def gradient_checkpointing_enable(self, **kwargs) -> None:
+        self.vision_encoder.gradient_checkpointing_enable(**kwargs)
+
+    def gradient_checkpointing_disable(self) -> None:
+        self.vision_encoder.gradient_checkpointing_disable()
+
+    enable_gradient_checkpointing = gradient_checkpointing_enable
+    disable_gradient_checkpointing = gradient_checkpointing_disable
+
+    def forward(
+        self, pixel_values: torch.Tensor, output_hidden_states: bool = True
+    ) -> TIPSv2VisionOutput:
+        hidden_states = self.vision_encoder.forward_hidden_states(pixel_values)
+        last = self.vision_encoder.norm(hidden_states[-1])
+        return TIPSv2VisionOutput(
+            last_hidden_state=last,
+            pooler_output=last[:, 0],
+            hidden_states=hidden_states,
+        )
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_id: str = "google/tipsv2-so400m14",
+        device: Union[str, torch.device] = "cpu",
+        dtype: torch.dtype = torch.float32,
+        cache_dir: Optional[str] = None,
+    ) -> "TIPSv2VisionModel":
+        """Build the vision encoder and load its weights from the hub.
+
+        Reads ``config.json`` to pick the vision architecture, then loads only the
+        ``vision_encoder.*`` tensors from ``model.safetensors``.
+        """
+        import json
+
+        from huggingface_hub import hf_hub_download
+        from safetensors.torch import load_file
+
+        config_path = hf_hub_download(model_id, "config.json", cache_dir=cache_dir)
+        with open(config_path) as f:
+            config = json.load(f)
+
+        model = cls(config)
+
+        ckpt = hf_hub_download(model_id, "model.safetensors", cache_dir=cache_dir)
+        state = load_file(ckpt)
+        # Repo stores vision + text encoders — keep only vision_encoder.*.
+        state = {k: v for k, v in state.items() if k.startswith("vision_encoder.")}
+        if not state:
+            raise RuntimeError(f"No vision_encoder weights found in {model_id}")
+
+        missing, unexpected = model.load_state_dict(state, strict=False)
         if missing:
             print(
                 f"[tipsv2] Missing keys ({len(missing)}): {missing[:8]}{'...' if len(missing) > 8 else ''}"

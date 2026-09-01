@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { exec, execSync } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
-import { createRequire } from 'module';
 import os from 'os';
+import { cached } from '@/server/apiCache';
+import { loadMacstats } from '@/server/macstats';
 import path from 'path';
 import fs from 'fs';
 
@@ -25,7 +26,7 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
     // Get GPU name and core count from system_profiler
     let gpuName = 'Apple GPU';
     try {
-      const spOut = execSync(
+      const { stdout: spOut } = await execAsync(
         'system_profiler SPDisplaysDataType 2>/dev/null | grep -E "Chipset Model|Total Number of Cores"',
         { encoding: 'utf-8', timeout: 5000 },
       );
@@ -48,11 +49,8 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
     let memUsed = 0;
     let memTotal = memoryTotal;
 
-    try {
-      // Use createRequire to hide from webpack static analysis so it doesn't fail on non-mac platforms
-      const nativeRequire = createRequire(import.meta.url);
-      const ms = nativeRequire('macstats') as any;
-
+    const ms = loadMacstats();
+    if (ms) {
       try {
         const gpuData = ms.getGpuDataSync();
         temperature = gpuData.temperature || 0;
@@ -85,8 +83,6 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
       } catch {
         // ignore
       }
-    } catch (error) {
-      console.warn('macstats not available:', error);
     }
 
     return { name: gpuName, memUsed, memTotal, gpuLoad, temperature, fanSpeed, powerDraw };
@@ -95,98 +91,114 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
   }
 }
 
-export async function GET() {
-  try {
-    // Get platform
-    const platform = os.platform();
-    const isWindows = platform === 'win32';
-    const isMac = platform === 'darwin';
+async function getGpuInfo() {
+  // Get platform
+  const platform = os.platform();
+  const isWindows = platform === 'win32';
+  const isMac = platform === 'darwin';
 
-    if (isMac) {
-      const macGpu = await getMacGpuInfo();
-      if (macGpu) {
-        return NextResponse.json({
-          hasNvidiaSmi: false,
-          isMac: true,
-          gpus: [
-            {
-              index: 0,
-              name: macGpu.name,
-              driverVersion: 'macOS',
-              temperature: Math.round(macGpu.temperature),
-              utilization: {
-                gpu: macGpu.gpuLoad,
-                memory: macGpu.memTotal > 0 ? Math.round((macGpu.memUsed / macGpu.memTotal) * 100) : 0,
-              },
-              memory: {
-                total: Math.round(macGpu.memTotal),
-                free: Math.round(macGpu.memTotal - macGpu.memUsed),
-                used: Math.round(macGpu.memUsed),
-              },
-              power: { draw: macGpu.powerDraw, limit: 0 },
-              clocks: { graphics: 0, memory: 0 },
-              fan: { speed: macGpu.fanSpeed },
-            },
-          ],
-        });
-      }
-      return NextResponse.json({
+  if (isMac) {
+    const macGpu = await getMacGpuInfo();
+    if (macGpu) {
+      return {
         hasNvidiaSmi: false,
         isMac: true,
-        gpus: [],
-        error: 'Could not read Mac GPU stats',
-      });
+        gpus: [
+          {
+            index: 0,
+            name: macGpu.name,
+            driverVersion: 'macOS',
+            temperature: Math.round(macGpu.temperature),
+            utilization: {
+              gpu: macGpu.gpuLoad,
+              memory: macGpu.memTotal > 0 ? Math.round((macGpu.memUsed / macGpu.memTotal) * 100) : 0,
+            },
+            memory: {
+              total: Math.round(macGpu.memTotal),
+              free: Math.round(macGpu.memTotal - macGpu.memUsed),
+              used: Math.round(macGpu.memUsed),
+            },
+            power: { draw: macGpu.powerDraw, limit: 0 },
+            clocks: { graphics: 0, memory: 0 },
+            fan: { speed: macGpu.fanSpeed },
+          },
+        ],
+      };
     }
+    return {
+      hasNvidiaSmi: false,
+      isMac: true,
+      gpus: [],
+      error: 'Could not read Mac GPU stats',
+    };
+  }
 
-    // Check for NVIDIA GPUs first
-    const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
-    if (hasNvidiaSmi) {
+  // Check for NVIDIA first
+  const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
+  if (hasNvidiaSmi) {
+    try {
       const gpuStats = await getNvidiaGpuStats(isWindows);
-      return NextResponse.json({
+      return {
         hasNvidiaSmi: true,
         hasAmdSmi: false,
         hasRocmSmi: false,
         isMac: false,
         gpus: gpuStats,
-      });
+      };
+    } catch {
+      // fall through to AMD checks
     }
+  }
 
-    // Check for AMD GPUs - prioritize amd-smi, fallback to rocm-smi
-    const hasAmdSmi = await checkAmdSmi(isWindows);
-    if (hasAmdSmi) {
+  // Check for AMD GPUs - prioritize amd-smi, fallback to rocm-smi
+  const hasAmdSmi = await checkAmdSmi(isWindows);
+  if (hasAmdSmi) {
+    try {
       const gpuStats = await getAmdSmiGpuStats(isWindows);
       if (gpuStats && gpuStats.length > 0) {
-        return NextResponse.json({
+        return {
           hasNvidiaSmi: false,
           hasAmdSmi: true,
           hasRocmSmi: false,
           isMac: false,
           gpus: gpuStats,
-        });
+        };
       }
+    } catch {
+      // fall through
     }
+  }
 
-    const hasRocmSmi = await checkRocmSmi(isWindows);
-    if (hasRocmSmi) {
+  const hasRocmSmi = await checkRocmSmi(isWindows);
+  if (hasRocmSmi) {
+    try {
       const gpuStats = await getRocmGpuStats(isWindows);
-      return NextResponse.json({
+      return {
         hasNvidiaSmi: false,
         hasAmdSmi: hasAmdSmi,
         hasRocmSmi: true,
         isMac: false,
         gpus: gpuStats,
-      });
+      };
+    } catch {
+      // fall through
     }
+  }
 
-    // No GPU detection available
-    return NextResponse.json({
-      hasNvidiaSmi: false,
-      hasAmdSmi: false,
-      hasRocmSmi: false,
-      isMac: false,
-      gpus: [],
-      error: 'Neither nvidia-smi, amd-smi, nor rocm-smi found. GPU detection unavailable.',
-    });
+  return {
+    hasNvidiaSmi: false,
+    hasAmdSmi: false,
+    hasRocmSmi: false,
+    isMac: false,
+    gpus: [],
+    error: 'Neither nvidia-smi, amd-smi, nor rocm-smi found. GPU detection unavailable.',
+  };
+}
+
+export async function GET() {
+  try {
+    const gpuInfo = await cached('gpu-info', getGpuInfo);
+    return NextResponse.json(gpuInfo);
   } catch (error) {
     console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
@@ -213,36 +225,6 @@ async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
     } else {
       // Linux/macOS check
       await execAsync('which nvidia-smi');
-    }
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-async function checkAmdSmi(isWindows: boolean): Promise<boolean> {
-  try {
-    if (isWindows) {
-      // On Windows, try to run amd-smi directly (may be in PATH or Program Files)
-      await execAsync('amd-smi --help');
-    } else {
-      // Linux/macOS check
-      await execAsync('which amd-smi');
-    }
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-async function checkRocmSmi(isWindows: boolean): Promise<boolean> {
-  try {
-    if (isWindows) {
-      // On Windows, try to run rocm-smi directly (may be in PATH or Program Files)
-      await execAsync('rocm-smi --version');
-    } else {
-      // Linux/macOS check
-      await execAsync('which rocm-smi');
     }
     return true;
   } catch (error) {
@@ -282,49 +264,65 @@ async function getNvidiaGpuStats(isWindows: boolean) {
         fanSpeed,
       ] = line.split(', ').map(item => item.trim());
 
-      // Validate and clamp values to prevent astronomical numbers and NaN
-      const indexNum = parseInt(index) || 0;
-      const tempNum = parseInt(temperature) || 0;
-      const gpuUtilNum = parseInt(gpuUtil) || 0;
-      const memoryUtilNum = parseInt(memoryUtil) || 0;
-      const memoryTotalNum = parseInt(memoryTotal) || 0;
-      const memoryFreeNum = parseInt(memoryFree) || 0;
-      const memoryUsedNum = parseInt(memoryUsed) || 0;
-      const powerDrawNum = parseFloat(powerDraw) || 0;
-      const powerLimitNum = parseFloat(powerLimit) || 0;
-      const clockGraphicsNum = parseInt(clockGraphics) || 0;
-      const clockMemoryNum = parseInt(clockMemory) || 0;
-      const fanSpeedNum = parseInt(fanSpeed) || 0;
-
       return {
-        index: indexNum,
-        name: name || `GPU ${indexNum}`,
-        driverVersion: driverVersion || 'Unknown',
-        temperature: Math.max(0, Math.min(200, tempNum)), // Clamp to reasonable range
+        index: parseInt(index),
+        name,
+        driverVersion,
+        temperature: parseInt(temperature),
         utilization: {
-          gpu: Math.max(0, Math.min(100, gpuUtilNum)), // Clamp to 0-100%
-          memory: Math.max(0, Math.min(100, memoryUtilNum)), // Clamp to 0-100%
+          gpu: parseInt(gpuUtil),
+          memory: parseInt(memoryUtil),
         },
         memory: {
-          total: Math.max(0, memoryTotalNum), // Ensure non-negative
-          free: Math.max(0, Math.min(memoryTotalNum, memoryFreeNum)), // Clamp to total
-          used: Math.max(0, Math.min(memoryTotalNum, memoryUsedNum)), // Clamp to total
+          total: parseInt(memoryTotal),
+          free: parseInt(memoryFree),
+          used: parseInt(memoryUsed),
         },
         power: {
-          draw: Math.max(0, powerDrawNum), // Ensure non-negative
-          limit: Math.max(0, powerLimitNum), // Ensure non-negative
+          draw: parseFloat(powerDraw),
+          limit: parseFloat(powerLimit),
         },
         clocks: {
-          graphics: Math.max(0, clockGraphicsNum), // Ensure non-negative
-          memory: Math.max(0, clockMemoryNum), // Ensure non-negative
+          graphics: parseInt(clockGraphics),
+          memory: parseInt(clockMemory),
         },
         fan: {
-          speed: Math.max(0, Math.min(100, fanSpeedNum)), // Clamp to 0-100%
+          speed: parseInt(fanSpeed) || 0, // Some GPUs might not report fan speed, default to 0
         },
       };
     });
 
   return gpus;
+}
+
+async function checkAmdSmi(isWindows: boolean): Promise<boolean> {
+  try {
+    if (isWindows) {
+      // On Windows, try to run amd-smi directly (may be in PATH or Program Files)
+      await execAsync('amd-smi --help');
+    } else {
+      // Linux/macOS check
+      await execAsync('which amd-smi');
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function checkRocmSmi(isWindows: boolean): Promise<boolean> {
+  try {
+    if (isWindows) {
+      // On Windows, try to run rocm-smi directly (may be in PATH or Program Files)
+      await execAsync('rocm-smi --version');
+    } else {
+      // Linux/macOS check
+      await execAsync('which rocm-smi');
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 // Helper function to get venv PATH

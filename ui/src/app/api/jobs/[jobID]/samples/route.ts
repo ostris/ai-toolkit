@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { getTrainingFolder } from '@/server/settings';
-
-const prisma = new PrismaClient();
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {
   const { jobID } = await params;
@@ -21,13 +19,18 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const trainingFolder = await getTrainingFolder();
 
   const samplesFolder = path.join(trainingFolder, job.name, 'samples');
-  if (!fs.existsSync(samplesFolder)) {
+  try {
+    await fs.promises.access(samplesFolder);
+  } catch {
     return NextResponse.json({ samples: [] });
   }
 
-  // find all img (png, jpg, jpeg) files in the samples folder
-  const samples = fs
-    .readdirSync(samplesFolder)
+  // find all img (png, jpg, jpeg) files in the samples folder. Thumbnails
+  // live in the hidden .thumbs subfolder (and partial writes in .tmp) — the
+  // isFile check keeps those directories out even if their names ever match.
+  const samples = (await fs.promises.readdir(samplesFolder, { withFileTypes: true }))
+    .filter(entry => entry.isFile())
+    .map(entry => entry.name)
     .filter(file => {
       return file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg') || file.endsWith('.webp') || file.endsWith('.mp4') || file.endsWith('mp3') || file.endsWith('wav') || file.endsWith('flac') || file.endsWith('ogg');
     })

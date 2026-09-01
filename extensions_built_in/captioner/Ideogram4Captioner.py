@@ -8,11 +8,12 @@ from PIL import Image
 
 from .Qwen3VLCaptioner import Qwen3VLCaptioner
 from .prompts.ideogram4_caption_prompt import ideogram4_caption_prompt
+from toolkit.ideogram_caption import normalize_caption_dict, swap_bbox_xy_in_text
 import transformers
 import logging
 import warnings
 
-transformers.logging.set_verbosity_error()
+# transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
@@ -24,11 +25,6 @@ MIN_NEW_TOKENS = 3072
 # clean W:H. Keeps captions in the same small-denominator ratio distribution the
 # generator was trained on, instead of ugly fractions like 1023:768.
 MAX_AR_DENOMINATOR = 16
-
-# color_palette caps: the model often ignores these, so we enforce them.
-MAX_IMAGE_PALETTE = 16  # style_description.color_palette
-MAX_ELEMENT_PALETTE = 5  # per-element color_palette
-HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 
 class Ideogram4Captioner(Qwen3VLCaptioner):
@@ -109,65 +105,23 @@ class Ideogram4Captioner(Qwen3VLCaptioner):
         # stored order is [y1, x1, y2, x2]
         return [y1, x1, y2, x2]
 
-    def _sanitize_palette(self, palette, max_len):
-        """Keep unique, valid hex colors in order, capped to max_len. Returns the
-        cleaned list, or None if nothing valid remains (drop the key)."""
-        if not isinstance(palette, (list, tuple)):
-            return None
-        seen = set()
-        out = []
-        for c in palette:
-            if not isinstance(c, str):
-                continue
-            c = c.strip()
-            if not HEX_COLOR_RE.match(c):
-                continue
-            key = c.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(c)
-            if len(out) >= max_len:
-                break
-        return out or None
-
     def _normalize_caption(self, data: dict) -> dict:
-        """Validate/cleanup the parsed caption before storage: drop input-only
-        aspect_ratio, reorder bboxes to [y1,x1,y2,x2], and cap color palettes
-        (16 per image, 5 per element) since the model often exceeds them."""
-        # aspect_ratio is input-only context, not part of the output. Drop it if
-        # the model echoed it anyway.
-        data.pop("aspect_ratio", None)
-
-        style = data.get("style_description")
-        if isinstance(style, dict) and "color_palette" in style:
-            pal = self._sanitize_palette(style["color_palette"], MAX_IMAGE_PALETTE)
-            if pal is None:
-                style.pop("color_palette", None)
-            else:
-                style["color_palette"] = pal
-
+        """Cleanup the parsed caption before storage. The model emits bboxes in
+        [x1,y1,x2,y2]; convert each to our stored [y1,x1,y2,x2] order, then hand off
+        to the shared normalizer for the rest: drop aspect_ratio, enforce the
+        photo/art_style branch and key order, canonicalize medium, and cap/uppercase
+        color palettes (16 per image, 5 per element)."""
         decon = data.get("compositional_deconstruction", {})
-        elements = decon.get("elements", [])
+        elements = decon.get("elements", []) if isinstance(decon, dict) else []
         if isinstance(elements, list):
             for el in elements:
-                if not isinstance(el, dict):
-                    continue
-                if "bbox" in el:
+                if isinstance(el, dict) and "bbox" in el:
                     cleaned = self._convert_bbox(el["bbox"])
                     if cleaned is None:
                         el.pop("bbox", None)
                     else:
                         el["bbox"] = cleaned
-                if "color_palette" in el:
-                    pal = self._sanitize_palette(
-                        el["color_palette"], MAX_ELEMENT_PALETTE
-                    )
-                    if pal is None:
-                        el.pop("color_palette", None)
-                    else:
-                        el["color_palette"] = pal
-        return data
+        return normalize_caption_dict(data)
 
     def get_caption_for_file(self, file_path: str) -> Optional[str]:
         try:
@@ -215,9 +169,11 @@ class Ideogram4Captioner(Qwen3VLCaptioner):
             if data is None:
                 print(
                     f"[IdeogramCaptioner] Could not parse JSON for {file_path}; "
-                    f"saving raw output."
+                    f"saving raw output with regex-adapted bboxes."
                 )
-                return output_text
+                # JSON is malformed so we can't swap bboxes per-element. Adapt them
+                # directly in the raw text instead, so the boxes still render right.
+                return swap_bbox_xy_in_text(output_text)
 
             data = self._normalize_caption(data)
             # Store pretty JSON for QC/editing; the dataloader minifies at load.

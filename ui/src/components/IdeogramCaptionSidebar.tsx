@@ -18,10 +18,47 @@ export function isIdeogramCaption(text: string): boolean {
   }
 }
 
-// Normalize an arbitrary color string to a #rrggbb value usable by <input type=color>.
+// Official medium tokens. `photograph` uses the `photo` style key; every other
+// medium uses `art_style`. Users may also type a custom medium.
+const MEDIUM_OPTIONS = ['photograph', 'illustration', '3d_render', 'painting', 'graphic_design'];
+
+// Map old/variant medium spellings (e.g. our old "Illustration." / "3D render.")
+// to a canonical token so the dropdown can match them; unknown values stay custom.
+function canonMedium(m: string): string {
+  const key = (m || '').trim().replace(/\.+$/, '').trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    photograph: 'photograph',
+    photo: 'photograph',
+    illustration: 'illustration',
+    '3d render': '3d_render',
+    '3d_render': '3d_render',
+    '3d-render': '3d_render',
+    '3drender': '3d_render',
+    render: '3d_render',
+    '3d': '3d_render',
+    painting: 'painting',
+    'graphic design': 'graphic_design',
+    graphic_design: 'graphic_design',
+    'graphic-design': 'graphic_design',
+    graphic: 'graphic_design',
+  };
+  return aliases[key] ?? (m || '').trim();
+}
+
+// Photograph branch uses `photo`; everything else uses `art_style`. An unknown
+// (empty/custom) medium defaults to the photo branch.
+function isPhotoMedium(m: string): boolean {
+  const c = canonMedium(m);
+  if (c === 'photograph') return true;
+  if (MEDIUM_OPTIONS.includes(c)) return false;
+  return true;
+}
+
+// Normalize a color to an UPPERCASE #RRGGBB value (expands #RGB). Returns
+// '#000000' for anything unparseable (used to feed <input type=color>).
 function toHex6(c: string): string {
   const s = (c || '').trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s;
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return '#' + s.slice(1).toUpperCase();
   if (/^#[0-9a-fA-F]{3}$/.test(s)) {
     return (
       '#' +
@@ -30,6 +67,7 @@ function toHex6(c: string): string {
         .split('')
         .map(ch => ch + ch)
         .join('')
+        .toUpperCase()
     );
   }
   return '#000000';
@@ -99,6 +137,49 @@ function TextAreaField({
   );
 }
 
+// Medium picker: a dropdown of the official tokens plus a "Custom…" escape hatch
+// that reveals a free-text input. Recognizes old/variant spellings via canonMedium.
+function MediumField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const canon = canonMedium(value);
+  const known = MEDIUM_OPTIONS.includes(canon);
+  const [custom, setCustom] = useState(!known && (value || '').trim() !== '');
+  const showCustom = custom || (!known && (value || '').trim() !== '');
+  return (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-gray-400">Medium</span>
+      <select
+        value={showCustom ? '__custom__' : canon}
+        onChange={e => {
+          const v = e.target.value;
+          if (v === '__custom__') setCustom(true);
+          else {
+            setCustom(false);
+            onChange(v);
+          }
+        }}
+        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-blue-500"
+      >
+        {MEDIUM_OPTIONS.map(m => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+        <option value="__custom__">Custom…</option>
+      </select>
+      {showCustom && (
+        <input
+          type="text"
+          value={value}
+          placeholder="custom medium"
+          spellCheck={false}
+          onChange={e => onChange(e.target.value)}
+          className="mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-blue-500"
+        />
+      )}
+    </label>
+  );
+}
+
 function ColorPalette({ colors, max, onChange }: { colors: string[]; max: number; onChange: (c: string[]) => void }) {
   const setAt = (i: number, v: string) => onChange(colors.map((c, idx) => (idx === i ? v : c)));
   const removeAt = (i: number) => onChange(colors.filter((_, idx) => idx !== i));
@@ -109,7 +190,7 @@ function ColorPalette({ colors, max, onChange }: { colors: string[]; max: number
           <input
             type="color"
             value={toHex6(c)}
-            onChange={e => setAt(i, e.target.value)}
+            onChange={e => setAt(i, toHex6(e.target.value))}
             className="w-5 h-5 rounded cursor-pointer bg-transparent border-0 p-0"
             title="Pick color"
           />
@@ -218,6 +299,40 @@ export default function IdeogramCaptionSidebar({
       d.style_description = sd;
     });
 
+  // Setting the medium may flip the branch (photograph ↔ non-photo). When it does,
+  // migrate the render text from photo↔art_style so we never keep both keys.
+  const setMedium = (value: string) =>
+    update(d => {
+      const sd = { ...(d.style_description || {}) };
+      const wasPhoto = isPhotoMedium(sd.medium ?? '');
+      const nowPhoto = isPhotoMedium(value);
+      sd.medium = value;
+      if (wasPhoto !== nowPhoto) {
+        const val = sd.photo ?? sd.art_style ?? '';
+        delete sd.photo;
+        delete sd.art_style;
+        if (nowPhoto) sd.photo = val;
+        else sd.art_style = val;
+      }
+      d.style_description = sd;
+    });
+
+  // The single render field writes to `photo` or `art_style` per the current branch.
+  const photoBranch = isPhotoMedium(style.medium ?? '');
+  const renderValue = (photoBranch ? style.photo : style.art_style) ?? style.photo ?? style.art_style ?? '';
+  const setRender = (value: string) =>
+    update(d => {
+      const sd = { ...(d.style_description || {}) };
+      if (isPhotoMedium(sd.medium ?? '')) {
+        sd.photo = value;
+        delete sd.art_style;
+      } else {
+        sd.art_style = value;
+        delete sd.photo;
+      }
+      d.style_description = sd;
+    });
+
   const setElement = (i: number, mutator: (el: any) => void) =>
     update(d => {
       const els = d?.compositional_deconstruction?.elements;
@@ -279,12 +394,12 @@ export default function IdeogramCaptionSidebar({
       <Section title="Style">
         <TextField label="Aesthetics" value={style.aesthetics ?? ''} onChange={v => setStyle('aesthetics', v)} />
         <TextField label="Lighting" value={style.lighting ?? ''} onChange={v => setStyle('lighting', v)} />
-        <TextField label="Photo / render" value={style.photo ?? ''} onChange={v => setStyle('photo', v)} />
+        <MediumField value={style.medium ?? ''} onChange={setMedium} />
         <TextField
-          label="Medium"
-          value={style.medium ?? ''}
-          onChange={v => setStyle('medium', v)}
-          placeholder="Photograph."
+          label={photoBranch ? 'Photo (camera / film)' : 'Art style (rendering technique)'}
+          value={renderValue}
+          onChange={setRender}
+          placeholder={photoBranch ? '35mm film still, shallow depth of field' : 'flat vector, clean edges'}
         />
         <div className="flex flex-col gap-1">
           <span className="text-[10px] text-gray-400">Color palette (max 16)</span>

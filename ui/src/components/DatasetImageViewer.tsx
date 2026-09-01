@@ -7,7 +7,7 @@ import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import classNames from 'classnames';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
-import { isVideo, isAudio } from '@/utils/basic';
+import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { BoundingBoxEditor, parseBoundingBoxes, extractBoxes } from './BoundingBoxOverlay';
@@ -392,12 +392,12 @@ export default function DatasetImageViewer({
   if (!mounted) return null;
 
   return createPortal(
-    <Dialog open={isOpen} onClose={onCancel} className="relative z-10">
+    <Dialog open={isOpen} onClose={onCancel} className="relative z-50">
       <DialogBackdrop
         transition
         className="fixed inset-0 bg-gray-900/75 transition-opacity data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in"
       />
-      <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
+      <div className="fixed inset-0 z-50 w-screen overflow-y-auto">
         <div className="flex min-h-full items-center justify-center p-0 sm:p-4 text-center">
           <DialogPanel
             transition
@@ -410,11 +410,11 @@ export default function DatasetImageViewer({
               {imgPath &&
                 (isAudio(imgPath) ? (
                   <div className="w-[500px] h-[500px] max-w-full max-h-[50vh] sm:max-h-[90vh]">
-                    <AudioPlayer src={`/api/img/${encodeURIComponent(imgPath)}`} title={filename} autoPlay />
+                    <AudioPlayer src={`/api/img/${encodeFilePathForUrl(imgPath)}`} title={filename} autoPlay />
                   </div>
                 ) : isVideo(imgPath) ? (
                   <video
-                    src={`/api/img/${encodeURIComponent(imgPath)}`}
+                    src={`/api/img/${encodeFilePathForUrl(imgPath)}`}
                     className="w-auto h-auto max-w-full max-h-[50vh] sm:max-h-[90vh] object-contain"
                     preload="none"
                     playsInline
@@ -438,7 +438,7 @@ export default function DatasetImageViewer({
                     <TransformComponent>
                       <div className="relative">
                         <img
-                          src={`/api/img/${encodeURIComponent(imgPath)}`}
+                          src={`/api/img/${encodeFilePathForUrl(imgPath)}`}
                           alt="Dataset Image"
                           draggable={false}
                           className="w-auto h-auto max-w-full max-h-[50vh] sm:max-h-[90vh] object-contain select-none !pointer-events-auto"
@@ -493,7 +493,7 @@ export default function DatasetImageViewer({
                         <MenuItem>
                           <a
                             className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
-                            href={`/api/img/${encodeURIComponent(imgPath)}`}
+                            href={`/api/img/${encodeFilePathForUrl(imgPath)}`}
                             download={filename}
                           >
                             Download

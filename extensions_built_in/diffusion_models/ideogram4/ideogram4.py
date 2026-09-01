@@ -5,26 +5,31 @@ import torch
 import yaml
 from safetensors.torch import load_file, save_file
 
-from toolkit.config_modules import GenerateImageConfig, ModelConfig
+from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.basic import flush
 from toolkit.print import print_acc
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
+from toolkit.ideogram_caption import digest_caption_string
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
 from toolkit.metadata import get_meta_for_safetensors
-from toolkit.memory_management import MemoryManager
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from optimum.quanto import freeze, QTensor
+from optimum.quanto import QTensor
 
 import huggingface_hub
 from huggingface_hub.errors import EntryNotFoundError
 from transformers import AutoModel, AutoTokenizer
 
 from .src.transformer import Ideogram4Config, Ideogram4Transformer2DModel
-from .src.vae import AutoEncoder, AutoEncoderParams, convert_diffusers_state_dict
+from toolkit.models.v2.vae.flux2_kl import (
+    AutoEncoder,
+    AutoEncoderParams,
+    convert_diffusers_state_dict,
+)
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLModelEncoder
 from .src.latent_norm import get_latent_norm
 from .src.pipeline import (
     Ideogram4Pipeline,
@@ -188,6 +193,11 @@ class Ideogram4Model(BaseModel):
         self._latent_shift = None
         self._latent_scale = None
 
+        # Optional LoRA that is only switched on during the unconditional (negative)
+        # CFG pass. Loaded from model_config.unconditional_lora_path if set; stays
+        # inactive everywhere else (training, conditional pass).
+        self.unconditional_lora: Optional[LoRASpecialNetwork] = None
+
     @property
     def text_embedding_space_version(self):
         # we changed the embeddings. invalidate cache.
@@ -213,8 +223,8 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update(f"Loading Qwen3-VL text encoder from {te_path}")
 
         tokenizer = AutoTokenizer.from_pretrained(te_path, token=HF_TOKEN)
-        text_encoder = AutoModel.from_pretrained(
-            te_path, torch_dtype=dtype, token=HF_TOKEN
+        text_encoder = Qwen3VLModelEncoder.load_model(
+            te_path, dtype=dtype, subfolder="", token=HF_TOKEN
         )
         flush()
 
@@ -227,9 +237,6 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update("Loading transformer")
 
         transformer_config = Ideogram4Config()
-        with torch.device("meta"):
-            transformer = Ideogram4Transformer2DModel(transformer_config)
-
         self.print_and_status_update("  - fetching transformer weights")
         state_dict = _load_component_state_dict(
             base, "transformer", "diffusion_pytorch_model"
@@ -239,7 +246,9 @@ class Ideogram4Model(BaseModel):
             state_dict, dtype, self.device_torch, self.model_config.low_vram
         )
         self.print_and_status_update("  - loading transformer state dict")
-        transformer.load_state_dict(state_dict, assign=True)
+        transformer = Ideogram4Transformer2DModel.load_from_state_dict(
+            state_dict, dtype, config=transformer_config
+        )
         del state_dict
         flush()
 
@@ -258,13 +267,94 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update("Loading VAE")
         vae_sd = _load_component_state_dict(base, "vae", "diffusion_pytorch_model")
         vae_sd = convert_diffusers_state_dict(vae_sd)
-        vae = AutoEncoder(AutoEncoderParams())
-        vae.load_state_dict(vae_sd)
+        vae = AutoEncoder.load_from_state_dict(vae_sd, self.vae_torch_dtype)
         del vae_sd
         vae.to(self.vae_device_torch, dtype=dtype)
         vae.eval()
         vae.requires_grad_(False)
         return vae
+
+    def load_unconditional_lora(self, transformer: Ideogram4Transformer2DModel):
+        """Load the unconditional-pass LoRA and leave it applied but inactive.
+
+        The adapter is wired into the transformer via ``apply_to`` (no merge) so
+        the pipeline can flip ``is_active`` on for the unconditional CFG pass only.
+        It never affects the conditional pass or training, where it stays inactive.
+        """
+        lora_path = self.model_config.unconditional_lora_path
+        self.print_and_status_update(f"Loading unconditional LoRA from {lora_path}")
+
+        if not os.path.exists(lora_path):
+            # assume it is a "repo/owner/filename.safetensors" hub path
+            lora_splits = lora_path.split("/")
+            if len(lora_splits) != 3:
+                raise ValueError(
+                    f"Unconditional LoRA path {lora_path} is not a valid local path "
+                    "or hub path."
+                )
+            repo_id = "/".join(lora_splits[:2])
+            filename = lora_splits[2]
+            try:
+                lora_path = huggingface_hub.hf_hub_download(
+                    repo_id=repo_id, filename=filename, token=HF_TOKEN
+                )
+                self.model_config.unconditional_lora_path = lora_path
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to download unconditional LoRA from {lora_path}: {e}"
+                )
+
+        # Detect the LoRA rank from the first down-projection weight in the file.
+        lora_state_dict = load_file(lora_path)
+        lora_dim = None
+        for key, value in lora_state_dict.items():
+            if key.endswith("lora_A.weight") or key.endswith("lora_down.weight"):
+                lora_dim = int(value.shape[0])
+                break
+        if lora_dim is None:
+            raise ValueError(
+                f"Could not determine LoRA rank from {lora_path}: no lora_A/lora_down "
+                "weights found."
+            )
+
+        # transformer_only=False so every nn.Linear in the model is targeted (not
+        # just the transformer blocks) -- the extraction script factors all linears,
+        # so the adapter must wrap all of them to load every key.
+        network_config = NetworkConfig(
+            type="lora",
+            linear=lora_dim,
+            linear_alpha=lora_dim,
+            transformer_only=False,
+        )
+        network = LoRASpecialNetwork(
+            text_encoder=None,
+            unet=transformer,
+            lora_dim=lora_dim,
+            multiplier=1.0,
+            alpha=lora_dim,
+            # train_unet just gates module creation here; the network is applied,
+            # kept inactive, and never trained (the pipeline only toggles is_active).
+            train_unet=True,
+            train_text_encoder=False,
+            network_config=network_config,
+            network_type="lora",
+            transformer_only=False,
+            is_transformer=True,
+            target_lin_modules=self.target_lora_modules,
+            # base_model_ref lets load_weights run convert_lora_weights_before_load
+            # so saved "diffusion_model." keys map back to "transformer.".
+            base_model=self,
+        )
+        network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
+        network.force_to(self.device_torch, dtype=self.torch_dtype)
+        network._update_torch_multiplier()
+        network.load_weights(lora_path)
+        network.eval()
+
+        # Inactive by default; the pipeline flips this on only for the uncond pass.
+        network.is_active = False
+        self.unconditional_lora = network
+        self.print_and_status_update("Unconditional LoRA loaded (inactive)")
 
     def load_model(self):
         dtype = self.torch_dtype
@@ -273,54 +363,13 @@ class Ideogram4Model(BaseModel):
 
         transformer = self._load_transformer(base)
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[transformer.rotary_emb.inv_freq, transformer.input_proj, transformer.llm_cond_proj],
-            )
-        elif self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-        else:
-            # quantize_model leaves the model on CPU; make sure it lands on device.
-            transformer.to(self.device_torch)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         tokenizer, text_encoder = self._load_text_encoder(base)
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            text_encoder.to(self.device_torch)
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-        elif self.model_config.low_vram:
-            self.print_and_status_update("Moving text encoder to CPU")
-            text_encoder.to("cpu")
-        else:
-            self.print_and_status_update("Moving text encoder to device")
-            text_encoder.to(self.device_torch)
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         flush()
 
         vae = self._load_vae(base)
@@ -336,6 +385,10 @@ class Ideogram4Model(BaseModel):
         self.tokenizer = tokenizer
         self.model = transformer
         self.pipeline = Ideogram4Pipeline(self)
+
+        if self.model_config.unconditional_lora_path is not None:
+            self.load_unconditional_lora(transformer)
+
         self.print_and_status_update("Model Loaded")
 
     # ------------------------------------------------------------------
@@ -419,6 +472,10 @@ class Ideogram4Model(BaseModel):
         # length -- important for the long structured (JSON) captions.
         features_list = []
         for p in prompt:
+            # Digest the prompt: migrate any old-format Ideogram caption into the
+            # current schema and serialize it compact (the form the renderer wants).
+            # Plain-text prompts pass straight through unchanged.
+            p = digest_caption_string(p)
             messages = [{"role": "user", "content": [{"type": "text", "text": p}]}]
             text = self.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True, tokenize=False
@@ -519,16 +576,5 @@ class Ideogram4Model(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd

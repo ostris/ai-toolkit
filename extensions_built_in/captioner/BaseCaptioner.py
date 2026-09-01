@@ -40,9 +40,20 @@ class CaptionConfig:
         self.recaption = kwargs.get("recaption", False)
         self.max_res = kwargs.get("max_res", 512)
         self.max_new_tokens = kwargs.get("max_new_tokens", 128)
+        self.thinking = kwargs.get("thinking", False)
         self.caption_prompt = kwargs.get(
             "caption_prompt", "Describe this image in detail."
         )
+        self.compile = kwargs.get("compile", False)
+        # batched captioners: files generated per model.generate call, and CPU
+        # preprocessing threads that keep the GPU fed. Default 1 for VRAM
+        # safety; raise it to saturate a large GPU.
+        self.batch_size = kwargs.get("batch_size", 1)
+        self.num_workers = kwargs.get("num_workers", 3)
+        # stream weights from CPU per layer instead of keeping them resident
+        # (low-vram machines); percent is the fraction of linears offloaded
+        self.layer_offloading = kwargs.get("layer_offloading", False)
+        self.layer_offloading_percent = kwargs.get("layer_offloading_percent", 1.0)
 
 
 class BaseCaptioner(BaseExtensionProcess):
@@ -82,6 +93,7 @@ class BaseCaptioner(BaseExtensionProcess):
         self.model2 = None
         self.processor2 = None
         self.file_paths = []
+        self.step_num = 0
         self.device_torch = torch.device(self.caption_config.device)
         self.torch_dtype = get_torch_dtype(self.caption_config.dtype)
 
@@ -91,8 +103,11 @@ class BaseCaptioner(BaseExtensionProcess):
             self.start_stop_watcher()
             self.update_status("running", "Loading Model")
             self.load_model()
+            self.maybe_compile_models()
             self.update_status("running", "Looking for files")
             self.find_files()
+            self.update_db_key("total_steps", len(self.file_paths))
+            self.update_step()
             self.update_status("running", f"Captioning {len(self.file_paths)} files")
             self.run_caption_loop()
             self.update_status("completed", "Captioning completed")
@@ -117,6 +132,9 @@ class BaseCaptioner(BaseExtensionProcess):
             except Exception as e:
                 print(f"Error captioning file {file_path}: {e}")
                 continue
+            finally:
+                self.step_num += 1
+                self.update_step()
 
     def load_pil_image(self, file_path: str, max_res: Optional[int] = None) -> Image:
         image = Image.open(file_path).convert("RGB")
@@ -149,7 +167,8 @@ class BaseCaptioner(BaseExtensionProcess):
     def find_files(self):
         # recursivly find all the files in the path_to_caption with the specified extensions and save the paths to self.file_paths
         for root, dirs, files in os.walk(self.caption_config.path_to_caption):
-            dirs[:] = [d for d in dirs if d != "_controls"]
+            # skip _controls and hidden dirs (.thumbs, .tmp)
+            dirs[:] = [d for d in dirs if d != "_controls" and not d.startswith(".")]
             for file in files:
                 if any(
                     file.lower().endswith(f".{ext}") and not file.startswith(".")
@@ -183,6 +202,69 @@ class BaseCaptioner(BaseExtensionProcess):
     def load_model(self):
         raise NotImplementedError("Model loading not implemented for this captioner")
 
+    def maybe_compile_models(self):
+        if not self.caption_config.compile:
+            return
+        import importlib.util
+
+        if importlib.util.find_spec("triton") is None:
+            print(
+                "[AITK] compile requested but triton is not installed, skipping compilation."
+            )
+            return
+        try:
+            # compilation happens lazily on first forward, so fall back to
+            # eager there too if the backend fails (e.g. broken triton install)
+            torch._dynamo.config.suppress_errors = True
+            for model in [self.model, self.model2]:
+                if model is not None and isinstance(model, torch.nn.Module):
+                    # compile per transformer block instead of the whole model:
+                    # small graphs compile far faster and identical blocks hit
+                    # the inductor cache, vs many minutes tracing one huge graph
+                    compiled_blocks = self._compile_blocks(model)
+                    if compiled_blocks == 0:
+                        # no repeated block lists found; compile the whole model
+                        # dynamic=True avoids recompiling for every new image/token shape
+                        model.compile(dynamic=True)
+            print(
+                "[AITK] Model compilation enabled. The first few items will be slow while the model compiles."
+            )
+        except Exception as e:
+            print(f"[AITK] Failed to compile model, continuing without compile: {e}")
+
+    def _compile_blocks(self, model: torch.nn.Module) -> int:
+        """Compile the repeated transformer blocks individually, leaving one-off
+        modules (embeddings, mergers, lm_head) eager. Returns the number of
+        blocks compiled."""
+        # candidate lists: ModuleLists of >= 2 blocks that all share one class
+        # and have submodules of their own (i.e. real transformer blocks, not
+        # lists of leaf layers)
+        candidates = []
+        for name, module in model.named_modules():
+            if not isinstance(module, torch.nn.ModuleList) or len(module) < 2:
+                continue
+            classes = {type(b) for b in module}
+            if len(classes) != 1:
+                continue
+            if next(module[0].children(), None) is None:
+                continue
+            candidates.append(name)
+        # skip lists nested inside another candidate list
+        candidates = [
+            name
+            for name in candidates
+            if not any(
+                name != other and name.startswith(other + ".") for other in candidates
+            )
+        ]
+        count = 0
+        for name in candidates:
+            block_list = model.get_submodule(name)
+            for i, block in enumerate(block_list):
+                block_list[i] = torch.compile(block, dynamic=True)
+                count += 1
+        return count
+
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
         Start a daemon thread that periodically checks should_stop()
@@ -202,26 +284,21 @@ class BaseCaptioner(BaseExtensionProcess):
         while True:
             try:
                 if self.should_stop():
-                    # Mark and update status (non-blocking; uses existing infra)
-                    self.is_stopping = True
-                    self._run_async_operation(
-                        self._update_status("stopped", "Job stopped (remote)")
-                    )
-                    # Best-effort flush pending async ops
-                    try:
-                        asyncio.run(self.wait_for_all_async())
-                    except RuntimeError:
-                        pass
-                    # Try to stop DB thread pool quickly
-                    try:
-                        self.thread_pool.shutdown(wait=False, cancel_futures=True)
-                    except TypeError:
-                        self.thread_pool.shutdown(wait=False)
+                    if self.is_stopping:
+                        # maybe_stop() already started the graceful shutdown;
+                        # a second interrupt would only break its cleanup.
+                        return
                     print("")
                     print("****************************************************")
                     print("    Stop signal received; terminating process.      ")
                     print("****************************************************")
-                    os.kill(os.getpid(), signal.SIGINT)
+                    # Deliver a real KeyboardInterrupt to the main thread so
+                    # on_error runs the normal shutdown (final DB write, last
+                    # log). os.kill(pid, SIGINT) must not be used here: on
+                    # Windows it is TerminateProcess and kills us instantly.
+                    # Leave the thread pool alone -- on_error still needs it.
+                    signal.raise_signal(signal.SIGINT)
+                    return
                 time.sleep(interval_sec)
             except Exception:
                 time.sleep(interval_sec)
@@ -383,7 +460,11 @@ class BaseCaptioner(BaseExtensionProcess):
         super(BaseCaptioner, self).on_error(e)
         if self.is_ui_captioner:
             try:
-                if not self.is_stopping:
+                if isinstance(e, KeyboardInterrupt):
+                    # SIGINT (UI stop button or ctrl+c) is a stop, not an error
+                    self.is_stopping = True
+                    self.update_status("stopped", "Job stopped")
+                elif not self.is_stopping:
                     self.update_status("error", str(e))
                 asyncio.run(self.wait_for_all_async())
             except Exception as db_err:

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useMemo, useCallback } from 'react';
+import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import { VirtuosoGrid } from 'react-virtuoso';
@@ -13,6 +13,8 @@ import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import DatasetActionBar from '@/components/DatasetActionBar';
+import CaptionMonitor from '@/components/CaptionMonitor';
 import { CreatableSelectInput } from '@/components/formInputs';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
@@ -26,21 +28,32 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [captionExt, setCaptionExt] = useState<string>('txt');
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const [captionBarHeight, setCaptionBarHeight] = useState(0);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
+  const isRefreshingRef = useRef(false);
 
   const refreshImageList = (dbName: string) => {
+    // Only allow one listImages request in flight at a time.
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     setStatus('loading');
     apiClient
       .post('/api/datasets/listImages', { datasetName: dbName })
       .then((res: any) => {
         const data = res.data;
-        // Server already sorts; avoid the client-side sort that's expensive on large lists.
-        setImgList(data.images);
+        // Server sends a shared root (with trailing OS separator) + each file's sub-path to
+        // keep the payload small. Plain concat rebuilds the native absolute path on any OS.
+        // Server already sorts; avoid a client-side sort on large lists.
+        const root = data.root;
+        setImgList(data.images.map((subPath: string) => ({ img_path: root + subPath })));
         setStatus('success');
       })
       .catch(error => {
         console.error('Error fetching images:', error);
         setStatus('error');
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
       });
   };
   useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
@@ -145,9 +158,15 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             <span className="sm:hidden">+ Add</span>
             <span className="hidden sm:inline">Add Images</span>
           </Button>
+          <DatasetActionBar datasetName={datasetName} />
         </div>
       </TopBar>
-      <MainContent ref={scrollParentCallback}>
+      <MainContent
+        ref={scrollParentCallback}
+        belowTopBar
+        className="transition-[bottom] duration-300"
+        style={{ bottom: `${captionBarHeight}px` }}
+      >
         {PageInfoContent}
         {status === 'success' && imgList.length > 0 && scrollParent && (
           <VirtuosoGrid
@@ -174,8 +193,17 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             computeItemKey={index => imgList[index]?.img_path ?? index}
           />
         )}
+        {/* Baseline gap below the last row of cards. The caption bar itself is handled by
+            shrinking MainContent's bottom to the bar height, so no dynamic spacer is needed. */}
+        <div className="h-6" />
       </MainContent>
       <AddImagesModal />
+      {isSettingsLoaded && (
+        <CaptionMonitor
+          datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
+          onHeightChange={setCaptionBarHeight}
+        />
+      )}
       <DatasetImageViewer
         imgPath={selectedImgPath}
         imageList={imgPaths}

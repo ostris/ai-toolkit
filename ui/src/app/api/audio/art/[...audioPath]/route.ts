@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settings';
+import { catchAllToFilePath } from '@/server/catchAllPath';
 
 /**
  * Serves embedded album art from an MP3 file's ID3v2 tag.
@@ -125,10 +126,12 @@ function extractArtFromTag(buf: Buffer): ArtResult {
   return null;
 }
 
-export async function GET(request: NextRequest, { params }: { params: { audioPath: string } }) {
+export async function GET(request: NextRequest, { params }: { params: { audioPath: string | string[] } }) {
   const { audioPath } = await params;
   try {
-    const filepath = decodeURIComponent(audioPath);
+    // Segments are already URL-decoded by Next.js; accepts both the legacy
+    // single-segment form and the `<folder>/<filename>` form.
+    const filepath = catchAllToFilePath(audioPath);
 
     // Security check
     const datasetRoot = await getDatasetsRoot();

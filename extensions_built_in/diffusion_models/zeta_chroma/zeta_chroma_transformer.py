@@ -6,6 +6,8 @@ from typing import List, Optional
 import math
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -449,7 +451,14 @@ class SimpleMLPAdaLN(nn.Module):
         return self.final_layer(x)
 
 
-class ZImageDCT(nn.Module):
+class ZImageDCT(nn.Module, OstrisModelMixin):
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["layers"]
+
+    def get_offload_ignore_modules(self):
+        return [self.x_pad_token, self.cap_pad_token]
+
     def __init__(self, params: ZImageDCTParams):
         super().__init__()
         self.config = FakeConfig()

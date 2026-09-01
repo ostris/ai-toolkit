@@ -19,7 +19,7 @@ You are CAPTIONING a real image, not imagining one. Describe ONLY what is visibl
 ## OUTPUT CONTRACT — exactly three top-level keys, in this order:
 
 ```json
-{"high_level_description":"...","style_description":{"aesthetics":"...","lighting":"...","photo":"...","medium":"...","color_palette":["#RRGGBB"]},"compositional_deconstruction":{"background":"...","elements":[ ... ]}}
+{"high_level_description":"...","style_description":{ ...see STYLE DESCRIPTION... },"compositional_deconstruction":{"background":"...","elements":[ ... ]}}
 ```
 
 - Emit a SINGLE-LINE MINIFIED JSON object — no markdown fences, no commentary, no other top-level keys.
@@ -44,22 +44,34 @@ BAD (over-specifies): `A male soccer player captured mid-kick on a bright green 
 
 ## STYLE DESCRIPTION — the `style_description` block (always required)
 
-A nested object capturing the image's overall look, OBSERVED from the image (never invented). Exactly these five keys:
-- `aesthetics` — the overall mood/aesthetic in a short phrase (`Cinematic, minimal, serene.` / `Bright, playful, high-energy.`).
+A nested object capturing the image's overall look, OBSERVED from the image (never invented). It carries EXACTLY ONE render key — `photo` for photographs, `art_style` for everything else (illustration / 3D render / painting / graphic design) — NEVER both. The key order is strict and depends on the branch:
+
+- **Photograph** → keys in this order: `aesthetics`, `lighting`, `photo`, `medium`, `color_palette`
+  ```json
+  {"aesthetics":"...","lighting":"...","photo":"...","medium":"photograph","color_palette":["#RRGGBB"]}
+  ```
+- **Non-photo** (illustration / 3D / painting / graphic design) → keys in this order: `aesthetics`, `lighting`, `medium`, `art_style`, `color_palette`
+  ```json
+  {"aesthetics":"...","lighting":"...","medium":"illustration","art_style":"...","color_palette":["#RRGGBB"]}
+  ```
+
+Field meanings:
+- `aesthetics` — the overall mood/aesthetic in a short phrase (`cinematic, minimal, serene` / `bright, playful, high-energy`).
 - `lighting` — the actual lighting: direction, quality, contrast, and the colour of the light. Describe a warm-coloured source concretely (`amber pool from a candle`) but never use the bare word `warm` as a grade.
-- `photo` — the medium-specific capture/render spec. Photograph → camera/film look, framing, grain, focus (`35mm film still, 16:9 framing, subtle grain, shallow depth of field`). Other media → the rendering technique (`flat vector, clean edges` / `octane 3D render, soft global illumination` / `loose watercolor on textured paper`).
-- `medium` — one short phrase: `Photograph.` / `Illustration.` / `3D render.` / `Graphic design.` Read it from the image; do not impose a default.
-- `color_palette` — an array of the image's DOMINANT colours as hex strings (`"#1B3A5C"`), up to 16, ordered most → least dominant. Sample the colours actually present; do not invent colours that are not there.
+- `photo` (photographs ONLY) — the camera/film capture spec: framing, grain, focus (`35mm film still, 16:9 framing, subtle grain, shallow depth of field`).
+- `art_style` (non-photo ONLY) — the rendering technique (`flat vector, clean edges` / `octane 3D render, soft global illumination` / `loose watercolor on textured paper`).
+- `medium` — exactly one token: `photograph` / `illustration` / `3d_render` / `painting` / `graphic_design`. Read it from the image; do not impose a default. Photograph ⇒ use `photo`; any other ⇒ use `art_style`.
+- `color_palette` — an array of the image's DOMINANT colours as UPPERCASE `#RRGGBB` hex strings (`"#1B3A5C"`), up to 16, ordered most → least dominant. Sample the colours actually present; do not invent colours that are not there. ALWAYS the last key.
 
 ## ELEMENTS — what they are, what they're not
 
-Each element is one of:
+Each element is one of (keys in EXACTLY this order):
 ```
-{"type":"obj","bbox":[x1,y1,x2,y2],"color_palette":["#RRGGBB"],"desc":"..."}
-{"type":"text","bbox":[x1,y1,x2,y2],"color_palette":["#RRGGBB"],"text":"LINE ONE\\nLINE TWO","desc":"..."}
+{"type":"obj","bbox":[x1,y1,x2,y2],"desc":"..."}
+{"type":"text","bbox":[x1,y1,x2,y2],"text":"LINE ONE\\nLINE TWO","desc":"..."}
 ```
 
-`bbox` and `color_palette` are both OPTIONAL per-element. `bbox`: see BBOX section below. `color_palette`: up to 5 hex strings of that element's own dominant colours — include it when the element has distinctive colours worth pinning (a red jacket, a brand logo, coloured text), omit it for colour-neutral elements.
+`bbox` is OPTIONAL per-element (see BBOX section below). Do NOT emit a per-element `color_palette` — an element's colours belong in its `desc` as prose; the only colour-conditioning field is the top-level `style_description.color_palette`.
 
 ### SINGLE SUBJECT = SINGLE ELEMENT
 

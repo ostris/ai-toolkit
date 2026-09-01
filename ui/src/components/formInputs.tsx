@@ -152,10 +152,12 @@ export interface NumberInputProps extends InputProps {
   onChange: (value: number | null) => void;
   min?: number;
   max?: number;
+  // when true, clearing the input calls onChange(null) instead of being ignored
+  allowEmpty?: boolean;
 }
 
 export const NumberInput = (props: NumberInputProps) => {
-  const { label, value, onChange, placeholder, required, min, max, docKey = null } = props;
+  const { label, value, onChange, placeholder, required, min, max, allowEmpty, docKey = null } = props;
   let { doc } = props;
   if (!doc && docKey) {
     doc = getDoc(docKey);
@@ -193,23 +195,34 @@ export const NumberInput = (props: NumberInputProps) => {
           // Handle empty or partial inputs
           if (rawValue === '' || rawValue === '-') {
             // For empty or partial negative input, don't call onChange yet
+            if (rawValue === '' && allowEmpty) {
+              onChange(null);
+            }
             return;
           }
 
           const numValue = Number(rawValue);
 
-          // Only apply constraints and call onChange when we have a valid number
+          // don't clamp to min/max while typing, it mangles partial input (typing 1024 with
+          // min 64 becomes 64024). Clamping happens on blur.
           if (!isNaN(numValue)) {
-            let constrainedValue = numValue;
-
-            // Apply min/max constraints if they exist
-            if (min !== undefined && constrainedValue < min) {
-              constrainedValue = min;
-            }
-            if (max !== undefined && constrainedValue > max) {
-              constrainedValue = max;
-            }
-
+            onChange(numValue);
+          }
+        }}
+        onBlur={() => {
+          const numValue = Number(inputValue);
+          if (inputValue === '' || isNaN(numValue)) {
+            return;
+          }
+          let constrainedValue = numValue;
+          if (min !== undefined && constrainedValue < min) {
+            constrainedValue = min;
+          }
+          if (max !== undefined && constrainedValue > max) {
+            constrainedValue = max;
+          }
+          if (constrainedValue !== numValue) {
+            setInputValue(constrainedValue);
             onChange(constrainedValue);
           }
         }}
@@ -326,6 +339,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
   }
 
   const [isCustom, setIsCustom] = React.useState(!isInOptions && !!value);
+  const customInputRef = React.useRef<HTMLInputElement>(null);
 
   // Build select options with "Custom" at the top
   const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: 'Custom' };
@@ -386,6 +400,8 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
                 if (val === CUSTOM_SELECT_VALUE) {
                   setIsCustom(true);
                   onChange('');
+                  // focus the custom input only when the user actively selects "Custom"
+                  requestAnimationFrame(() => customInputRef.current?.focus());
                 } else {
                   setIsCustom(false);
                   onChange(val);
@@ -396,13 +412,13 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
         </div>
         {isCustom && (
           <input
+            ref={customInputRef}
             type="text"
             value={value}
             onChange={e => onChange(e.target.value)}
             className={`${inputClasses} flex-1 min-w-0`}
             placeholder={props.placeholder ?? 'Enter custom value'}
             disabled={props.disabled}
-            autoFocus
           />
         )}
       </div>

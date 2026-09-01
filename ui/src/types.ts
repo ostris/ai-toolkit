@@ -59,6 +59,29 @@ export interface GPUApiResponse {
 }
 
 /**
+ * System monitor stream (SSE at /api/monitor)
+ */
+
+// Rolling history only logs load + memory; everything else (temps, fans,
+// power, clocks) is instantaneous-only via MonitorSample.
+export interface MonitorHistoryPoint {
+  t: number; // epoch ms
+  cpu: { load: number; memUsedMb: number };
+  // one entry per GPU, same order as MonitorSample.gpu.gpus (sorted by index)
+  gpus: { load: number; memUsedMb: number }[];
+}
+
+export interface MonitorSample {
+  t: number;
+  cpu: CpuInfo | null;
+  gpu: GPUApiResponse;
+}
+
+export interface MonitorInit extends MonitorSample {
+  history: MonitorHistoryPoint[];
+}
+
+/**
  * Training configuration
  */
 
@@ -85,6 +108,7 @@ export interface SaveConfig {
 }
 
 export interface DatasetConfig {
+  batch_size?: number;
   folder_path: string;
   mask_path: string | null;
   mask_min_value: number;
@@ -117,6 +141,18 @@ export interface DatasetConfig {
 export interface EMAConfig {
   use_ema: boolean;
   ema_decay: number;
+}
+
+export interface ValidationItem {
+  image_path: string;
+  prompt: string;
+}
+
+export interface ValidationConfig {
+  validation_items: ValidationItem[];
+  resolution: number;
+  validate_every_n_steps: number;
+  validation_sigmas?: number[];
 }
 
 export interface TrainConfig {
@@ -153,6 +189,9 @@ export interface TrainConfig {
   differential_guidance_scale?: number;
   audio_loss_multiplier?: number;
   max_loss?: number | null;
+  validation_config?: ValidationConfig;
+  do_guidance_loss?: boolean;
+  guidance_loss_target?: number;
 }
 
 export interface QuantizeKwargsConfig {
@@ -173,6 +212,13 @@ export interface ModelConfig {
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
   assistant_lora_path?: string;
+  unconditional_lora_path?: string;
+  compile?: boolean;
+  block_compile?: boolean;
+  compile_mode?: 'default' | 'max-autotune' | 'fastest';
+  compile_fullgraph?: boolean;
+  compile_dynamic?: boolean;
+  cache_size_limit?: number;
 }
 
 export interface SampleItem {
@@ -196,6 +242,7 @@ export interface SampleItem {
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
+  sample_start_step: number;
   width: number;
   height: number;
   prompts?: string[];
@@ -270,11 +317,16 @@ export interface CaptionProcessConfig {
     extensions: string[];
     path_to_caption: string;
     recaption: boolean;
+    compile?: boolean;
     caption_prompt?: string;
     max_res?: number;
     max_new_tokens?: number;
     fixed_caption?: string;
     caption_extension?: string;
+    thinking?: boolean;
+    batch_size?: number;
+    layer_offloading?: boolean;
+    layer_offloading_percent?: number;
   }
 }
 
