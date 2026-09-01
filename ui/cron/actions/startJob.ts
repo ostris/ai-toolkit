@@ -255,6 +255,10 @@ const startAndWatchJob = (job: Job) => {
       AITK_JOB_ID: jobID,
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
+      // ROCm equivalents - HIP respects these; set both for compatibility
+      HIP_VISIBLE_DEVICES: `${job.gpu_ids}`,
+      ROCR_VISIBLE_DEVICES: `${job.gpu_ids}`,
+      HIP_DEVICE_ORDER: 'PCI_BUS_ID',
       IS_AI_TOOLKIT_UI: '1',
       PYTHONUNBUFFERED: '1', // write Python output immediately so it is not lost on a crash
       // ROCm environment variables - only pass through if already set in parent process
@@ -267,6 +271,8 @@ const startAndWatchJob = (job: Job) => {
       ...(process.env.HIP_LAUNCH_BLOCKING && { HIP_LAUNCH_BLOCKING: process.env.HIP_LAUNCH_BLOCKING }),
       ...(process.env.HSA_OVERRIDE_GFX_VERSION && { HSA_OVERRIDE_GFX_VERSION: process.env.HSA_OVERRIDE_GFX_VERSION }),
       ...(process.env.PYTORCH_ROCM_ARCH && { PYTORCH_ROCM_ARCH: process.env.PYTORCH_ROCM_ARCH }),
+      ...(process.env.ROCR_VISIBLE_DEVICES && { ROCR_VISIBLE_DEVICES: process.env.ROCR_VISIBLE_DEVICES }),
+      ...(process.env.HIP_VISIBLE_DEVICES && { HIP_VISIBLE_DEVICES: process.env.HIP_VISIBLE_DEVICES }),
     };
 
     // HF_TOKEN
