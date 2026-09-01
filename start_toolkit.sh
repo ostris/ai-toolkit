@@ -222,8 +222,8 @@ detect_backend() {
             
             # Set HSA_OVERRIDE_GFX_VERSION for Strix Halo (gfx1151) compatibility
             if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
-                export HSA_OVERRIDE_GFX_VERSION=11.0.0
-                print_info "Set HSA_OVERRIDE_GFX_VERSION=11.0.0 for gfx1151 compatibility"
+                export HSA_OVERRIDE_GFX_VERSION=11.5.1
+                print_info "Set HSA_OVERRIDE_GFX_VERSION=11.5.1 for gfx1151 compatibility"
             fi
             
             # Set HIP_LAUNCH_BLOCKING for debugging (optional, can be disabled for performance)

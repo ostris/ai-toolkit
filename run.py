@@ -45,6 +45,72 @@ if os.environ.get("ROCBLAS_USE_HIPBLASLT") is None:
 if os.environ.get("ROCBLAS_LOG_LEVEL") is None:
     os.environ["ROCBLAS_LOG_LEVEL"] = "0"  # Disable verbose logging
 
+# Set HSA_OVERRIDE_GFX_VERSION and PYTORCH_ROCM_ARCH for ROCm
+# Must be before torch import so HIP initializes correctly for gfx1151 (Strix Halo)
+if os.environ.get("HSA_OVERRIDE_GFX_VERSION") is None or os.environ.get("PYTORCH_ROCM_ARCH") is None:
+    # Only attempt ROCm detection on Linux
+    import platform
+    is_linux = platform.system() == "Linux"
+    has_rocm = False
+    if is_linux:
+        import shutil
+        if shutil.which("rocm-smi") or os.path.isdir("/opt/rocm"):
+            has_rocm = True
+    if has_rocm:
+        # Try to detect gfx arch via rocm-smi
+        detected_gfx = None
+        try:
+            import subprocess
+            import re
+            out = subprocess.run(["rocm-smi", "--showproductname"], capture_output=True, text=True, timeout=5)
+            if out.returncode == 0:
+                # Look for gfx pattern or GFX Version
+                m = re.search(r"gfx\d+", out.stdout)
+                if m:
+                    detected_gfx = m.group(0)
+                # Alternative: GFX Version line
+                if not detected_gfx:
+                    m2 = re.search(r"GFX Version:\s*(gfx\d+)", out.stdout)
+                    if m2:
+                        detected_gfx = m2.group(1)
+            # Fallback: rocminfo
+            if not detected_gfx:
+                out2 = subprocess.run(["rocminfo"], capture_output=True, text=True, timeout=5)
+                if out2.returncode == 0:
+                    m = re.search(r"gfx\d+", out2.stdout)
+                    if m:
+                        detected_gfx = m.group(0)
+        except Exception:
+            pass
+        # Map gfx to HSA version: gfx1151 -> 11.5.1, gfx1100 -> 11.0.0, etc.
+        def _gfx_to_hsa(gfx: str):
+            try:
+                digits = gfx.replace("gfx", "")
+                while len(digits) < 4:
+                    digits += "0"
+                major = digits[0:2]
+                minor = digits[2]
+                patch = digits[3]
+                return f"{int(major)}.{minor}.{patch}"
+            except Exception:
+                return None
+        if detected_gfx:
+            hsa_ver = _gfx_to_hsa(detected_gfx)
+            if hsa_ver and os.environ.get("HSA_OVERRIDE_GFX_VERSION") is None:
+                os.environ["HSA_OVERRIDE_GFX_VERSION"] = hsa_ver
+            # Map to ROCm nightly dir name: gfx110x -> gfx110X-all
+            rocm_arch = detected_gfx
+            if detected_gfx.startswith("gfx110"):
+                rocm_arch = "gfx110X-all"
+            if os.environ.get("PYTORCH_ROCM_ARCH") is None:
+                os.environ["PYTORCH_ROCM_ARCH"] = rocm_arch
+        else:
+            # Fallback for Strix Halo when detection fails but ROCm is present
+            if os.environ.get("HSA_OVERRIDE_GFX_VERSION") is None:
+                os.environ["HSA_OVERRIDE_GFX_VERSION"] = "11.5.1"
+            if os.environ.get("PYTORCH_ROCM_ARCH") is None:
+                os.environ["PYTORCH_ROCM_ARCH"] = "gfx1151"
+
 import torch
 
 # check if we have DEBUG_TOOLKIT in env
