@@ -14,13 +14,20 @@ export interface MonitorStreamState {
 }
 
 /**
- * One shared SSE connection to /api/monitor for the whole app, no matter how
- * many components subscribe. Connects while at least one hook instance is
- * mounted, reconnects automatically, and keeps the 2-minute rolling history
- * (seeded by the server's backlog on connect) up to date from live samples.
+ * One SSE connection to /api/monitor per browser, not per tab. Browsers cap
+ * HTTP/1.1 at 6 connections per host, so one held stream per tab meant the
+ * 6th tab could not load anything at all. Tabs elect a leader over a
+ * BroadcastChannel: the leader holds the stream and forwards every event,
+ * followers apply the forwarded events. When the leader goes away (tab
+ * closed, hook unmounted, tab frozen) a follower takes over.
+ *
+ * Within a tab the state is shared by every hook instance. Connects while at
+ * least one hook instance is mounted, reconnects automatically, and keeps the
+ * 2-minute rolling history (seeded by the server's backlog on connect) up to
+ * date from live samples.
  *
  * Native EventSource can't send the Authorization header the middleware
- * expects, so this reads the SSE stream through fetch.
+ * expects, so the leader reads the SSE stream through fetch.
  */
 let state: MonitorStreamState = {
   connected: false,
@@ -34,6 +41,28 @@ let refCount = 0;
 let running = false;
 let abortController: AbortController | null = null;
 
+const CHANNEL_NAME = 'ai-toolkit-monitor-stream';
+// Leader is presumed gone after this much silence; forwarded samples arrive
+// every MONITOR_TICK_MS so a healthy leader never comes close.
+const LEADER_SILENCE_MS = 3000;
+// How long a hello goes unanswered before the tab takes the stream itself.
+const CLAIM_WAIT_MS = 700;
+const tabId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+type Role = 'idle' | 'follower' | 'leader';
+type ChannelMessage =
+  | { type: 'hello'; id: string }
+  | { type: 'lead'; id: string }
+  | { type: 'snapshot'; id: string; state: MonitorStreamState }
+  | { type: 'event'; id: string; event: string; data: string }
+  | { type: 'resign'; id: string };
+
+let role: Role = 'idle';
+let channel: BroadcastChannel | null = null;
+let lastLeaderMsgAt = 0;
+let claimTimer: ReturnType<typeof setTimeout> | null = null;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
 function emit(next: MonitorStreamState) {
   state = next;
   for (const listener of listeners) {
@@ -41,20 +70,17 @@ function emit(next: MonitorStreamState) {
   }
 }
 
-function handleEventBlock(block: string) {
-  let event = 'message';
-  const dataLines: string[] = [];
-  for (const line of block.split('\n')) {
-    if (line.startsWith('event:')) {
-      event = line.slice('event:'.length).trim();
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice('data:'.length).trimStart());
-    }
+function post(msg: ChannelMessage) {
+  try {
+    channel?.postMessage(msg);
+  } catch {
+    // channel closed
   }
-  if (dataLines.length === 0) return;
+}
 
+function applyEvent(event: string, data: string) {
   if (event === 'init') {
-    const init: MonitorInit = JSON.parse(dataLines.join('\n'));
+    const init: MonitorInit = JSON.parse(data);
     emit({
       connected: true,
       lastUpdated: new Date(init.t),
@@ -63,7 +89,7 @@ function handleEventBlock(block: string) {
       history: init.history,
     });
   } else if (event === 'sample') {
-    const sample: MonitorSample = JSON.parse(dataLines.join('\n'));
+    const sample: MonitorSample = JSON.parse(data);
     const history = [...state.history, historyPointFromSample(sample)];
     if (history.length > MONITOR_HISTORY_LENGTH) {
       history.splice(0, history.length - MONITOR_HISTORY_LENGTH);
@@ -78,11 +104,29 @@ function handleEventBlock(block: string) {
   }
 }
 
+function handleEventBlock(block: string) {
+  let event = 'message';
+  const dataLines: string[] = [];
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) {
+      event = line.slice('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart());
+    }
+  }
+  if (dataLines.length === 0) return;
+  const data = dataLines.join('\n');
+  applyEvent(event, data);
+  if (role === 'leader') {
+    post({ type: 'event', id: tabId, event, data });
+  }
+}
+
 async function runLoop() {
   if (running) return;
   running = true;
   try {
-    while (refCount > 0) {
+    while (refCount > 0 && role === 'leader') {
       abortController = new AbortController();
       try {
         const headers: Record<string, string> = { Accept: 'text/event-stream' };
@@ -126,11 +170,122 @@ async function runLoop() {
       if (state.connected) {
         emit({ ...state, connected: false });
       }
-      if (refCount <= 0) break;
+      if (refCount <= 0 || role !== 'leader') break;
       await new Promise(r => setTimeout(r, 2000));
     }
   } finally {
     running = false;
+  }
+}
+
+function cancelClaim() {
+  if (claimTimer) {
+    clearTimeout(claimTimer);
+    claimTimer = null;
+  }
+}
+
+function becomeLeader() {
+  cancelClaim();
+  if (role === 'leader') return;
+  role = 'leader';
+  post({ type: 'lead', id: tabId });
+  runLoop();
+}
+
+function becomeFollower() {
+  cancelClaim();
+  if (role === 'leader') {
+    abortController?.abort();
+  }
+  role = 'follower';
+  lastLeaderMsgAt = Date.now();
+}
+
+// Ask for a leader; take over if nobody answers. Jitter spreads out tabs
+// that lost the same leader at the same moment.
+function startClaim() {
+  if (claimTimer || role !== 'follower') return;
+  post({ type: 'hello', id: tabId });
+  claimTimer = setTimeout(becomeLeader, CLAIM_WAIT_MS + Math.random() * 300);
+}
+
+function onMessage(ev: MessageEvent<ChannelMessage>) {
+  const msg = ev.data;
+  if (!msg || msg.id === tabId) return;
+  if (msg.type === 'hello') {
+    if (role === 'leader') {
+      post({ type: 'lead', id: tabId });
+      post({ type: 'snapshot', id: tabId, state });
+    }
+    return;
+  }
+  if (msg.type === 'resign') {
+    if (role === 'follower') startClaim();
+    return;
+  }
+  // lead / snapshot / event: another tab is leading
+  if (role === 'leader') {
+    // Two leaders (simultaneous claims, or a thawed tab). Lowest id wins.
+    if (msg.id < tabId) {
+      becomeFollower();
+    } else {
+      post({ type: 'lead', id: tabId });
+      return;
+    }
+  }
+  lastLeaderMsgAt = Date.now();
+  cancelClaim();
+  if (msg.type === 'snapshot') {
+    emit(msg.state);
+  } else if (msg.type === 'event') {
+    applyEvent(msg.event, msg.data);
+  }
+}
+
+function onPageHide() {
+  if (role === 'leader') {
+    post({ type: 'resign', id: tabId });
+  }
+}
+
+function start() {
+  if (typeof BroadcastChannel === 'undefined') {
+    role = 'leader';
+    runLoop();
+    return;
+  }
+  channel = new BroadcastChannel(CHANNEL_NAME);
+  channel.onmessage = onMessage;
+  window.addEventListener('pagehide', onPageHide);
+  role = 'follower';
+  lastLeaderMsgAt = Date.now();
+  startClaim();
+  watchdogTimer = setInterval(() => {
+    if (role === 'follower' && Date.now() - lastLeaderMsgAt > LEADER_SILENCE_MS) {
+      if (state.connected) {
+        emit({ ...state, connected: false });
+      }
+      startClaim();
+    }
+  }, 1000);
+}
+
+function stop() {
+  cancelClaim();
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+  if (role === 'leader') {
+    post({ type: 'resign', id: tabId });
+    abortController?.abort();
+  }
+  role = 'idle';
+  if (channel) {
+    window.removeEventListener('pagehide', onPageHide);
+    channel.close();
+    channel = null;
   }
 }
 
@@ -142,12 +297,14 @@ export default function useMonitorStream(): MonitorStreamState {
     listeners.add(listener);
     refCount++;
     setSnapshot(state);
-    runLoop();
+    if (refCount === 1) {
+      start();
+    }
     return () => {
       listeners.delete(listener);
       refCount--;
       if (refCount <= 0) {
-        abortController?.abort();
+        stop();
       }
     };
   }, []);
