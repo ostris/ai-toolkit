@@ -155,8 +155,14 @@ class MemoryManager:
             except Exception:
                 pass
 
-        # count ignore modules as processed
+        # count ignore modules as processed — including their whole subtree: an
+        # ignored module stays resident, so none of its children may get a
+        # layer manager (a managed child would pin its weight back to cpu
+        # behind the parent's back)
         modules_processed = [x for x in ignore_modules]
+        for im in ignore_modules:
+            if isinstance(im, torch.nn.Module):
+                modules_processed.extend(im.modules())
 
         # weights tied to an embedding (lm_head <-> embed_tokens) must not be
         # managed: pinning the linear's weight to cpu strands the (unmanaged)
