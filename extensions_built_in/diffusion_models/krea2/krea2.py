@@ -71,7 +71,7 @@ KREA2_MMDIT_CONFIG = dict(
     kvheads=12,
     multiplier=4,
     layers=28,
-    patch=2,
+    patch_size=2,
     channels=16,
     txtheads=20,
     txtkvheads=20,
@@ -160,7 +160,7 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         self.is_transformer = True
         self.target_lora_modules = ["SingleStreamDiT"]
 
-        self.patch_size = KREA2_MMDIT_CONFIG["patch"]
+        self.patch_size = KREA2_MMDIT_CONFIG["patch_size"]
         self.vae_scale_factor = 8  # Qwen-Image VAE is f8
         # Safety cap on prompt token length (truncation only); embeds are stored
         # per-sample at natural length and padded to the batch max at the model call.
