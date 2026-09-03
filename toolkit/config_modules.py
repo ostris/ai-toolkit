@@ -83,7 +83,7 @@ class SampleConfig:
         self.sample_start_step: int = kwargs.get('sample_start_step', 0)
         self.width: int = kwargs.get('width', 512)
         self.height: int = kwargs.get('height', 512)
-        self.neg = kwargs.get('neg', False)
+        self.neg = kwargs.get('neg', '')
         self.seed = kwargs.get('seed', 0)
         self.walk_seed = kwargs.get('walk_seed', False)
         self.guidance_scale = kwargs.get('guidance_scale', 7)
