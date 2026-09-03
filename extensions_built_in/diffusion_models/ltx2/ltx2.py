@@ -994,7 +994,7 @@ class LTX2Model(BaseModel):
                 connector_attention_mask,
             ) = self.pipeline.connectors(
                 text_embeddings.text_embeds,
-                text_embeddings.attention_mask.to(self.transformer.dtype),
+                text_embeddings.attention_mask.to(self.torch_dtype),
                 padding_side=tokenizer_padding_side,
             )
 
@@ -1018,7 +1018,7 @@ class LTX2Model(BaseModel):
 
         noise_pred_video, noise_pred_audio = self.transformer(
             hidden_states=packed_latents,
-            audio_hidden_states=audio_latents.to(self.transformer.dtype),
+            audio_hidden_states=audio_latents.to(self.torch_dtype),
             encoder_hidden_states=connector_prompt_embeds,
             audio_encoder_hidden_states=connector_audio_prompt_embeds,
             timestep=video_timestep,
