@@ -1041,6 +1041,12 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        # Pin DataLoader output tensors in page-locked RAM for faster CPU->GPU
+        # transfer. Off by default because page-locked RAM cannot be relocated
+        # by NVIDIA's Windows driver shared-memory VRAM-overflow fallback,
+        # which can cause severe PCIe thrashing for users at the VRAM ceiling.
+        # Opt in if you have stable VRAM headroom and want the transfer speedup.
+        self.pin_memory: bool = kwargs.get('pin_memory', False)
         # threads used to prep (decode/resize) items ahead of the VAE while caching latents
         self.cache_latents_num_workers: int = kwargs.get('cache_latents_num_workers', min(6, os.cpu_count() or 1))
         self.extra_values: List[float] = kwargs.get('extra_values', [])
