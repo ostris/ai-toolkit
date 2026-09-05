@@ -1,0 +1,84 @@
+# NVIDIA RTX Spark — native Windows-on-ARM (win_arm64) requirement set.
+#
+# Mirrors requirements_base.txt with pins adjusted to versions that actually
+# publish win_arm64 wheels (or that we build ourselves — see manager/spec.py
+# spark handling). Keep in sync with requirements_base.txt when bumping pins.
+#
+# Deliberate differences from requirements_base.txt:
+# - scipy>=1.17          first release with win_arm64 wheels (also unlocks numpy 2)
+# - matplotlib>=3.11     first release with win_arm64 wheels (base: 3.10.1)
+# - av>=17               first release with win_arm64 wheels (base: 16.0.1)
+# - numba/llvmlite rc    only prerelease win_arm64 wheels exist (librosa dep)
+# - tensorboard          REMOVED: its grpcio dep has no win_arm64 wheels; the
+#                        manager installs tensorboard --no-deps (writer path
+#                        only needs protobuf) as a spark extra
+# - hf_transfer          REMOVED: no win_arm64 wheels; hf-xet (arm64 OK) is the
+#                        modern replacement and installs via manager extras
+# - torchcodec pin       REMOVED: the manager installs the locally built
+#                        win_arm64 torchcodec wheel as an extra
+# - opencv-python, soxr, pywavelets, brotli(gradio), kornia-rs have no
+#   published win_arm64 wheels at any version — supplied from the ai-toolkit
+#   spark wheel set (self-built), resolved via --find-links
+
+numpy>=2,<3
+scipy>=1.17
+
+torchao==0.17.0
+safetensors
+git+https://github.com/huggingface/diffusers.git@c943837899b16cbae2f619b8dd4f7bb6f07dd81a
+transformers==5.5.3
+lycoris-lora==1.8.3
+flatten_json
+pyyaml
+oyaml
+kornia
+invisible-watermark
+einops
+accelerate
+toml
+albumentations==1.4.15
+albucore==0.0.16
+pydantic
+omegaconf
+open_clip_torch
+timm==1.0.22
+prodigyopt
+controlnet_aux==0.0.10
+python-dotenv
+bitsandbytes
+lpips
+pytorch_fid
+optimum-quanto==0.2.4
+sentencepiece
+huggingface_hub==1.23.0
+peft==0.18.1
+gradio
+python-slugify
+# exact pins: newer opencv versions exist on PyPI only as sdists (which fail
+# to build on MSVC arm64 — dnn __fp16); force the self-built 4.12 wheels
+opencv-python==4.12.0.88
+opencv-python-headless==4.12.0.88
+pytorch-wavelets==1.3.0
+matplotlib>=3.11
+setuptools>=77.0.3
+av>=17
+# librosa chain: numba/llvmlite have no cp312 win_arm64 wheels upstream — the
+# rc pins below resolve from the self-built spark wheel set (llvmlite built
+# against our own LLVM 22 static build)
+librosa==0.11.0
+numba==0.67.0rc1
+llvmlite==0.49.0rc1
+soxr==1.1.0
+mutagen==1.47.0
+soundfile
+
+# tensorboard is installed --no-deps by the manager (its grpcio dep has no
+# win_arm64 wheels; grpc is only needed by the tensorboard server, not the
+# SummaryWriter path the toolkit uses). Its remaining runtime deps:
+absl-py
+markdown
+werkzeug
+tensorboard-data-server
+packaging
+protobuf
+six

@@ -1,4 +1,6 @@
 import os
+import torch
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 
@@ -30,10 +32,19 @@ class AdvancedPromptEmbeds:
 
     def __init__(self, **kwargs):
         self._store = {}
+        self._frozen_dtype_keys = []
         for key, value in kwargs.items():
             if not isinstance(value, list):
                 value = [value]
             self._store[key] = value
+
+    @property
+    def frozen_dtype_keys(self):
+        return self._frozen_dtype_keys
+
+    @frozen_dtype_keys.setter
+    def frozen_dtype_keys(self, keys):
+        self._frozen_dtype_keys = list(keys) if keys else []
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -46,10 +57,14 @@ class AdvancedPromptEmbeds:
     def __setattr__(self, name, value):
         if name.startswith("_"):
             super().__setattr__(name, value)
-        else:
-            if not isinstance(value, list):
-                value = [value]
-            self._store[name] = value
+            return
+        cls_attr = getattr(type(self), name, None)
+        if isinstance(cls_attr, property):
+            super().__setattr__(name, value)
+            return
+        if not isinstance(value, list):
+            value = [value]
+        self._store[name] = value
 
     def set(self, key, value):
         if not isinstance(value, list):
@@ -77,25 +92,38 @@ class AdvancedPromptEmbeds:
         return key in self._store
 
     def to(self, *args, **kwargs):
+        frozen = set(self._frozen_dtype_keys)
+        if frozen:
+            no_dtype_args = [a for a in args if not isinstance(a, torch.dtype)]
+            no_dtype_kwargs = {k: v for k, v in kwargs.items() if k != "dtype"}
         new_pe = AdvancedPromptEmbeds()
+        new_pe._frozen_dtype_keys = list(self._frozen_dtype_keys)
         for key, value in self._store.items():
-            new_pe._store[key] = [v.to(*args, **kwargs) for v in value]
+            if key in frozen:
+                new_pe._store[key] = [
+                    v.to(*no_dtype_args, **no_dtype_kwargs) for v in value
+                ]
+            else:
+                new_pe._store[key] = [v.to(*args, **kwargs) for v in value]
         return new_pe
 
     def detach(self):
         new_pe = AdvancedPromptEmbeds()
+        new_pe._frozen_dtype_keys = list(self._frozen_dtype_keys)
         for key, value in self._store.items():
             new_pe._store[key] = [v.detach() for v in value]
         return new_pe
 
     def clone(self):
         new_pe = AdvancedPromptEmbeds()
+        new_pe._frozen_dtype_keys = list(self._frozen_dtype_keys)
         for key, value in self._store.items():
             new_pe._store[key] = [v.clone() for v in value]
         return new_pe
 
     def expand_to_batch(self, batch_size):
         new_pe = AdvancedPromptEmbeds()
+        new_pe._frozen_dtype_keys = list(self._frozen_dtype_keys)
         for key, value in self._store.items():
             if len(value) == 1:
                 new_pe._store[key] = value * batch_size
@@ -110,6 +138,8 @@ class AdvancedPromptEmbeds:
     def save(self, path):
         data = {}
         metadata = {"class_name": self.__class__.__name__}
+        if self._frozen_dtype_keys:
+            metadata["frozen_dtype_keys"] = ",".join(self._frozen_dtype_keys)
         for key, value in self._store.items():
             if len(value) != 1:
                 raise ValueError(
@@ -123,6 +153,8 @@ class AdvancedPromptEmbeds:
     def load(cls, path=None):
         if path is not None:
             loaded = load_file(path)
+            with safe_open(path, framework="pt") as f:
+                metadata = f.metadata()
         else:
             raise ValueError("Must provide a path")
 
@@ -130,19 +162,36 @@ class AdvancedPromptEmbeds:
         for key in loaded.keys():
             data[key] = loaded[key]
 
-        return cls(**data)
+        pe = cls(**data)
+        frozen = []
+        if metadata is not None and metadata.get("frozen_dtype_keys"):
+            frozen = metadata["frozen_dtype_keys"].split(",")
+        # files cached before frozen keys were saved have no metadata for them.
+        # Integer/bool tensors (token tags, etc) must never be dtype cast, so
+        # freeze them regardless.
+        for key, value in pe._store.items():
+            if key not in frozen and not value[0].is_floating_point():
+                frozen.append(key)
+        pe.frozen_dtype_keys = frozen
+        return pe
 
     @classmethod
     def concat_prompt_embeds(
         cls, prompt_embeds: list["AdvancedPromptEmbeds"], padding_side: str = "right"
     ):
         embeds = {}
+        frozen = []
         for pe in prompt_embeds:
             for key in pe.keys():
                 if key not in embeds:
                     embeds[key] = []
                 embeds[key].extend(pe[key])
-        return cls(**embeds)
+            for k in pe.frozen_dtype_keys:
+                if k not in frozen:
+                    frozen.append(k)
+        out = cls(**embeds)
+        out.frozen_dtype_keys = frozen
+        return out
 
     @classmethod
     def split_prompt_embeds(cls, concatenated: "AdvancedPromptEmbeds", num_parts=None):
@@ -150,6 +199,8 @@ class AdvancedPromptEmbeds:
             # use length of first item as num_parts
             num_parts = len(concatenated[concatenated.keys()[0]])
         split_embeds = [cls() for _ in range(num_parts)]
+        for pe in split_embeds:
+            pe.frozen_dtype_keys = list(concatenated.frozen_dtype_keys)
         for key in concatenated.keys():
             values = concatenated[key]
             if len(values) != num_parts:

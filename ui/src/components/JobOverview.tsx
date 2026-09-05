@@ -20,7 +20,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
     }
     return job.gpu_ids.split(',').map(id => parseInt(id));
   }, [job.gpu_ids]);
-  const { log, setLog, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
+  const { log, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
   const logRef = useRef<HTMLDivElement>(null);
   // Track whether we should auto-scroll to bottom
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
@@ -32,12 +32,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
   const isStopping = job.stop && job.status === 'running';
 
   const logLines: string[] = useMemo(() => {
-    // split at line breaks on \n or \r\n but not \r
-    let splits: string[] = log.split(/\n|\r\n/);
-
-    splits = splits.map(line => {
-      return line.split(/\r/).pop();
-    }) as string[];
+    // Log is already terminal-rendered by useJobLog — one entry per line.
+    let splits: string[] = log.split('\n');
 
     // only return last 100 lines max
     const maxLines = 1000;
@@ -90,9 +86,9 @@ export default function JobOverview({ job }: JobOverviewProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 md:gap-6 md:grid-cols-3">
       {/* Job Information Panel */}
-      <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
+      <div className="md:col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <h2 className="text-gray-100">
             <Info className="w-5 h-5 mr-2 -mt-1 text-amber-600 dark:text-amber-400 inline-block" /> {job.info}
@@ -102,7 +98,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
 
         <div className="p-4 space-y-6 flex flex-col flex-grow">
           {/* Progress Bar */}
-          {job.job_type === 'train' && (
+          {totalSteps > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-400">Progress</span>
@@ -165,12 +161,12 @@ export default function JobOverview({ job }: JobOverviewProps) {
       </div>
 
       {/* GPU Widget Panel */}
-      <div className="col-span-1">
+      <div className="md:col-span-1">
         <div>{isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}</div>
         <div className="mt-4">{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
         {jobType === 'train' && (
           <div className="mt-4">
-            <FilesWidget jobID={job.id} />
+            <FilesWidget jobID={job.id} jobName={job.name} />
           </div>
         )}
       </div>

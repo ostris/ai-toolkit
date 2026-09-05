@@ -1,71 +1,35 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { GPUApiResponse } from '@/types';
+import React, { useMemo } from 'react';
 import Loading from '@/components/Loading';
 import GPUWidget from '@/components/GPUWidget';
-import { apiClient } from '@/utils/api';
+import useMonitorStream from '@/hooks/useMonitorStream';
 
 const GpuMonitor: React.FC = () => {
-  const [gpuData, setGpuData] = useState<GPUApiResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const isFetchingGpuRef = useRef(false);
-
-  useEffect(() => {
-    const fetchGpuInfo = async () => {
-      if (isFetchingGpuRef.current) {
-        return;
-      }
-      setLoading(true);
-      isFetchingGpuRef.current = true;
-      apiClient
-        .get('/api/gpu')
-        .then(res => res.data)
-        .then(data => {
-          setGpuData(data);
-          setLastUpdated(new Date());
-          setError(null);
-        })
-        .catch(err => {
-          setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
-        })
-        .finally(() => {
-          isFetchingGpuRef.current = false;
-          setLoading(false);
-        });
-    };
-
-    // Fetch immediately on component mount
-    fetchGpuInfo();
-
-    // Set up interval to fetch every 1 seconds
-    const intervalId = setInterval(fetchGpuInfo, 1000);
-
-    // Clean up interval on component unmount
-    return () => clearInterval(intervalId);
-  }, []);
+  // Live samples arrive every MONITOR_TICK_MS over the shared /api/monitor SSE stream
+  const { gpu: gpuData, lastUpdated } = useMonitorStream();
+  const loading = gpuData === null;
+  const error = null;
 
   const getGridClasses = (gpuCount: number): string => {
     switch (gpuCount) {
       case 1:
         return 'grid-cols-1';
       case 2:
-        return 'grid-cols-2';
+        return 'grid-cols-1 sm:grid-cols-2';
       case 3:
-        return 'grid-cols-3';
+        return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
       case 4:
-        return 'grid-cols-4';
+        return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
       case 5:
       case 6:
-        return 'grid-cols-3';
+        return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
       case 7:
       case 8:
-        return 'grid-cols-4';
+        return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
       case 9:
       case 10:
-        return 'grid-cols-5';
+        return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-5';
       default:
-        return 'grid-cols-3';
+        return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
     }
   };
 

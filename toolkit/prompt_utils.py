@@ -152,6 +152,10 @@ class PromptEmbeds:
         metadata = f.metadata()
         if metadata is not None and metadata.get("class_name", "") == "AdvancedPromptEmbeds":
             return AdvancedPromptEmbeds.load(path=path)
+        if metadata is not None and metadata.get("class_name", "") == "AnimaPromptEmbeds":
+            from extensions_built_in.diffusion_models.anima import AnimaPromptEmbeds
+
+            return AnimaPromptEmbeds.load(path=path)
         
         state_dict = load_file(path, device='cpu')
         text_embeds = []

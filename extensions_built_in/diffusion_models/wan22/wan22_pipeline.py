@@ -88,6 +88,9 @@ class Wan22Pipeline(WanPipeline):
         text_encoder_device = self.text_encoder.device
         device = self._exec_device
         
+        if vae_device == torch.device("cpu"):
+            vae_device = self.reset_device_map
+
         if self._aggressive_offload:
             print("Unloading vae")
             self.vae.to("cpu")

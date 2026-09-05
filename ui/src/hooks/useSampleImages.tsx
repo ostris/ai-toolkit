@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export default function useSampleImages(jobID: string, reloadInterval: null | number = null) {
   const [sampleImages, setSampleImages] = useState<string[]>([]);
@@ -9,7 +10,7 @@ export default function useSampleImages(jobID: string, reloadInterval: null | nu
 
   const refreshSampleImages = () => {
     setStatus('loading');
-    apiClient
+    return apiClient
       .get(`/api/jobs/${jobID}/samples`)
       .then(res => res.data)
       .then(data => {
@@ -25,19 +26,7 @@ export default function useSampleImages(jobID: string, reloadInterval: null | nu
       });
   };
 
-  useEffect(() => {
-    refreshSampleImages();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshSampleImages();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [jobID]);
+  usePollLoop(refreshSampleImages, reloadInterval, [jobID]);
 
   return { sampleImages, setSampleImages, status, refreshSampleImages };
 }

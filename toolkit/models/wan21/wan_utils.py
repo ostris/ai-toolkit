@@ -115,9 +115,10 @@ def add_first_frame_conditioning(
 
 def add_first_frame_conditioning_v22(
     latent_model_input,
-    first_frame,
-    vae,
-    last_frame=None
+    first_frame=None,
+    vae=None,
+    last_frame=None,
+    first_frame_latents=None,
 ):
     """
     Overwrites first few time steps in latent_model_input with VAE-encoded first_frame,
@@ -127,6 +128,8 @@ def add_first_frame_conditioning_v22(
         latent_model_input: torch.Tensor of shape (bs, 48, T, H, W)
         first_frame: torch.Tensor of shape (bs, 3, H*scale, W*scale)
         vae: VAE model with .encode() and .config.latents_mean/std
+        first_frame_latents: optional pre-encoded, normalized first frame latents of
+            shape (bs, 48, 1, H, W); skips the VAE encode when provided
 
     Returns:
         latent: (bs, 48, T, H, W) - modified input latent
@@ -139,21 +142,30 @@ def add_first_frame_conditioning_v22(
     target_h = H * scale
     target_w = W * scale
 
-    # Ensure shape
-    if first_frame.ndim == 3:
-        first_frame = first_frame.unsqueeze(0)
-    if first_frame.shape[0] != bs:
-        first_frame = first_frame.expand(bs, -1, -1, -1)
-
-    # Resize and encode
-    first_frame_up = F.interpolate(first_frame, size=(target_h, target_w), mode="bilinear", align_corners=False)
-    first_frame_up = first_frame_up.unsqueeze(2)  # (bs, 3, 1, H, W)
-    encoded = vae.encode(first_frame_up).latent_dist.sample().to(dtype).to(device)
-
-    # Normalize
     mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(device, dtype)
     std = 1.0 / torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1).to(device, dtype)
-    encoded = (encoded - mean) * std
+
+    if first_frame_latents is not None:
+        # cached latents are already encoded and normalized
+        encoded = first_frame_latents.to(device, dtype)
+        if encoded.ndim == 4:
+            encoded = encoded.unsqueeze(0)
+        if encoded.shape[0] != bs:
+            encoded = encoded.expand(bs, -1, -1, -1, -1)
+    else:
+        # Ensure shape
+        if first_frame.ndim == 3:
+            first_frame = first_frame.unsqueeze(0)
+        if first_frame.shape[0] != bs:
+            first_frame = first_frame.expand(bs, -1, -1, -1)
+
+        # Resize and encode
+        first_frame_up = F.interpolate(first_frame, size=(target_h, target_w), mode="bilinear", align_corners=False)
+        first_frame_up = first_frame_up.unsqueeze(2)  # (bs, 3, 1, H, W)
+        encoded = vae.encode(first_frame_up).latent_dist.sample().to(dtype).to(device)
+
+        # Normalize
+        encoded = (encoded - mean) * std
 
     # Replace in latent
     latent = latent_model_input.clone()

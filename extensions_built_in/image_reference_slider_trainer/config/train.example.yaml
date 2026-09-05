@@ -41,6 +41,7 @@ config:
       sample:
         sampler: "ddpm" # must match train.noise_scheduler
         sample_every: 100 # sample every this many steps
+        sample_start_step: 0 # start sampling at this step
         width: 512
         height: 512
         prompts:

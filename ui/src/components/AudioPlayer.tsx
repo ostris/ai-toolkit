@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '@/utils/api';
+import { encodeFilePathForUrl } from '@/utils/basic';
 
 type AudioPlayerProps = {
   src: string;
@@ -40,16 +41,17 @@ function broadcastExclusivePlay(token: string) {
 
 /**
  * Build the server-side album-art URL from the audio src.
- * The audio src is `/api/img/{encodedPath}` — we extract the path
- * and point to `/api/audio/art/{encodedPath}` instead.
+ * The audio src is `/api/img/{encodedFolder}/{encodedFile}` (or the legacy
+ * `/api/img/{encodedPath}`) — we keep the encoded tail as-is and point to
+ * `/api/audio/art/...` instead; that route accepts both shapes.
  */
 function albumArtUrlFromSrc(src: string): string {
   const prefix = '/api/img/';
   if (src.startsWith(prefix)) {
     return `/api/audio/art/${src.slice(prefix.length)}`;
   }
-  // Fallback: assume src is already an encoded path
-  return `/api/audio/art/${encodeURIComponent(src)}`;
+  // Fallback: assume src is a raw file path
+  return `/api/audio/art/${encodeFilePathForUrl(src)}`;
 }
 
 export default function AudioPlayer({

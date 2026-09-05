@@ -1,6 +1,9 @@
 from typing import Optional
 
-import librosa
+try:
+    import librosa
+except ImportError:
+    librosa = None
 import numpy as np
 import torch
 import torchaudio
@@ -16,7 +19,7 @@ import transformers
 import logging
 import warnings
 
-transformers.logging.set_verbosity_error()
+# transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
@@ -41,6 +44,11 @@ KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 def analyze_audio(audio_path):
     """Extract BPM, key, and time signature from audio using librosa."""
+    if librosa is None:
+        raise ImportError(
+            "librosa is required for the AceStep captioner but is not "
+            "installed (no numba/llvmlite wheels for this platform yet)."
+        )
     y, sr = librosa.load(audio_path, sr=22050, mono=True)
     duration = librosa.get_duration(y=y, sr=sr)
 

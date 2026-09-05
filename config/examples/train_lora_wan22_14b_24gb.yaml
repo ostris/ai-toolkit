@@ -80,6 +80,7 @@ config:
       sample:
         sampler: "flowmatch"
         sample_every: 250 # sample every this many steps
+        sample_start_step: 0 # start sampling at this step
         width: 1024
         height: 1024
         # set to 1 for images

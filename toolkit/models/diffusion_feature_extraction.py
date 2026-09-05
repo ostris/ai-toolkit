@@ -4,6 +4,7 @@ import os
 from torch import nn
 from safetensors.torch import load_file
 import torch.nn.functional as F
+import torch.utils.checkpoint as ckpt
 from diffusers import AutoencoderTiny
 from transformers import AutoImageProcessor, AutoModel, SiglipImageProcessor, SiglipVisionModel
 import lpips
@@ -13,6 +14,13 @@ from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscre
 from toolkit.models.base_model import BaseModel
 from toolkit.models.sapiens2 import Sapiens2
 import huggingface_hub
+
+
+def _fold_frames_to_batch(x: torch.Tensor) -> torch.Tensor:
+    """(B, C, T, H, W) -> (B*T, C, H, W), each sample's frames contiguous -- so the 2D
+    feature losses run on EVERY frame of a video instead of only the first."""
+    b, c, t, h, w = x.shape
+    return x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
 
 
 class ResBlock(nn.Module):
@@ -518,41 +526,47 @@ class DiffusionFeatureExtractor4(nn.Module):
         device = self.vae.device
         tensors = batch.tensor.to(device, dtype=dtype)
         is_video = False
-        # stack time for video models on the batch dimension
         if len(noise_pred.shape) == 5:
-            # B, C, T, H, W = images.shape
-            # only take first time
-            noise = noise[:, :, 0, :, :]
-            noise_pred = noise_pred[:, :, 0, :, :]
-            noisy_latents = noisy_latents[:, :, 0, :, :]
+            # (B, C, T, H, W): video VAEs decode whole clips (latent frames do
+            # not map 1:1 to pixel frames), so the latents stay 5D through the
+            # VAE and the decoded PIXEL frames fold into the batch dim below,
+            # matching the folded target frames
             is_video = True
         
         if len(tensors.shape) == 5:
-            # batch is different
-            # (B, T, C, H, W)
-            # only take first time
-            tensors = tensors[:, 0, :, :, :]
+            # batch tensor is frames-first (B, T, C, H, W): fold to (B*T, C, H, W)
+            tensors = tensors.reshape(-1, *tensors.shape[2:])
             
         if model is not None and hasattr(model, 'get_stepped_pred'):
             stepped_latents = model.get_stepped_pred(noise_pred, noise)
         else:
-            stepped_latents = self.step_latents(noise, noise_pred, noisy_latents, timesteps, scheduler)
-            
+            with torch.no_grad():
+                tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+                # expand shape to match noise_pred
+                while len(tv.shape) < len(noise_pred.shape):
+                    tv = tv.unsqueeze(-1)
+                    # min 0.001
+                    tv = torch.clamp(tv, min=0.001)
+
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
+
+            stepped_latents = x0
+
         latents = stepped_latents.to(self.vae.device, dtype=self.vae.dtype)
 
         scaling_factor = self.vae.config.scaling_factor if hasattr(self.vae.config, 'scaling_factor') else 1.0
         shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, 'shift_factor') else 0.0
         latents = (latents / scaling_factor) + shift_factor
-        if is_video:
-            # if video, we need to unsqueeze the latents to match the vae input shape
-            latents = latents.unsqueeze(2)
+        # video latents stay 5D (B, C, T, H, W): the video VAE decodes the whole
+        # clip, and the decoded PIXEL frames fold into the batch dim to match
+        # the folded target frames
         tensors_n1p1 = self.vae.decode(latents)  # -1 to 1
         if hasattr(tensors_n1p1, 'sample'):
             tensors_n1p1 = tensors_n1p1.sample
         
         if is_video:
-            # if video, we need to squeeze the tensors to match the output shape
-            tensors_n1p1 = tensors_n1p1.squeeze(2)
+            tensors_n1p1 = _fold_frames_to_batch(tensors_n1p1)
         
         pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
         
@@ -594,7 +608,7 @@ class DiffusionFeatureExtractor4(nn.Module):
                 self.losses[key] /= self.log_every
                 # print in 2.000e-01 format
                 print(f" - {key}: {self.losses[key]:.3e}")
-            self.losses[key] = 0.0
+                self.losses[key] = 0.0
         
         # total_loss += mse_loss
         self.step += 1
@@ -669,7 +683,12 @@ class DiffusionFeatureExtractor6(nn.Module):
         self.losses = {}
         self.log_every = 100
         self.step = 0
-    
+
+        # cache normalization constants once so prepare_inputs doesn't rebuild
+        # them (CPU tensor construction + H2D copy) on every call
+        self.image_mean = torch.tensor(self.processor.image_mean, device=device, dtype=dtype).view(1, 3, 1, 1)
+        self.image_std = torch.tensor(self.processor.image_std, device=device, dtype=dtype).view(1, 3, 1, 1)
+
     def prepare_inputs(self, tensor_0_1: torch.Tensor):
         """
         tensor_0_1: (bs, 3, h, w), float, values in [0, 1]
@@ -682,6 +701,12 @@ class DiffusionFeatureExtractor6(nn.Module):
         x = tensor_0_1
         if not torch.is_floating_point(x):
             x = x.float()
+
+        # VAE decode can overshoot [0, 1] slightly; clamp back into range.
+        # Inputs are documented as 0..1 and clamped here, so no 0..255 rescale
+        # heuristic is needed (the old max().item() check forced a GPU sync
+        # every call and could never trigger after this clamp anyway).
+        x = torch.clamp(x, 0.0, 1.0)
 
         # Resize
         # if not divisible by 16 or total pixels > max_res*max_res, resize to fit within 16 patches
@@ -698,17 +723,10 @@ class DiffusionFeatureExtractor6(nn.Module):
             target_w = (target_w // p) * p
             x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
             
-        # Rescale (HF processors usually assume uint8 0..255 inputs; your inputs are already 0..1)
-        if self.processor.do_rescale:
-            # If it looks like [0..1], skip to avoid double-scaling.
-            # If user accidentally passed 0..255 floats, this will fix it.
-            if x.detach().max().item() > 1.0 + 1e-6:
-                x = x * float(self.processor.rescale_factor or 1.0 / 255.0)
-
         # Normalize
         if self.processor.do_normalize:
-            mean = torch.tensor(self.processor.image_mean, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
-            std = torch.tensor(self.processor.image_std, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
+            mean = self.image_mean.to(device=x.device, dtype=x.dtype)
+            std = self.image_std.to(device=x.device, dtype=x.dtype)
             x = (x - mean) / std
 
         return {"pixel_values": x}
@@ -727,20 +745,16 @@ class DiffusionFeatureExtractor6(nn.Module):
         device = self.vae.device
         tensors = batch.tensor.to(device, dtype=dtype)
         is_video = False
-        # stack time for video models on the batch dimension
         if len(noise_pred.shape) == 5:
-            # B, C, T, H, W = images.shape
-            # only take first time
-            noise = noise[:, :, 0, :, :]
-            noise_pred = noise_pred[:, :, 0, :, :]
-            noisy_latents = noisy_latents[:, :, 0, :, :]
+            # (B, C, T, H, W): video VAEs decode whole clips (latent frames do
+            # not map 1:1 to pixel frames), so the latents stay 5D through the
+            # VAE and the decoded PIXEL frames fold into the batch dim below,
+            # matching the folded target frames
             is_video = True
         
         if len(tensors.shape) == 5:
-            # batch is different
-            # (B, T, C, H, W)
-            # only take first time
-            tensors = tensors[:, 0, :, :, :]
+            # batch tensor is frames-first (B, T, C, H, W): fold to (B*T, C, H, W)
+            tensors = tensors.reshape(-1, *tensors.shape[2:])
             
         with torch.no_grad():
             tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
@@ -760,16 +774,15 @@ class DiffusionFeatureExtractor6(nn.Module):
         scaling_factor = self.vae.config.scaling_factor if hasattr(self.vae.config, 'scaling_factor') else 1.0
         shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, 'shift_factor') else 0.0
         latents = (latents / scaling_factor) + shift_factor
-        if is_video:
-            # if video, we need to unsqueeze the latents to match the vae input shape
-            latents = latents.unsqueeze(2)
+        # video latents stay 5D (B, C, T, H, W): the video VAE decodes the whole
+        # clip, and the decoded PIXEL frames fold into the batch dim to match
+        # the folded target frames
         tensors_n1p1 = self.vae.decode(latents)  # -1 to 1
         if hasattr(tensors_n1p1, 'sample'):
             tensors_n1p1 = tensors_n1p1.sample
         
         if is_video:
-            # if video, we need to squeeze the tensors to match the output shape
-            tensors_n1p1 = tensors_n1p1.squeeze(2)
+            tensors_n1p1 = _fold_frames_to_batch(tensors_n1p1)
         
         pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
 
@@ -789,19 +802,23 @@ class DiffusionFeatureExtractor6(nn.Module):
             pred_dino_output.float(), target_dino_output.float()
         )
         
+        # accumulate on-GPU; .item() every step forces a full pipeline sync,
+        # so only sync when we actually log
         if 'dinov3' not in self.losses:
-            self.losses['dinov3'] = dino_loss.item()
+            self.losses['dinov3'] = dino_loss.detach()
         else:
-            self.losses['dinov3'] += dino_loss.item()
-        
+            self.losses['dinov3'] = self.losses['dinov3'] + dino_loss.detach()
+
         with torch.no_grad():
             if self.step % self.log_every == 0 and self.step > 0:
                 print(f"DFE losses:")
                 for key in self.losses:
-                    self.losses[key] /= self.log_every
+                    avg = self.losses[key] / self.log_every
+                    if torch.is_tensor(avg):
+                        avg = avg.item()
                     # print in 2.000e-01 format
-                    print(f" - {key}: {self.losses[key]:.3e}")
-                self.losses[key] = 0.0
+                    print(f" - {key}: {avg:.3e}")
+                    self.losses[key] = 0.0
             
             # total_loss += mse_loss
             self.step += 1
@@ -829,13 +846,12 @@ class DiffusionFeatureExtractor7(nn.Module):
         
         self.version = 7
         self.sd_ref = weakref.ref(sd) if sd is not None else None
+        from toolkit.models.tipsv2 import TIPSv2DPTModel
         pretrained_model_name = "google/tipsv2-b14-dpt"
-        self.model = AutoModel.from_pretrained(
-            pretrained_model_name, 
-            device_map=device,
-            dtype=torch.float32,
-            trust_remote_code=True
-        ).to(device)
+        self.model = TIPSv2DPTModel.from_pretrained(
+            pretrained_model_name,
+            dtype=dtype,
+        ).to(device, dtype=dtype)
 
         self.losses = {}
         self.log_every = 100
@@ -897,20 +913,16 @@ class DiffusionFeatureExtractor7(nn.Module):
         device = self.sd_ref().vae.device
         tensors = batch.tensor.to(device, dtype=dtype)
         is_video = False
-        # stack time for video models on the batch dimension
         if len(noise_pred.shape) == 5:
-            # B, C, T, H, W = images.shape
-            # only take first time
-            noise = noise[:, :, 0, :, :]
-            noise_pred = noise_pred[:, :, 0, :, :]
-            noisy_latents = noisy_latents[:, :, 0, :, :]
+            # (B, C, T, H, W): video VAEs decode whole clips (latent frames do
+            # not map 1:1 to pixel frames), so the latents stay 5D through the
+            # VAE and the decoded PIXEL frames fold into the batch dim below,
+            # matching the folded target frames
             is_video = True
         
         if len(tensors.shape) == 5:
-            # batch is different
-            # (B, T, C, H, W)
-            # only take first time
-            tensors = tensors[:, 0, :, :, :]
+            # batch tensor is frames-first (B, T, C, H, W): fold to (B*T, C, H, W)
+            tensors = tensors.reshape(-1, *tensors.shape[2:])
             
         with torch.no_grad():
             tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
@@ -922,8 +934,11 @@ class DiffusionFeatureExtractor7(nn.Module):
             target_0_1 = (tensors + 1) / 2  # 0 to 1
         
         if not self.do_partial_step:
-            # step latent
-            x0 = noisy_latents - tv * noise_pred
+            if getattr(self.sd_ref(), "x0_pred", False):
+                x0 = noise_pred
+            else:
+                # step latent
+                x0 = noisy_latents - tv * noise_pred
             stepped_latents = x0
             # min 0.001
             tv = torch.clamp(tv, min=0.001)
@@ -940,16 +955,26 @@ class DiffusionFeatureExtractor7(nn.Module):
                 # add noise
                 target_latents = (1.0 - next_step) * target_latents + next_step * noise
                 target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                if is_video:
+                    target_n1p1 = _fold_frames_to_batch(target_n1p1)
                 target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
 
         latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
         
         tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        if is_video:
+            # (B, 3, T_px, H, W) -> (B*T_px, 3, H, W), and repeat each sample's
+            # timestep weight for every one of its decoded frames
+            b, t_px = tensors_n1p1.shape[0], tensors_n1p1.shape[2]
+            tensors_n1p1 = _fold_frames_to_batch(tensors_n1p1)
+            tv = tv.reshape(b, 1, 1, 1).repeat_interleave(t_px, dim=0)
         
         pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
         
         device = self.model.device
         dtype = self.model.dtype
+        
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
 
         with torch.no_grad():
             target = self.get_pred(target_0_1)
@@ -958,20 +983,24 @@ class DiffusionFeatureExtractor7(nn.Module):
         pred = self.get_pred(pred_images)
         
         head_loss = torch.nn.functional.mse_loss(
-            pred.head.float(), target.head.float()
-        )
+            pred.head.float(), target.head.float(), reduction='none'
+        ) * velocity_equiv_weight
+        head_loss = head_loss.mean()
         
         depth_loss = torch.nn.functional.l1_loss(
-            pred.depth.float(), target.depth.float()
-        )
+            pred.depth.float(), target.depth.float(), reduction='none'
+        ) * velocity_equiv_weight
+        depth_loss = depth_loss.mean()
         
         normals_loss = torch.nn.functional.l1_loss(
-            pred.normals.float(), target.normals.float()
-        )
+            pred.normals.float(), target.normals.float(), reduction='none'
+        ) * velocity_equiv_weight
+        normals_loss = normals_loss.mean()
         
         segmentation_loss = torch.nn.functional.l1_loss(
-            pred.segmentation.float(), target.segmentation.float()
-        )
+            pred.segmentation.float(), target.segmentation.float(), reduction='none'
+        ) * velocity_equiv_weight
+        segmentation_loss = segmentation_loss.mean()
         
         total_loss = (head_loss + depth_loss + normals_loss + segmentation_loss) / 4.0
         
@@ -1087,20 +1116,16 @@ class DiffusionFeatureExtractor9(nn.Module):
         device = self.sd_ref().vae.device
         tensors = batch.tensor.to(device, dtype=dtype)
         is_video = False
-        # stack time for video models on the batch dimension
         if len(noise_pred.shape) == 5:
-            # B, C, T, H, W = images.shape
-            # only take first time
-            noise = noise[:, :, 0, :, :]
-            noise_pred = noise_pred[:, :, 0, :, :]
-            noisy_latents = noisy_latents[:, :, 0, :, :]
+            # (B, C, T, H, W): video VAEs decode whole clips (latent frames do
+            # not map 1:1 to pixel frames), so the latents stay 5D through the
+            # VAE and the decoded PIXEL frames fold into the batch dim below,
+            # matching the folded target frames
             is_video = True
         
         if len(tensors.shape) == 5:
-            # batch is different
-            # (B, T, C, H, W)
-            # only take first time
-            tensors = tensors[:, 0, :, :, :]
+            # batch tensor is frames-first (B, T, C, H, W): fold to (B*T, C, H, W)
+            tensors = tensors.reshape(-1, *tensors.shape[2:])
             
         with torch.no_grad():
             tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
@@ -1112,8 +1137,11 @@ class DiffusionFeatureExtractor9(nn.Module):
             target_0_1 = (tensors + 1) / 2  # 0 to 1
         
         if not self.do_partial_step:
-            # step latent
-            x0 = noisy_latents - tv * noise_pred
+            if getattr(self.sd_ref(), "x0_pred", False):
+                x0 = noise_pred
+            else:
+                # step latent
+                x0 = noisy_latents - tv * noise_pred
             stepped_latents = x0
             # min 0.001
             tv = torch.clamp(tv, min=0.001)
@@ -1123,18 +1151,26 @@ class DiffusionFeatureExtractor9(nn.Module):
             next_step = tv - step
             next_step = torch.clamp(next_step, min=0.0)
             stepped_latents = noisy_latents + (next_step - tv) * noise_pred
-            
+
             with torch.no_grad():
                 # make a noisy target at next timestep
                 target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
                 # add noise
                 target_latents = (1.0 - next_step) * target_latents + next_step * noise
                 target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                if is_video:
+                    target_n1p1 = _fold_frames_to_batch(target_n1p1)
                 target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
 
         latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
         
         tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        if is_video:
+            # (B, 3, T_px, H, W) -> (B*T_px, 3, H, W), and repeat each sample's
+            # timestep weight for every one of its decoded frames
+            b, t_px = tensors_n1p1.shape[0], tensors_n1p1.shape[2]
+            tensors_n1p1 = _fold_frames_to_batch(tensors_n1p1)
+            tv = tv.reshape(b, 1, 1, 1).repeat_interleave(t_px, dim=0)
         
         pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
         
@@ -1150,7 +1186,7 @@ class DiffusionFeatureExtractor9(nn.Module):
         perceptual_loss = torch.nn.functional.mse_loss(
             pred.float(), target.float(), reduction="none"
         )
-        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.001) ** 2)
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
         loss_perceptual = (perceptual_loss * velocity_equiv_weight).mean()
         
         if self.do_partial_step:
@@ -1172,6 +1208,170 @@ class DiffusionFeatureExtractor9(nn.Module):
             # total_loss += mse_loss
             self.step += 1
         
+        return loss_perceptual
+
+class DiffusionFeatureExtractor10(nn.Module):
+    def __init__(
+        self,
+        device=torch.device("cuda"),
+        dtype=torch.bfloat16,
+        vae=None,
+        sd=None,
+        partial_step: bool = False
+    ):
+        super().__init__()
+
+        self.version = 10
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
+        self.lpips_model = lpips.LPIPS(net='vgg')
+        self.lpips_model = self.lpips_model.to(device, dtype=torch.float32)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        self.do_partial_step = partial_step
+
+    def _vgg_slices(self, x):
+        # run the lpips vgg backbone slice-by-slice so we can gradient
+        # checkpoint each slice. checkpointing activates whenever grads are
+        # enabled, so it does not require the module to be in train mode.
+        net = self.lpips_model.net
+        slices = [net.slice1, net.slice2, net.slice3, net.slice4, net.slice5]
+        outs = []
+        h = x
+        for s in slices:
+            if torch.is_grad_enabled():
+                h = ckpt.checkpoint(s, h, use_reentrant=False)
+            else:
+                h = s(h)
+            outs.append(h)
+        return outs
+
+    def get_lpips_features(self, tensors_0_1):
+        device = self.lpips_model.scaling_layer.shift.device
+        tensors_n1p1 = (tensors_0_1 * 2) - 1
+        def get_lpips_features(img):  # -1 to 1
+            in0_input = self.lpips_model.scaling_layer(img)
+            outs0 = self._vgg_slices(in0_input)
+
+            feats_list = []
+            for kk in range(self.lpips_model.L):
+                feats_list.append(lpips.normalize_tensor(outs0[kk]))
+
+            return feats_list
+
+        lpips_feat_list = [x for x in get_lpips_features(
+            tensors_n1p1.to(device, dtype=torch.float32))]
+
+        return lpips_feat_list
+
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps,
+        batch: DataLoaderBatchDTO,
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.sd_ref().vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        if len(noise_pred.shape) == 5:
+            # (B, C, T, H, W): video VAEs decode whole clips (latent frames do
+            # not map 1:1 to pixel frames), so the latents stay 5D through the
+            # VAE and the decoded PIXEL frames fold into the batch dim below,
+            # matching the folded target frames
+            is_video = True
+
+        if len(tensors.shape) == 5:
+            # batch tensor is frames-first (B, T, C, H, W): fold to (B*T, C, H, W)
+            tensors = tensors.reshape(-1, *tensors.shape[2:])
+
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+
+        with torch.no_grad():
+            target_0_1 = (tensors + 1) / 2  # 0 to 1
+
+        if not self.do_partial_step:
+            if getattr(self.sd_ref(), "x0_pred", False):
+                x0 = noise_pred
+            else:
+                # step latent
+                x0 = noisy_latents - tv * noise_pred
+            stepped_latents = x0
+            # min 0.001
+            tv = torch.clamp(tv, min=0.001)
+        else:
+            # step is random 0.1 to 0.25
+            step = torch.rand_like(tv) * 0.15 + 0.1
+            next_step = tv - step
+            next_step = torch.clamp(next_step, min=0.0)
+            stepped_latents = noisy_latents + (next_step - tv) * noise_pred
+
+            with torch.no_grad():
+                # make a noisy target at next timestep
+                target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+                # add noise
+                target_latents = (1.0 - next_step) * target_latents + next_step * noise
+                target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                if is_video:
+                    target_n1p1 = _fold_frames_to_batch(target_n1p1)
+                target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
+
+        latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+
+        tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        if is_video:
+            # (B, 3, T_px, H, W) -> (B*T_px, 3, H, W), and repeat each sample's
+            # timestep weight for every one of its decoded frames
+            b, t_px = tensors_n1p1.shape[0], tensors_n1p1.shape[2]
+            tensors_n1p1 = _fold_frames_to_batch(tensors_n1p1)
+            tv = tv.reshape(b, 1, 1, 1).repeat_interleave(t_px, dim=0)
+
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+
+        with torch.no_grad():
+            target_feats = self.get_lpips_features(target_0_1.float())
+
+        pred_feats = self.get_lpips_features(pred_images.float())
+
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+
+        loss_perceptual = 0
+        for idx, pred_feat in enumerate(pred_feats):
+            perceptual_loss = torch.nn.functional.mse_loss(
+                pred_feat.float(), target_feats[idx].float(), reduction="none"
+            )
+            # mean over channels/spatial per sample, keep batch dim to weight by timestep
+            perceptual_loss = perceptual_loss.mean(dim=[1, 2, 3], keepdim=True)
+            loss_perceptual = loss_perceptual + (perceptual_loss * velocity_equiv_weight).mean()
+
+        if self.do_partial_step:
+            loss_perceptual = loss_perceptual * 10.0
+
+        if 'loss' not in self.losses:
+            self.losses['loss'] = loss_perceptual.item()
+        else:
+            self.losses['loss'] += loss_perceptual.item()
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+
+            # total_loss += mse_loss
+            self.step += 1
+
         return loss_perceptual
 
 def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureExtractor:
@@ -1201,6 +1401,10 @@ def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureEx
         return dfe
     if model_path == "v9":
         dfe = DiffusionFeatureExtractor9(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if model_path == "v10":
+        dfe = DiffusionFeatureExtractor10(vae=vae, sd=sd)
         dfe.eval()
         return dfe
     if not os.path.exists(model_path):

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export interface LossPoint {
   step: number;
@@ -10,12 +11,6 @@ export interface LossPoint {
 }
 
 type SeriesMap = Record<string, LossPoint[]>;
-
-function isLossKey(key: string) {
-  // treat anything containing "loss" as a loss-series
-  // (covers loss, train_loss, val_loss, loss/xyz, etc.)
-  return /loss/i.test(key);
-}
 
 export default function useJobLossLog(jobID: string, reloadInterval: null | number = null) {
   const [series, setSeries] = useState<SeriesMap>({});
@@ -29,10 +24,10 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
   const lastStepByKeyRef = useRef<Record<string, number | null>>({});
 
   const lossKeys = useMemo(() => {
-    const base = (keys ?? []).filter(isLossKey);
+    const base = keys ?? [];
     // if keys table is empty early on, fall back to just "loss"
     if (base.length === 0) return ['loss'];
-    return base.sort();
+    return [...base].sort();
   }, [keys]);
 
   const refreshLoss = useCallback(async () => {
@@ -54,7 +49,7 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
       const newKeys = first.keys ?? [];
       setKeys(newKeys);
 
-      const wantedLossKeys = (newKeys.filter(isLossKey).length ? newKeys.filter(isLossKey) : ['loss']).sort();
+      const wantedLossKeys = (newKeys.length ? [...newKeys] : ['loss']).sort();
 
       // Step 2: fetch each loss key incrementally (since_step per key if polling)
       const requests = wantedLossKeys.map(k => {
@@ -100,9 +95,9 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
             : (lastStepByKeyRef.current[k] ?? null);
         }
 
-        // remove stale loss keys that no longer exist (rare, but keeps UI clean)
+        // remove stale keys that no longer exist (rare, but keeps UI clean)
         for (const existingKey of Object.keys(next)) {
-          if (isLossKey(existingKey) && !wantedLossKeys.includes(existingKey)) {
+          if (!wantedLossKeys.includes(existingKey)) {
             delete next[existingKey];
             delete lastStepByKeyRef.current[existingKey];
           }
@@ -121,24 +116,38 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     }
   }, [jobID, reloadInterval]);
 
+  // Delete every logged step in [minStep, maxStep] from the on-disk log, then
+  // drop those points locally so the chart updates without a full reload.
+  const deleteRange = useCallback(
+    async (minStep: number, maxStep: number) => {
+      if (!jobID) return;
+      await apiClient.delete(`/api/jobs/${jobID}/loss`, { data: { min_step: minStep, max_step: maxStep } });
+      setSeries(prev => {
+        const next: SeriesMap = {};
+        for (const k of Object.keys(prev)) {
+          const kept = prev[k].filter(p => p.step < minStep || p.step > maxStep);
+          next[k] = kept;
+          // Re-anchor incremental polling to the new tail so a deleted tail
+          // isn't treated as already-fetched.
+          lastStepByKeyRef.current[k] = kept.length ? kept[kept.length - 1].step : null;
+        }
+        return next;
+      });
+    },
+    [jobID],
+  );
+
+  // reset when job changes. Declared before the poll loop so the reset runs
+  // before the first fetch when jobID changes.
   useEffect(() => {
-    // reset when job changes
     didInitialLoadRef.current = false;
     lastStepByKeyRef.current = {};
     setSeries({});
     setKeys([]);
     setStatus('idle');
+  }, [jobID]);
 
-    refreshLoss();
+  usePollLoop(refreshLoss, reloadInterval, [jobID]);
 
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshLoss();
-      }, reloadInterval);
-
-      return () => clearInterval(interval);
-    }
-  }, [jobID, reloadInterval, refreshLoss]);
-
-  return { series, keys, lossKeys, status, refreshLoss, setSeries };
+  return { series, keys, lossKeys, status, refreshLoss, deleteRange, setSeries };
 }

@@ -9,6 +9,9 @@ import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
 import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import MergeLoRAsModal from '@/components/MergeLoRAsModal';
+import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
+import PromptBoxEditorModal from '@/components/PromptBoxEditorModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +20,12 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'Ostris - AI Toolkit',
   description: 'A toolkit for building AI things.',
+};
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -55,6 +64,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ConfirmModal />
         <DocModal />
         <CaptionDatasetModal />
+        <MergeLoRAsModal />
+        <UpsamplePromptsModal />
+        <PromptBoxEditorModal />
       </body>
     </html>
   );

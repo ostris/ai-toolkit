@@ -1,44 +1,24 @@
 'use client';
 
-import { CpuInfo } from '@/types';
-import { useEffect, useState } from 'react';
-import { apiClient } from '@/utils/api';
+import useMonitorStream from '@/hooks/useMonitorStream';
 
+/**
+ * CPU stats from the shared /api/monitor SSE stream. Data arrives live every
+ * MONITOR_TICK_MS, so `reloadInterval` is accepted only for call-site
+ * compatibility with the old polling implementation and is ignored.
+ */
 export default function useCPUInfo(reloadInterval: null | number = null) {
-  const [cpuInfo, setCpuInfo] = useState<CpuInfo | null>(null);
-  const [isCPUInfoLoaded, setIsLoaded] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  void reloadInterval;
+  const { cpu, connected } = useMonitorStream();
 
-  const fetchCpuInfo = async () => {
-    setStatus('loading');
-    try {
-      const data: CpuInfo = await apiClient.get('/api/cpu').then(res => res.data);
-      setCpuInfo(data);
-      setStatus('success');
-    } catch (err) {
-      console.error(`Failed to fetch CPU data: ${err instanceof Error ? err.message : String(err)}`);
-      setStatus('error');
-    } finally {
-      setIsLoaded(true);
-    }
+  const isCPUInfoLoaded = cpu !== null;
+  const status: 'idle' | 'loading' | 'success' | 'error' = cpu !== null ? 'success' : connected ? 'loading' : 'idle';
+
+  return {
+    cpuInfo: cpu,
+    isCPUInfoLoaded,
+    status,
+    // The stream is always live; nothing to refresh manually.
+    refreshCpuInfo: async () => {},
   };
-
-  useEffect(() => {
-    // Fetch immediately on component mount
-    fetchCpuInfo();
-
-    // Set up interval if specified
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        fetchCpuInfo();
-      }, reloadInterval);
-
-      // Cleanup interval on unmount
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [reloadInterval]); // Added dependencies
-
-  return { cpuInfo, isCPUInfoLoaded, status, refreshCpuInfo: fetchCpuInfo };
 }

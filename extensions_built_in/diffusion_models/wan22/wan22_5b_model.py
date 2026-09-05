@@ -104,6 +104,9 @@ class Wan225bModel(Wan21):
         )
 
         self._wan_cache = None
+
+        # loss mask for i2v conditioning (1 = train, 0 = conditioned token), set per step in get_noise_prediction
+        self._i2v_loss_mask = None
     
     def load_model(self):
         super().load_model()
@@ -114,6 +117,11 @@ class Wan225bModel(Wan21):
     def get_bucket_divisibility(self):
         # 16x compression  and 2x2 patch size
         return 32
+
+    def get_quantization_exclude_modules(self):
+        # the timestep/text conditioning embedders and the final projection feed
+        # every downstream modulation; keep them in full precision when quantizing
+        return ["condition_embedder*", "proj_out*"]
 
     def get_generation_pipeline(self):
         # todo unipc got broken in a diffusers update. Use euler for now.
@@ -202,6 +210,10 @@ class Wan225bModel(Wan21):
                 latent_model_input=latents, first_frame=first_frame_n1p1, vae=self.vae
             )
 
+        if self.use_vae_tiling:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
@@ -221,6 +233,10 @@ class Wan225bModel(Wan21):
             noise_mask=noise_mask,
             **extra,
         )[0]
+
+        if self.use_vae_tiling:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
@@ -245,24 +261,41 @@ class Wan225bModel(Wan21):
         # for wan, only do i2v for video for now. Images do normal t2i
         conditioned_latent = latent_model_input
         noise_mask = None
-        
+        self._i2v_loss_mask = None
+
         if batch.dataset_config.do_i2v:
             with torch.no_grad():
-                frames = batch.tensor
-                if len(frames.shape) == 4:
-                    first_frames = frames
-                elif len(frames.shape) == 5:
-                    first_frames = frames[:, 0]
-                    # Add conditioning using the standalone function
+                # check to see if we had the first frame latent cached
+                if batch.first_frame_latents is not None:
                     conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
                         latent_model_input=latent_model_input.to(
                             self.device_torch, self.torch_dtype
                         ),
-                        first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                        first_frame_latents=batch.first_frame_latents.to(
+                            self.device_torch, self.torch_dtype
+                        ),
                         vae=self.vae,
                     )
+                    # conditioned tokens are clean with timestep 0 and must not contribute to the loss
+                    self._i2v_loss_mask = noise_mask
                 else:
-                    raise ValueError(f"Unknown frame shape {frames.shape}")
+                    frames = batch.tensor
+                    if len(frames.shape) == 4:
+                        first_frames = frames
+                    elif len(frames.shape) == 5:
+                        first_frames = frames[:, 0]
+                        # Add conditioning using the standalone function
+                        conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
+                            latent_model_input=latent_model_input.to(
+                                self.device_torch, self.torch_dtype
+                            ),
+                            first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                            vae=self.vae,
+                        )
+                        # conditioned tokens are clean with timestep 0 and must not contribute to the loss
+                        self._i2v_loss_mask = noise_mask
+                    else:
+                        raise ValueError(f"Unknown frame shape {frames.shape}")
 
                 # make the noise mask
                 if noise_mask is None:
@@ -290,3 +323,12 @@ class Wan225bModel(Wan21):
             **kwargs,
         )[0]
         return noise_pred
+
+    def scale_loss(self, loss):
+        # zero out the loss on i2v conditioned tokens, renormalized so the loss
+        # magnitude matches unconditioned batches (masked mean)
+        if self._i2v_loss_mask is not None:
+            loss_mask = self._i2v_loss_mask.to(loss.device, dtype=loss.dtype)
+            loss = loss * loss_mask / loss_mask.mean().clamp(min=1e-8)
+            self._i2v_loss_mask = None
+        return loss
