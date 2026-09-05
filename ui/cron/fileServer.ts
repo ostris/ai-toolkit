@@ -514,25 +514,67 @@ function startServer(publicPort: number, upstreamPort: number): void {
   // request timeout would kill them mid-transfer.
   server.requestTimeout = 0;
 
+  server.on('error', err => {
+    console.error('File server failed to bind:', err);
+    process.exit(1);
+  });
+
+  // Cluster workers share this listen via the primary handle (do not set
+  // exclusive/SO_REUSEPORT here — that races with an already-bound port and
+  // produces endless EADDRINUSE worker respawns under Stability Matrix).
   server.listen(publicPort);
 }
 
 // ---------------------------------------------------------------------------
 // Supervisor: spawn Next.js on an ephemeral loopback port, then serve
 // ---------------------------------------------------------------------------
-function getFreePort(): Promise<number> {
+function getFreePort(excludePort?: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.on('error', reject);
     probe.listen(0, UPSTREAM_HOST, () => {
       const port = (probe.address() as net.AddressInfo).port;
-      probe.close(err => (err ? reject(err) : resolve(port)));
+      probe.close(err => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        if (excludePort && port === excludePort) {
+          resolve(getFreePort(excludePort));
+          return;
+        }
+        resolve(port);
+      });
     });
   });
 }
 
+/** Fail fast if another process (often an SM orphan) already owns the UI port. */
+function assertPortAvailable(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tester = net.createServer();
+    tester.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        reject(
+          new Error(
+            `Port ${port} is already in use. Stop the leftover AI Toolkit process ` +
+              `(Stability Matrix Stop can leave orphans), then launch again.`,
+          ),
+        );
+      } else {
+        reject(err);
+      }
+    });
+    tester.once('listening', () => {
+      tester.close(closeErr => (closeErr ? reject(closeErr) : resolve()));
+    });
+    tester.listen(port);
+  });
+}
+
 async function primaryMain(): Promise<void> {
-  const upstreamPort = await getFreePort();
+  await assertPortAvailable(PUBLIC_PORT);
+  const upstreamPort = await getFreePort(PUBLIC_PORT);
 
   const nextBin = require.resolve('next/dist/bin/next');
   const nextArgs = isDev ? ['dev', '--turbopack'] : ['start'];
@@ -608,11 +650,22 @@ async function primaryMain(): Promise<void> {
   for (let i = 0; i < numWorkers; i++) {
     cluster.fork(workerEnv);
   }
-  cluster.on('exit', worker => {
-    if (!shuttingDown) {
-      console.warn(`File server worker ${worker.id} died, restarting`);
-      cluster.fork(workerEnv);
+  // Cap respawns so a bind failure (EADDRINUSE) cannot fork-bomb the machine
+  // when Stability Matrix leaves a previous instance holding the port.
+  let workerDeaths = 0;
+  const maxWorkerDeaths = numWorkers * 3;
+  cluster.on('exit', (worker, code, signal) => {
+    if (shuttingDown) return;
+    workerDeaths += 1;
+    if (workerDeaths > maxWorkerDeaths) {
+      console.error(
+        `File server workers keep dying (last code=${code} signal=${signal}); shutting down`,
+      );
+      shutdown(1);
+      return;
     }
+    console.warn(`File server worker ${worker.id} died, restarting`);
+    cluster.fork(workerEnv);
   });
 }
 
