@@ -92,6 +92,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
         value: p.value ?? (p.value_text ? Number(p.value_text) : null),
       })),
     });
+  } catch (error) {
+    console.error('Error fetching loss data:', error);
+    return NextResponse.json({ error: 'Failed to fetch loss data' }, { status: 500 });
   } finally {
     await closeDb(db);
   }

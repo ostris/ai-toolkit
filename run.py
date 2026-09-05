@@ -28,9 +28,97 @@ suppress_child_consoles()
 # turn off diffusers telemetry until I can figure out how to make it opt-in
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
-# set torch to trace mode
+# Set ROCm environment variables for better HIP error handling and performance
+# These should be set before importing torch
+if os.environ.get("AMD_SERIALIZE_KERNEL") is None:
+    os.environ["AMD_SERIALIZE_KERNEL"] = "3"  # Better error reporting for HIP errors
+if os.environ.get("TORCH_USE_HIP_DSA") is None:
+    os.environ["TORCH_USE_HIP_DSA"] = "1"  # Enable device-side assertions
+if os.environ.get("HSA_ENABLE_SDMA") is None:
+    os.environ["HSA_ENABLE_SDMA"] = "0"  # Disable SDMA for APU compatibility
+if os.environ.get("HSA_XNACK") is None:
+    os.environ["HSA_XNACK"] = "1"  # Enable XNACK for unified memory on Strix Halo APU
+if os.environ.get("GPU_MAX_HEAP_SIZE") is None:
+    os.environ["GPU_MAX_HEAP_SIZE"] = "100"  # Allow full heap for APU
+if os.environ.get("GPU_MAX_ALLOC_PERCENT") is None:
+    os.environ["GPU_MAX_ALLOC_PERCENT"] = "100"
+if os.environ.get("PYTORCH_ROCM_ALLOC_CONF") is None:
+    os.environ["PYTORCH_ROCM_ALLOC_CONF"] = "max_split_size_mb:768,garbage_collect=1"  # Better VRAM fragmentation
+
+# Workaround for HIPBLAS errors with quantized models
+if os.environ.get("ROCBLAS_USE_HIPBLASLT") is None:
+    os.environ["ROCBLAS_USE_HIPBLASLT"] = "0"  # Disable HIPBLASLT to avoid quantized model crashes
+if os.environ.get("ROCBLAS_LOG_LEVEL") is None:
+    os.environ["ROCBLAS_LOG_LEVEL"] = "0"  # Disable verbose logging
+
+# Set HSA_OVERRIDE_GFX_VERSION and PYTORCH_ROCM_ARCH for ROCm
+# Must be before torch import so HIP initializes correctly for gfx1151 (Strix Halo)
+if os.environ.get("HSA_OVERRIDE_GFX_VERSION") is None or os.environ.get("PYTORCH_ROCM_ARCH") is None:
+    # Only attempt ROCm detection on Linux
+    import platform
+    is_linux = platform.system() == "Linux"
+    has_rocm = False
+    if is_linux:
+        import shutil
+        if shutil.which("rocm-smi") or os.path.isdir("/opt/rocm"):
+            has_rocm = True
+    if has_rocm:
+        # Try to detect gfx arch via rocm-smi
+        detected_gfx = None
+        try:
+            import subprocess
+            import re
+            out = subprocess.run(["rocm-smi", "--showproductname"], capture_output=True, text=True, timeout=5)
+            if out.returncode == 0:
+                # Look for gfx pattern or GFX Version
+                m = re.search(r"gfx\d+", out.stdout)
+                if m:
+                    detected_gfx = m.group(0)
+                # Alternative: GFX Version line
+                if not detected_gfx:
+                    m2 = re.search(r"GFX Version:\s*(gfx\d+)", out.stdout)
+                    if m2:
+                        detected_gfx = m2.group(1)
+            # Fallback: rocminfo
+            if not detected_gfx:
+                out2 = subprocess.run(["rocminfo"], capture_output=True, text=True, timeout=5)
+                if out2.returncode == 0:
+                    m = re.search(r"gfx\d+", out2.stdout)
+                    if m:
+                        detected_gfx = m.group(0)
+        except Exception:
+            pass
+        # Map gfx to HSA version: gfx1151 -> 11.5.1, gfx1100 -> 11.0.0, etc.
+        def _gfx_to_hsa(gfx: str):
+            try:
+                digits = gfx.replace("gfx", "")
+                while len(digits) < 4:
+                    digits += "0"
+                major = digits[0:2]
+                minor = digits[2]
+                patch = digits[3]
+                return f"{int(major)}.{minor}.{patch}"
+            except Exception:
+                return None
+        if detected_gfx:
+            hsa_ver = _gfx_to_hsa(detected_gfx)
+            if hsa_ver and os.environ.get("HSA_OVERRIDE_GFX_VERSION") is None:
+                os.environ["HSA_OVERRIDE_GFX_VERSION"] = hsa_ver
+            # Map to ROCm nightly dir name: gfx110x -> gfx110X-all
+            rocm_arch = detected_gfx
+            if detected_gfx.startswith("gfx110"):
+                rocm_arch = "gfx110X-all"
+            if os.environ.get("PYTORCH_ROCM_ARCH") is None:
+                os.environ["PYTORCH_ROCM_ARCH"] = rocm_arch
+        else:
+            # Fallback for Strix Halo when detection fails but ROCm is present
+            if os.environ.get("HSA_OVERRIDE_GFX_VERSION") is None:
+                os.environ["HSA_OVERRIDE_GFX_VERSION"] = "11.5.1"
+            if os.environ.get("PYTORCH_ROCM_ARCH") is None:
+                os.environ["PYTORCH_ROCM_ARCH"] = "gfx1151"
+
 import torch
-    
+
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     torch.autograd.set_detect_anomaly(True)
@@ -121,7 +209,9 @@ def main():
             job.cleanup()
             jobs_completed += 1
         except Exception as e:
+            import traceback
             print_acc(f"Error running job: {e}")
+            print_acc(f"Traceback: {traceback.format_exc()}")
             jobs_failed += 1
             try:
                 job.process[0].on_error(e)

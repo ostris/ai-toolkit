@@ -3,11 +3,14 @@ import { promisify } from 'util';
 import os from 'os';
 import si from 'systeminformation';
 import { loadMacstats } from '@/server/macstats';
+import path from 'path';
+import fs from 'fs';
 import { createLoadSampler, readCpuTemperature, readMemory } from '@/server/cpuStats';
 import { CpuInfo, GpuInfo, GPUApiResponse, MonitorHistoryPoint, MonitorInit, MonitorSample } from '@/types';
 import { historyPointFromSample, MONITOR_HISTORY_LENGTH, MONITOR_TICK_MS } from '@/utils/monitorSample';
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(require('child_process').exec);
 
 /**
  * Always-on system monitor. Samples CPU + GPU every MONITOR_TICK_MS, keeps a
@@ -34,6 +37,218 @@ const NV_WATCHDOG_MS = 15_000;
 const NV_BATCH_FLUSH_MS = 100;
 // Temperature refresh is decoupled from the tick (see refreshCpuTemp)
 const CPU_TEMP_REFRESH_MS = 5000;
+
+
+// Helper function to get venv PATH
+function getVenvPath(): NodeJS.ProcessEnv {
+  const projectRoot = path.resolve(process.cwd(), '..');
+  let env: NodeJS.ProcessEnv = { ...process.env };
+  const venvPaths = [
+    path.join(projectRoot, '.venv', 'bin'),
+    path.join(projectRoot, 'venv', 'bin'),
+  ];
+  for (const venvBin of venvPaths) {
+    if (fs.existsSync(venvBin)) {
+      const currentPath = process.env.PATH || '';
+      const pathSeparator = process.platform === 'win32' ? ';' : ':';
+      env.PATH = `${venvBin}${pathSeparator}${currentPath}`;
+      break;
+    }
+  }
+  return env;
+}
+
+function parseValue(value: string | undefined, defaultValue: number = 0): number {
+  if (!value || value === 'N/A' || value.trim() === '') {
+    return defaultValue;
+  }
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
+}
+
+async function getAmdSmiGpuStats(): Promise<GpuInfo[]> {
+  const env = getVenvPath();
+  const { stdout: listStdout } = await execAsync('amd-smi list --json', { env } as any);
+  let gpuList: Array<{ gpu: number }> = [];
+  try {
+    const listData = JSON.parse(listStdout);
+    if (Array.isArray(listData)) {
+      gpuList = listData;
+    } else if (listData && Array.isArray((listData as any).gpu_data)) {
+      gpuList = (listData as any).gpu_data;
+    }
+  } catch {
+    return [];
+  }
+  if (gpuList.length === 0) return [];
+  const gpus = await Promise.all(
+    gpuList.map(async (gpuInfo) => {
+      const gpuId = gpuInfo.gpu;
+      const metricCommand = `amd-smi metric --gpu ${gpuId} --csv`;
+      try {
+        const { stdout: metricStdout } = await execAsync(metricCommand, { env } as any);
+        const lines = metricStdout.trim().split('\n').filter(line => line.trim().length > 0);
+        if (lines.length < 2) return null;
+        // Use robust CSV parsing for amd-smi (fields may contain quoted arrays with commas)
+        function parseCSVLine(line: string): string[] {
+          const fields: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"') inQuotes = !inQuotes;
+            else if (char === ',' && !inQuotes) { fields.push(current.trim()); current = ''; }
+            else current += char;
+          }
+          fields.push(current.trim());
+          return fields;
+        }
+        const header = parseCSVLine(lines[0]);
+        const dataLine = parseCSVLine(lines[1]);
+        const getFieldIndex = (fieldNames: string | string[]): number => {
+          const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
+          for (const name of names) {
+            const idx = header.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
+            if (idx >= 0) return idx;
+          }
+          return -1;
+        };
+        const gpuIndex = getFieldIndex('gpu');
+        const usageIndex = getFieldIndex(['usage', 'gpu_use', 'utilization', 'gfx_activity']);
+        const edgeIndex = getFieldIndex(['edge', 'temperature', 'temp', 'junction']);
+        const totalVramIndex = getFieldIndex(['total_vram', 'vram_total', 'memory_total']);
+        const usedVramIndex = getFieldIndex(['used_vram', 'vram_used', 'memory_used']);
+        const freeVramIndex = getFieldIndex(['free_vram', 'vram_free', 'memory_free']);
+        const socketPowerIndex = getFieldIndex(['socket_power', 'power', 'power_draw', 'tdp']);
+        const fanMaxIndex = getFieldIndex(['fan_max', 'fan_speed', 'max', 'fan_percent']);
+        let gfxClkIndex = -1;
+        for (let i = 0; i < header.length; i++) {
+          if (header[i].toLowerCase().startsWith('gfx_') && header[i].toLowerCase().endsWith('_clk')) { gfxClkIndex = i; break; }
+        }
+        const memClkIndex = getFieldIndex('mem_0_clk');
+        const index = gpuIndex >= 0 ? parseInt(dataLine[gpuIndex] || '0') || gpuId : gpuId;
+        const usage = usageIndex >= 0 ? parseValue(dataLine[usageIndex]) : 0;
+        const temperature = edgeIndex >= 0 ? parseValue(dataLine[edgeIndex]) : 0;
+        const memoryTotalMB = totalVramIndex >= 0 ? parseValue(dataLine[totalVramIndex]) : 0;
+        const memoryUsedMB = usedVramIndex >= 0 ? parseValue(dataLine[usedVramIndex]) : 0;
+        const memoryFreeMB = freeVramIndex >= 0 ? parseValue(dataLine[freeVramIndex]) : (memoryTotalMB - memoryUsedMB);
+        const powerDraw = socketPowerIndex >= 0 ? parseValue(dataLine[socketPowerIndex]) : 0;
+        const clockGraphics = gfxClkIndex >= 0 ? parseValue(dataLine[gfxClkIndex]) : 0;
+        const clockMemory = memClkIndex >= 0 ? parseValue(dataLine[memClkIndex]) : 0;
+        let fanSpeed = 0;
+        if (fanMaxIndex >= 0 && dataLine[fanMaxIndex] && dataLine[fanMaxIndex] !== 'N/A') fanSpeed = parseValue(dataLine[fanMaxIndex]);
+        let name = `AMD GPU ${index}`;
+        try {
+          const staticCommand = `amd-smi static --gpu ${gpuId} --json`;
+          const { stdout: staticStdout } = await execAsync(staticCommand, { env } as any);
+          const staticData = JSON.parse(staticStdout);
+          if (staticData && (staticData as any).gpu_data && (staticData as any).gpu_data[0]) {
+            const gpuData = (staticData as any).gpu_data[0];
+            if (gpuData.asic && gpuData.asic.market_name) name = gpuData.asic.market_name;
+            else if (gpuData.asic && gpuData.asic.name) name = gpuData.asic.name;
+            else if (gpuData.name) name = gpuData.name;
+          }
+        } catch {}
+        const memoryUtilPercent = memoryTotalMB > 0 ? Math.max(0, Math.min(100, Math.round((memoryUsedMB / memoryTotalMB) * 100))) : 0;
+        const validTemperature = temperature >= 0 && temperature <= 200 ? temperature : 0;
+        const validUsage = Math.max(0, Math.min(100, usage));
+        const hasBasicData = validTemperature > 0 || memoryTotalMB > 0;
+        const hasPerformanceData = validUsage > 0 || powerDraw > 0 || clockGraphics > 0 || clockMemory > 0;
+        const hasSufficientData = hasBasicData && hasPerformanceData;
+        return {
+          index, name, driverVersion: 'ROCm',
+          temperature: validTemperature > 0 ? Math.round(validTemperature) : 0,
+          utilization: { gpu: Math.round(validUsage), memory: memoryUtilPercent },
+          memory: { total: Math.max(0, Math.round(memoryTotalMB)), free: Math.max(0, Math.round(memoryFreeMB)), used: Math.max(0, Math.round(memoryUsedMB)) },
+          power: { draw: Math.max(0, powerDraw), limit: 0 },
+          clocks: { graphics: Math.max(0, Math.round(clockGraphics)), memory: Math.max(0, Math.round(clockMemory)) },
+          fan: { speed: Math.max(0, Math.min(100, fanSpeed)) },
+          _hasSufficientData: hasSufficientData,
+        } as any;
+      } catch { return null; }
+    })
+  );
+  const validGpus = gpus.filter((gpu): gpu is NonNullable<typeof gpu> => gpu !== null);
+  const hasAnyData = validGpus.some((gpu: any) => gpu._hasSufficientData);
+  if (!hasAnyData && validGpus.length > 0) return [];
+  return validGpus.map(({ _hasSufficientData, ...gpu }: any) => gpu);
+}
+
+async function getRocmGpuStats(): Promise<GpuInfo[]> {
+  const env = getVenvPath();
+  const command = 'rocm-smi --showid --showproductname --showtemp --showuse --showmemuse --showmeminfo vram --showpower --showclocks --csv';
+  const { stdout } = await execAsync(command, { env } as any);
+  const lines = stdout.split('\n').map(line => line.trim()).filter(line => line.length > 0 && !line.startsWith('Exception') && !line.startsWith('Error'));
+  const headerIndex = lines.findIndex(line => line.startsWith('device,'));
+  if (headerIndex === -1 || lines.length < headerIndex + 2) return [];
+  function parseCSVLine(line: string): string[] {
+    const fields: string[] = []; let current = ''; let inQuotes = false;
+    for (let i = 0; i < line.length; i++) { const char = line[i]; if (char === '"') inQuotes = !inQuotes; else if (char === ',' && !inQuotes) { fields.push(current.trim()); current = ''; } else current += char; }
+    fields.push(current.trim()); return fields;
+  }
+  const headerFields = parseCSVLine(lines[headerIndex]);
+  function findHeaderIndex(namePatterns: string[]): number {
+    for (let i = 0; i < headerFields.length; i++) { const h = headerFields[i].toLowerCase().trim(); for (const p of namePatterns) if (h.includes(p.toLowerCase())) return i; }
+    return -1;
+  }
+  const tempFieldIdx = findHeaderIndex(['temperature', '(c)', 'temp']);
+  const mclkFieldIdx = findHeaderIndex(['mclk clock speed', 'mclk']);
+  const sclkFieldIdx = findHeaderIndex(['sclk clock speed', 'sclk']);
+  const powerFieldIdx = findHeaderIndex(['power (w)', 'power']);
+  const usageFieldIdx = findHeaderIndex(['gpu use', 'gpu_use', 'gpu use (%)']);
+  const memTotalFieldIdx = findHeaderIndex(['vram total memory', 'vram total']);
+  const memUsedFieldIdx = findHeaderIndex(['vram total used memory', 'vram total used', 'vram used']);
+  const cardSkuFieldIdx = findHeaderIndex(['card sku', 'sku']);
+  const cardModelFieldIdx = findHeaderIndex(['card model', 'model']);
+  const deviceIdFieldIdx = findHeaderIndex(['device id', 'gpu id']);
+  const cardVendorFieldIdx = findHeaderIndex(['card vendor', 'vendor']);
+  const gpus = lines.slice(headerIndex + 1).map((line, idx) => {
+    const fields = parseCSVLine(line);
+    const deviceName = fields[0]?.trim() || '';
+    const deviceMatch = deviceName.match(/\d+/);
+    const index = deviceMatch ? parseInt(deviceMatch[0]) : idx;
+    const tempStr = fields[tempFieldIdx]?.trim() || '';
+    let temperature = 0;
+    if (tempStr && tempStr !== 'N/A' && !isNaN(parseFloat(tempStr))) { const v = parseFloat(tempStr); if (v >= 0 && v <= 200) temperature = v; }
+    const gpuUtilStr = usageFieldIdx >= 0 ? (fields[usageFieldIdx]?.trim() || '0') : '0';
+    let gpuUtil = 0; if (gpuUtilStr && gpuUtilStr !== 'N/A' && !isNaN(parseFloat(gpuUtilStr))) { const p = parseFloat(gpuUtilStr); if (p >= 0 && p <= 100) gpuUtil = p; }
+    gpuUtil = Math.max(0, Math.min(100, gpuUtil));
+    let memoryTotal = parseFloat(fields[memTotalFieldIdx]?.trim() || '0') || 0;
+    let memoryUsed = parseFloat(fields[memUsedFieldIdx]?.trim() || '0') || 0;
+    if (memoryTotal < 0 || isNaN(memoryTotal)) memoryTotal = 0;
+    if (memoryUsed < 0 || isNaN(memoryUsed)) memoryUsed = 0;
+    if (memoryUsed > memoryTotal) memoryUsed = memoryTotal;
+    const memoryFree = Math.max(0, memoryTotal - memoryUsed);
+    const powerDrawStr = fields[powerFieldIdx]?.trim() || '';
+    let powerDraw = 0;
+    if (powerDrawStr && !powerDrawStr.toLowerCase().includes('mhz') && powerDrawStr !== 'N/A') { const m = powerDrawStr.match(/(\d+\.?\d*)/); if (m) { const p = parseFloat(m[1]); if (p >= 0 && p <= 1000) powerDraw = p; } }
+    let clockGraphics = 0, clockMemory = 0;
+    const mclkStr = fields[mclkFieldIdx]?.trim() || ''; const sclkStr = fields[sclkFieldIdx]?.trim() || '';
+    const mclkMatch = mclkStr.match(/(\d+)/); const sclkMatch = sclkStr.match(/(\d+)/);
+    if (mclkMatch) clockMemory = parseInt(mclkMatch[1]); if (sclkMatch) clockGraphics = parseInt(sclkMatch[1]);
+    if (clockGraphics > 10000) clockGraphics = Math.round(clockGraphics / 1_000_000);
+    if (clockMemory > 10000) clockMemory = Math.round(clockMemory / 1_000_000);
+    if (clockGraphics > 5000 || clockGraphics < 0) clockGraphics = 0;
+    if (clockMemory > 3000 || clockMemory < 0) clockMemory = 0;
+    const cardSku = fields[cardSkuFieldIdx]?.trim() || ''; const cardModel = fields[cardModelFieldIdx]?.trim() || '';
+    const cardVendor = fields[cardVendorFieldIdx]?.trim() || ''; const gpuId = fields[deviceIdFieldIdx]?.trim() || '';
+    let name = '';
+    if (cardSku && !cardSku.startsWith('0x') && !/^\d+$/.test(cardSku) && cardSku !== gpuId && cardSku !== memoryTotal.toString() && cardSku !== memoryUsed.toString()) name = cardSku;
+    else if (cardModel && cardModel !== gpuId && !cardModel.startsWith('0x') && cardModel !== memoryTotal.toString()) name = cardModel;
+    else if (cardVendor && (cardVendor.includes('AMD') || cardVendor.includes('Advanced Micro Devices'))) name = `AMD GPU ${index}`;
+    else name = `GPU ${index}`;
+    if (name === memoryTotal.toString() || name === memoryUsed.toString() || /^\d+$/.test(name)) name = `AMD GPU ${index}`;
+    let memoryTotalMB = 0, memoryUsedMB = 0, memoryFreeMB = 0;
+    if (memoryTotal > 0) {
+      if (memoryTotal > 1000000) { memoryTotalMB = Math.round(memoryTotal / (1024*1024)); memoryUsedMB = Math.round(memoryUsed / (1024*1024)); memoryFreeMB = Math.round(memoryFree / (1024*1024)); }
+      else if (memoryTotal >= 10) { memoryTotalMB = Math.round(memoryTotal); memoryUsedMB = Math.round(memoryUsed); memoryFreeMB = Math.round(memoryFree); }
+      else { memoryTotalMB = Math.round(memoryTotal*1024); memoryUsedMB = Math.round(memoryUsed*1024); memoryFreeMB = Math.round(memoryFree*1024); }
+    }
+    const memoryUtilPercent = memoryTotalMB > 0 ? Math.max(0, Math.min(100, Math.round((memoryUsedMB / memoryTotalMB)*100))) : 0;
+    return { index: isNaN(index) ? idx : index, name, driverVersion: 'ROCm', temperature: temperature>0?Math.round(temperature):0, utilization: { gpu: Math.round(gpuUtil), memory: memoryUtilPercent }, memory: { total: memoryTotalMB, free: memoryFreeMB, used: memoryUsedMB }, power: { draw: Math.max(0,powerDraw), limit: 0 }, clocks: { graphics: Math.max(0,clockGraphics), memory: Math.max(0,clockMemory) }, fan: { speed: 0 } };
+  });
+  return gpus;
+}
 
 function parseGpuLine(line: string): GpuInfo | null {
   const [
@@ -91,6 +306,11 @@ class SystemMonitor {
   private latestCpu: CpuInfo | null = null;
   private latestGpu: GPUApiResponse = { hasNvidiaSmi: false, isMac: this.isMac, gpus: [] };
   private macGpuName = 'Apple GPU';
+  private backend: 'nvidia' | 'amd' | 'rocm' | 'none' | null = null;
+  private amdUnavailable = false;
+  private rocmUnavailable = false;
+  private amdInFlight = false;
+  private rocmInFlight = false;
   private nvChild: ChildProcess | null = null;
   private nvBatch: GpuInfo[] = [];
   private nvStdoutBuffer = '';
@@ -113,7 +333,13 @@ class SystemMonitor {
     if (this.isMac) {
       this.initMacGpuName();
     } else {
-      this.startNvLoop();
+      this.detectBackend().then(backend => {
+        this.backend = backend;
+        if (backend === 'nvidia') {
+          this.startNvLoop();
+        }
+        // amd/rocm use one-shot per tick, no loop needed
+      });
     }
     // Never leave a resident nvidia-smi behind.
     process.once('exit', () => {
@@ -166,10 +392,34 @@ class SystemMonitor {
     try {
       if (this.isMac) {
         this.latestGpu = this.sampleMacGpu();
-      } else if (this.nvOneShotMode) {
-        await this.sampleNvOneShot();
-      } else {
-        this.nvWatchdog();
+      } else if (this.backend === 'amd') {
+        await this.sampleAmdOneShot();
+      } else if (this.backend === 'rocm') {
+        await this.sampleRocmOneShot();
+      } else if (this.backend === 'nvidia') {
+        if (this.nvOneShotMode) {
+          await this.sampleNvOneShot();
+        } else {
+          this.nvWatchdog();
+          // If loop hasn't produced data yet, also try one-shot as fallback until loop is ready
+          if (this.latestGpu.gpus.length === 0 && !this.nvEverGotLine) {
+            await this.sampleNvOneShot();
+            if (this.latestGpu.gpus.length === 0 && this.nvUnavailable) {
+              // nvidia failed, re-detect as amd/rocm
+              this.backend = await this.detectBackend(true);
+            }
+          }
+        }
+      } else if (this.backend === 'none' || this.backend === null) {
+        // First tick detection if start() hasn't completed
+        this.backend = await this.detectBackend();
+        if (this.backend === 'amd') await this.sampleAmdOneShot();
+        else if (this.backend === 'rocm') await this.sampleRocmOneShot();
+        else if (this.backend === 'nvidia') {
+          await this.sampleNvOneShot();
+        } else {
+          this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: false, hasRocmSmi: false, isMac: false, gpus: [], error: 'No GPU tools found (nvidia-smi, amd-smi, rocm-smi)' };
+        }
       }
     } catch (error) {
       console.error('Monitor: GPU sample failed:', error);
@@ -465,6 +715,93 @@ class SystemMonitor {
       }
     } finally {
       this.nvOneShotInFlight = false;
+    }
+  }
+
+  private async detectBackend(force = false): Promise<'nvidia' | 'amd' | 'rocm' | 'none'> {
+    if (this.backend && !force) return this.backend;
+    // Check nvidia first
+    try {
+      await execFileAsync('which', ['nvidia-smi']);
+      return 'nvidia';
+    } catch {}
+    try {
+      await execFileAsync('nvidia-smi', ['-L']);
+      return 'nvidia';
+    } catch {}
+    // Check amd-smi
+    try {
+      await execAsync('which amd-smi' as any);
+      // Verify it actually works by listing
+      await execAsync('amd-smi list --json' as any, { env: getVenvPath() } as any);
+      return 'amd';
+    } catch {}
+    // Check rocm-smi
+    try {
+      await execAsync('which rocm-smi' as any);
+      return 'rocm';
+    } catch {}
+    try {
+      await execAsync('rocm-smi --version' as any);
+      return 'rocm';
+    } catch {}
+    return 'none';
+  }
+
+  private async sampleAmdOneShot(): Promise<void> {
+    if (this.amdInFlight) return;
+    this.amdInFlight = true;
+    try {
+      const gpus = await getAmdSmiGpuStats();
+      if (gpus.length > 0) {
+        this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: true, hasRocmSmi: false, isMac: false, gpus };
+      } else {
+        // amd-smi returned empty (hasSufficientData false), fallback to rocm
+        const rocmGpus = await getRocmGpuStats();
+        if (rocmGpus.length > 0) {
+          this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: true, hasRocmSmi: true, isMac: false, gpus: rocmGpus };
+          this.backend = 'rocm';
+        } else {
+          this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: true, hasRocmSmi: false, isMac: false, gpus: [] };
+        }
+      }
+    } catch (err) {
+      try {
+        const rocmGpus = await getRocmGpuStats();
+        if (rocmGpus.length > 0) {
+          this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: true, hasRocmSmi: true, isMac: false, gpus: rocmGpus };
+          this.backend = 'rocm';
+        } else {
+          throw err;
+        }
+      } catch (e) {
+        console.error('Monitor: amd-smi failed, trying rocm:', e);
+        await this.sampleRocmOneShot();
+      }
+    } finally {
+      this.amdInFlight = false;
+    }
+  }
+
+  private async sampleRocmOneShot(): Promise<void> {
+    if (this.rocmInFlight) return;
+    this.rocmInFlight = true;
+    try {
+      const gpus = await getRocmGpuStats();
+      this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: false, hasRocmSmi: true, isMac: false, gpus };
+      if (gpus.length === 0) {
+        this.latestGpu.error = 'rocm-smi returned no GPUs';
+      }
+    } catch (err) {
+      if ((err as any).code === 'ENOENT') {
+        this.rocmUnavailable = true;
+        this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: false, hasRocmSmi: false, isMac: false, gpus: [], error: 'rocm-smi not found' };
+      } else {
+        console.error('Monitor: rocm-smi failed:', err);
+        this.latestGpu = { hasNvidiaSmi: false, hasAmdSmi: false, hasRocmSmi: true, isMac: false, gpus: [], error: String(err) };
+      }
+    } finally {
+      this.rocmInFlight = false;
     }
   }
 
