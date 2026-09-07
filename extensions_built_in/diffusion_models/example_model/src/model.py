@@ -51,6 +51,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
+from toolkit.models.v2._mixin import OstrisModelMixin
+
 
 def timestep_embedding(t: torch.Tensor, dim: int, max_period: int = 10000) -> torch.Tensor:
     """Standard sinusoidal embedding.
@@ -135,8 +137,16 @@ class ExampleTransformerBlock(nn.Module):
         return x
 
 
-class ExampleTransformer2DModel(nn.Module):
-    """The denoiser. Plain ``nn.Module`` on purpose.
+class ExampleTransformer2DModel(nn.Module, OstrisModelMixin):
+    """The denoiser. Plain ``nn.Module`` plus ``OstrisModelMixin``.
+
+    The mixin supplies the universal component API every v2 module shares:
+    ``load()`` / ``load_model()`` / ``aitk_post_load()`` (quantize, layer
+    offloading and device placement driven by the holder's model_config via
+    ``BaseModel.component_load_kwargs(role)``), plus comfy-format save/load.
+    Override its class hooks (``get_transformer_block_names``,
+    ``get_quantization_exclude_modules``, ``get_offload_ignore_modules``,
+    ``convert_state_dict_on_load/save``) as needed.
 
     You could also subclass ``diffusers.ModelMixin``/``ConfigMixin`` (see
     ../../ernie_image/transformer.py) to get ``save_pretrained``,
@@ -152,6 +162,12 @@ class ExampleTransformer2DModel(nn.Module):
     "ExampleTransformer2DModel" -- that string is matched against module class
     names when deciding where to attach LoRA layers.
     """
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        # attribute name(s) of the repeated-block ModuleList(s); the quantizer
+        # streams these blocks through the GPU one at a time
+        return ["blocks"]
 
     def __init__(
         self,
@@ -183,8 +199,8 @@ class ExampleTransformer2DModel(nn.Module):
         )
 
         # ``blocks`` is the repeated-layer ModuleList. The attribute name is
-        # what ExampleModel.get_transformer_block_names() returns, which the
-        # LoRA code uses for block targeting / "transformer only" training.
+        # what get_transformer_block_names() returns, which the LoRA code uses
+        # for block targeting and the quantizer uses for block streaming.
         self.blocks = nn.ModuleList(
             [
                 ExampleTransformerBlock(hidden_size, num_heads)

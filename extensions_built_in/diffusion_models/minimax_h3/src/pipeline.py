@@ -32,6 +32,7 @@ from PIL import Image
 from diffusers.utils.torch_utils import randn_tensor
 
 from . import packing
+from .text_encoder import trim_caption_tokens
 from .packing import (
     AUDIO_CHANNELS,
     AUDIO_SIGMA_SHIFT,
@@ -81,6 +82,9 @@ class MiniMaxH3Pipeline:
         ctrl_img: Optional[
             Image.Image
         ] = None,  # first-frame keyframe, already canvas-sized
+        ref_images: Optional[
+            list
+        ] = None,  # ref2va references, already area-matched (own aspect, /32)
         with_audio: bool = True,
         **kwargs,
     ):
@@ -110,11 +114,33 @@ class MiniMaxH3Pipeline:
         a_lat = packing.audio_latent_num_frames(num_frames)
 
         # --- packed layouts (one per prompt: text length shifts the layout) --
+        if ctrl_img is not None and ref_images:
+            raise ValueError("ctrl_img (first frame) and ref_images are exclusive")
         anchors = ("first",) if ctrl_img is not None else ()
+        # references keep their own aspect: latent dims come from each image
+        # (PIL images are single-frame blocks; video refs arrive as latent
+        # tensors (C, T, h, w) already encoded by the caller)
+        ref_blocks = []
+        for r in ref_images or []:
+            if isinstance(r, dict):
+                lat = r["latent"]
+                a = r.get("audio_rows")
+                ref_a_lat = int(a.shape[0]) // 2 if a is not None else 0
+                ref_blocks.append((lat.shape[1], lat.shape[2], lat.shape[3], ref_a_lat))
+            elif isinstance(r, torch.Tensor):
+                ref_blocks.append((r.shape[1], r.shape[2], r.shape[3]))
+            else:
+                ref_blocks.append((1, r.size[1] // 16, r.size[0] // 16))
+        ref_blocks = tuple(ref_blocks)
 
         def _prompt_context(embeds):
-            text_embeds = embeds.text_embeds[0].to(device, dtype)
-            token_tags = embeds.text_token_tags[0].to("cpu", torch.long)
+            text_embeds, token_tags = trim_caption_tokens(
+                embeds.text_embeds[0],
+                embeds.text_token_tags[0],
+                getattr(model, "max_text_length", None),
+            )
+            text_embeds = text_embeds.to(device, dtype)
+            token_tags = token_tags.to("cpu", torch.long)
             layout = build_packed_sequence(
                 text_token_tags=token_tags,
                 num_latent_frames=t_lat,
@@ -122,6 +148,7 @@ class MiniMaxH3Pipeline:
                 latent_width=w_lat,
                 num_audio_latents=a_lat,
                 keyframe_anchors=anchors,
+                ref_blocks=ref_blocks,
             )
             return {
                 "text_embeds": text_embeds,
@@ -136,15 +163,15 @@ class MiniMaxH3Pipeline:
         contexts = [_prompt_context(conditional_embeds)]
         if do_cfg:
             contexts.append(_prompt_context(unconditional_embeds))
-        num_cond = contexts[0]["layout"].num_condition_video_rows
 
         # --- conditioning rows (draw order: condition noise, video, audio) --
-        cond_rows = None
-        if ctrl_img is not None:
+        def encode_condition_image(img: Image.Image) -> torch.Tensor:
             cond_noise = randn_tensor(
-                (1, 24, 1, h_lat, w_lat), generator=generator, dtype=torch.float32
+                (1, 24, 1, img.size[1] // 16, img.size[0] // 16),
+                generator=generator,
+                dtype=torch.float32,
             ).to(device)
-            frame = torch.from_numpy(np.array(ctrl_img)).float()
+            frame = torch.from_numpy(np.array(img)).float()
             frame = (frame / 255.0) * 2.0 - 1.0  # (H, W, 3) -> [-1, 1]
             frame = frame.permute(2, 0, 1)[None, :, None]  # (1, 3, 1, H, W)
             cond_latents = model.encode_keyframe_latents(frame)  # (1, 24, 1, h, w) fp32
@@ -153,7 +180,38 @@ class MiniMaxH3Pipeline:
                 KEYFRAME_NOISE_AUG_T * cond_latents.to(device)
                 + (1.0 - KEYFRAME_NOISE_AUG_T) * cond_noise
             )
-            cond_rows = patchify_video_latents(cond_latents)  # (1, rows, 96)
+            return patchify_video_latents(cond_latents)  # (1, rows, 96)
+
+        def noise_aug_rows(latents: torch.Tensor) -> torch.Tensor:
+            cond_noise = randn_tensor(
+                latents.shape, generator=generator, dtype=torch.float32
+            ).to(device)
+            mixed = (
+                KEYFRAME_NOISE_AUG_T * latents.to(device, torch.float32)
+                + (1.0 - KEYFRAME_NOISE_AUG_T) * cond_noise
+            )
+            return patchify_video_latents(mixed)
+
+        cond_rows = None
+        cond_audio_rows = None
+        if ctrl_img is not None:
+            cond_rows = encode_condition_image(ctrl_img)
+        elif ref_images:
+            parts = []
+            audio_parts = []
+            for r in ref_images:
+                if isinstance(r, dict):
+                    # pre-encoded video reference (+ optional clean soundtrack)
+                    parts.append(noise_aug_rows(r["latent"][None]))
+                    if r.get("audio_rows") is not None:
+                        audio_parts.append(r["audio_rows"][None].to(device))
+                elif isinstance(r, torch.Tensor):
+                    parts.append(noise_aug_rows(r[None]))
+                else:
+                    parts.append(encode_condition_image(r))
+            cond_rows = torch.cat(parts, dim=1)
+            if audio_parts:
+                cond_audio_rows = torch.cat(audio_parts, dim=1).float()
 
         # --- initial noise -------------------------------------------------
         if latents is None:
@@ -167,9 +225,11 @@ class MiniMaxH3Pipeline:
         audio_rows = pack_audio_latents(audio_noise)  # (1, 2*A, 32)
 
         # --- schedules -----------------------------------------------------
-        sigmas_v = build_sigma_schedule(num_inference_steps, VIDEO_SIGMA_SHIFT).to(
-            device
-        )
+        sigmas_v = build_sigma_schedule(
+            num_inference_steps,
+            VIDEO_SIGMA_SHIFT,
+            t1000_ladder=getattr(model, "t1000_sample_ladder", False),
+        ).to(device)
         # the audio schedule follows the video grid through the closed-form
         # shift remap so both streams sit at the same underlying position
         sigmas_a = remap_sigma(sigmas_v, VIDEO_SIGMA_SHIFT, AUDIO_SIGMA_SHIFT)
@@ -185,13 +245,17 @@ class MiniMaxH3Pipeline:
             video_in = video_rows
             if cond_rows is not None:
                 video_in = torch.cat([cond_rows, video_rows], dim=1)
+            audio_in = audio_rows
+            if cond_audio_rows is not None:
+                audio_in = torch.cat([cond_audio_rows, audio_rows], dim=1)
 
             preds = []
             for ctx in contexts:
-                row_t = build_row_timesteps(ctx["layout"], t_v, t_a)[None].to(device)
+                layout = ctx["layout"]
+                row_t = build_row_timesteps(layout, t_v, t_a)[None].to(device)
                 video_pred, audio_pred = transformer(
                     hidden_states=video_in.to(dtype),
-                    audio_hidden_states=audio_rows.to(dtype),
+                    audio_hidden_states=audio_in.to(dtype),
                     encoder_hidden_states=ctx["text_embeds"][None],
                     row_timesteps=row_t,
                     token_tags=ctx["tags"],
@@ -199,9 +263,15 @@ class MiniMaxH3Pipeline:
                     video_indices=ctx["video_indices"],
                     audio_indices=ctx["audio_indices"],
                     text_indices=ctx["text_indices"],
+                    # target-video token grid (patch 1x2x2); consumed only by VSA models
+                    vsa_video_grid=(t_lat, h_lat // 2, w_lat // 2),
                 )
-                n_cond = ctx["layout"].num_condition_video_rows
-                preds.append((video_pred[:, n_cond:].float(), audio_pred.float()))
+                preds.append(
+                    (
+                        video_pred[:, layout.num_condition_video_rows :].float(),
+                        audio_pred[:, layout.num_condition_audio_rows :].float(),
+                    )
+                )
 
             v_video, v_audio = preds[0]
             if do_cfg:

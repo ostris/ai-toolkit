@@ -1,5 +1,6 @@
 import os
 import torch
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 
@@ -137,6 +138,8 @@ class AdvancedPromptEmbeds:
     def save(self, path):
         data = {}
         metadata = {"class_name": self.__class__.__name__}
+        if self._frozen_dtype_keys:
+            metadata["frozen_dtype_keys"] = ",".join(self._frozen_dtype_keys)
         for key, value in self._store.items():
             if len(value) != 1:
                 raise ValueError(
@@ -150,6 +153,8 @@ class AdvancedPromptEmbeds:
     def load(cls, path=None):
         if path is not None:
             loaded = load_file(path)
+            with safe_open(path, framework="pt") as f:
+                metadata = f.metadata()
         else:
             raise ValueError("Must provide a path")
 
@@ -157,7 +162,18 @@ class AdvancedPromptEmbeds:
         for key in loaded.keys():
             data[key] = loaded[key]
 
-        return cls(**data)
+        pe = cls(**data)
+        frozen = []
+        if metadata is not None and metadata.get("frozen_dtype_keys"):
+            frozen = metadata["frozen_dtype_keys"].split(",")
+        # files cached before frozen keys were saved have no metadata for them.
+        # Integer/bool tensors (token tags, etc) must never be dtype cast, so
+        # freeze them regardless.
+        for key, value in pe._store.items():
+            if key not in frozen and not value[0].is_floating_point():
+                frozen.append(key)
+        pe.frozen_dtype_keys = frozen
+        return pe
 
     @classmethod
     def concat_prompt_embeds(

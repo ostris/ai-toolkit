@@ -3,7 +3,6 @@ from typing import List, Optional
 
 import huggingface_hub
 import torch
-import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.models.base_model import BaseModel
@@ -13,26 +12,19 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import (
-    quantize,
-    get_qtype,
-    quantize_model,
-    dequantize_if_quantized,
-)
 from toolkit.memory_management import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
-from safetensors.torch import load_file, save_file
+from toolkit.models.v2.text_encoders.qwen3 import Qwen3TextEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
+from safetensors.torch import load_file
 
-from transformers import AutoTokenizer, Qwen3ForCausalLM
-from diffusers import AutoencoderKL
 
 try:
     from diffusers import ZImagePipeline
 
     # our subclass of the diffusers transformer with the universal loading /
-    # quantization mixin (see toolkit/models/classes/_mixin.py)
-    from toolkit.models.v2.z_image import ZImageTransformer2DModel
+    # quantization mixin (see toolkit/models/v2/_mixin.py)
+    from toolkit.models.v2.diffusion_models.z_image import ZImageTransformer2DModel
 except ImportError:
     raise ImportError(
         "Diffusers is out of date. Update diffusers to the latest version by doing pip uninstall diffusers and then pip install -r requirements.txt"
@@ -189,20 +181,17 @@ class ZImageModel(BaseModel):
         # quantization happens inside load_model unless an adapter has to be merged
         # into the full precision weights first (assistant lora / accuracy recovery
         # adapter); those paths quantize after the merge via quantize_model
-        qtype = None
-        if (
-            self.model_config.quantize
-            and self.model_config.assistant_lora_path is None
-            and self.model_config.accuracy_recovery_adapter is None
-        ):
-            qtype = self.model_config.qtype
-
         transformer = ZImageTransformer2DModel.load_model(
             model_path,
             dtype=dtype,
-            qtype=qtype,
-            quantize_device=self.device_torch,
             config_path=base_model_path if self.is_single_file else None,
+            use_comfy_weights=self.model_config.model_kwargs.get(
+                "use_comfy_weights", True
+            ),
+            # comfy candidate ranking hint only (aitk_post_load quantizes):
+            # a matching pre-quantized file loads with no requant work
+            qtype=self.model_config.qtype if self.model_config.quantize else None,
+            quantize_on_load=False,
         )
         flush()
 
@@ -227,64 +216,18 @@ class ZImageModel(BaseModel):
             if self.model_config.qtype == "qfloat8":
                 self.model_config.qtype = "float8"
 
-        # already quantized inside load_transformer unless an adapter had to merge
-        # into full precision weights first (or the checkpoint was pre-quantized)
-        if self.model_config.quantize and not transformer.aitk_is_quantized:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                    transformer.x_pad_token,
-                    transformer.cap_pad_token,
-                ],
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         self.print_and_status_update("Text Encoder")
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
+        tokenizer = Qwen3TextEncoder.load_tokenizer(base_model_path)
+        text_encoder = Qwen3TextEncoder.load(
+            base_model_path, **self.component_load_kwargs("te")
         )
-        text_encoder = Qwen3ForCausalLM.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
-        )
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
 
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype
-        )
+        vae = KLVAE.load_model(base_model_path, dtype=dtype)
 
         self.noise_scheduler = ZImageModel.get_train_scheduler()
 
@@ -427,31 +370,17 @@ class ZImageModel(BaseModel):
         return ZImageTransformer2DModel.get_quantization_exclude_modules()
 
     def save_model(self, output_path, meta, save_dtype):
+        # comfy-format single-file save (the standard save format regardless
+        # of how the model was loaded); prequantized layers keep their
+        # quantized storage
         transformer: ZImageTransformer2DModel = unwrap_model(self.model)
-        if self.is_single_file:
-            # loaded from a single-file checkpoint, save back in that format
-            sd = transformer.state_dict()
-            save_dict = {}
-            for key, value in sd.items():
-                # dequantize any quantized (e.g. torchao) weights so we save plain tensors
-                save_dict[key] = (
-                    dequantize_if_quantized(value).clone().to("cpu", dtype=save_dtype)
-                )
-            save_dict = transformer.convert_state_dict_on_save(save_dict)
-
-            if not output_path.endswith(".safetensors"):
-                output_path += ".safetensors"
-            meta = get_meta_for_safetensors(meta, name=self.arch)
-            save_file(save_dict, output_path, metadata=meta)
-        else:
-            transformer.save_pretrained(
-                save_directory=os.path.join(output_path, "transformer"),
-                safe_serialization=True,
-            )
-
-            meta_path = os.path.join(output_path, "aitk_meta.yaml")
-            with open(meta_path, "w") as f:
-                yaml.dump(meta, f)
+        if not output_path.endswith(".safetensors"):
+            output_path += ".safetensors"
+        transformer.save_model(
+            output_path,
+            dtype=save_dtype,
+            metadata=get_meta_for_safetensors(meta, name=self.arch),
+        )
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")
@@ -464,16 +393,5 @@ class ZImageModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd

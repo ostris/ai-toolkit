@@ -431,9 +431,14 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 # only look for audio files
                 extensions = audio_extensions
             elif self.is_video:
-                # only look for videos
-                extensions = video_extensions
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.')]
+                # look for videos and images. Video models can train on both;
+                # images are bucketed separately as single-frame items
+                extensions = video_extensions + image_extensions
+            # prune hidden dirs (.thumbs, .tmp) so their contents never train
+            file_list = []
+            for root, dirs, files in os.walk(self.dataset_path):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                file_list.extend(os.path.join(root, file) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.'))
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
@@ -534,6 +539,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
                     encode_first_frame_in_text_embeddings=getattr(self.sd, 'encode_first_frame_in_text_embeddings', False) if self.sd else False,
+                    dopsd_self_ref=getattr(self.sd, 'dopsd_self_ref', False) if self.sd else False,
                     text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
@@ -555,7 +561,12 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             json.dump(self.size_database, f)
         
         if self.is_video:
-            print_acc(f"  -  Found {len(self.file_list)} videos")
+            num_videos = len([x for x in self.file_list if x.is_video])
+            num_images = len(self.file_list) - num_videos
+            if num_images > 0:
+                print_acc(f"  -  Found {num_videos} videos and {num_images} images")
+            else:
+                print_acc(f"  -  Found {num_videos} videos")
             assert len(self.file_list) > 0, f"no videos found in {self.dataset_path}"
         else:
             print_acc(f"  -  Found {len(self.file_list)} images")
@@ -694,7 +705,9 @@ def get_dataloader_from_datasets(
     for config in dataset_config_list:
 
         if config.type == 'image':
-            dataset = AiToolkitDataset(config, batch_size=batch_size, sd=sd)
+            # dataset level batch_size overrides the train config batch_size when set
+            dataset_batch_size = config.batch_size if config.batch_size is not None else batch_size
+            dataset = AiToolkitDataset(config, batch_size=dataset_batch_size, sd=sd)
             datasets.append(dataset)
             if config.buckets:
                 has_buckets = True
@@ -729,6 +742,16 @@ def get_dataloader_from_datasets(
         os.environ.setdefault('DIFFUSERS_VERBOSITY', 'error')
         os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
 
+    # Enable pinned memory only when explicitly opted in via dataset config and
+    # CUDA is available. pin_memory speeds up CPU->GPU transfer (helpful even at
+    # num_workers=0), but page-locked RAM cannot be relocated by NVIDIA's
+    # Windows driver shared-memory VRAM-overflow fallback, which can cause
+    # severe PCIe thrashing for users at the VRAM ceiling. Off by default; opt
+    # in via 'pin_memory: true' on the dataset config when VRAM headroom is
+    # stable.
+    if torch.cuda.is_available() and dataset_config_list[0].pin_memory:
+        dataloader_kwargs['pin_memory'] = True
+
     if has_buckets:
         # make sure they all have buckets
         for dataset in datasets:
@@ -743,6 +766,13 @@ def get_dataloader_from_datasets(
             **dataloader_kwargs
         )
     else:
+        # without buckets the dataloader batches across all datasets at once,
+        # so a dataset level batch_size cannot apply
+        for config in dataset_config_list:
+            if config.batch_size is not None:
+                raise ValueError(
+                    f"Dataset level batch_size requires buckets to be enabled. Dataset {config.folder_path or config.dataset_path} has buckets disabled."
+                )
         data_loader = DataLoader(
             concatenated_dataset,
             batch_size=batch_size,

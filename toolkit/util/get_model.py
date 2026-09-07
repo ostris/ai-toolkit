@@ -41,10 +41,34 @@ def get_all_models() -> List[BaseModel]:
     return all_model_classes
 
 
+# archs the legacy StableDiffusion monolith still serves (see the arch
+# normalization in toolkit/config_modules.py)
+LEGACY_ARCHS = {
+    "sd1",
+    "sd2",
+    "sd3",
+    "sdxl",
+    "pixart",
+    "pixart_sigma",
+    "auraflow",
+    "flux",
+    "lumina2",
+    "vega",
+    "ssd",
+}
+
+
 def get_model_class(config: ModelConfig):
     all_models = get_all_models()
     for ModelClass in all_models:
         if ModelClass.arch == config.arch:
             return ModelClass
-    # default to the legacy model
-    return StableDiffusion
+    if config.arch in LEGACY_ARCHS:
+        return StableDiffusion
+    # a typo'd or unregistered arch used to silently fall back to SD1; error
+    # instead (a broken extension import also lands here — its error was
+    # printed during get_all_models)
+    known = sorted({m.arch for m in all_models if m.arch} | LEGACY_ARCHS)
+    raise ValueError(
+        f"Unknown model arch {config.arch!r}. Known archs: {', '.join(known)}"
+    )

@@ -1,4 +1,6 @@
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 from einops import rearrange
 from torch import Tensor, nn
 import torch.utils.checkpoint as ckpt
@@ -54,7 +56,11 @@ class FakeConfig:
         self.patch_size = 1
 
 
-class Flux2(nn.Module):
+class Flux2(nn.Module, OstrisModelMixin):
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["double_blocks", "single_blocks"]
+
     def __init__(self, params: Flux2Params):
         super().__init__()
         self.config = FakeConfig()

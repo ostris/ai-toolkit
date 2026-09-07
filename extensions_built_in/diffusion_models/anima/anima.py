@@ -3,21 +3,21 @@ from typing import List, Optional
 
 import torch
 import yaml
-from optimum.quanto import freeze
 from safetensors.torch import load_file, save_file
 
 from toolkit.accelerator import unwrap_model
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
-from toolkit.memory_management import MemoryManager
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.diffusion_models.cosmos import CosmosTransformer3DModel
+from toolkit.models.v2.text_encoders.anima import AnimaTextConditioner
+from toolkit.models.v2.text_encoders.qwen3 import Qwen3ModelEncoder
+from toolkit.models.v2.vae.qwen_image import QwenImageVAE
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
-from toolkit.util.quantize import get_qtype, quantize, quantize_model
 
 try:
-    from diffusers import AnimaAutoBlocks, AnimaModularPipeline, AnimaTextConditioner
-    from diffusers.models import CosmosTransformer3DModel
+    from diffusers import AnimaAutoBlocks, AnimaModularPipeline
     from diffusers.modular_pipelines import SequentialPipelineBlocks
     from diffusers.modular_pipelines.anima.modular_blocks_anima import AnimaCoreDenoiseStep, AnimaDecodeStep
 except ImportError as e:
@@ -255,72 +255,52 @@ class AnimaModel(BaseModel):
         self.print_and_status_update("Loading Anima model")
 
         pipe: AnimaModularPipeline = AnimaAutoBlocks().init_pipeline(self.model_config.name_or_path)
-        load_kwargs = {"torch_dtype": dtype}
-        model_path = os.path.abspath(os.path.expanduser(str(self.model_config.name_or_path)))
-        if os.path.isdir(model_path):
-            load_kwargs["pretrained_model_name_or_path"] = model_path
-        pipe.load_components(**load_kwargs)
-        pipe.update_components(scheduler=self.get_train_scheduler())
+        name = self.model_config.name_or_path
+        local_path = os.path.abspath(os.path.expanduser(str(name)))
+        if os.path.isdir(local_path):
+            name = local_path
+
+        # components load individually through the v2 module classes and are
+        # handed to the modular pipeline
+        from transformers import AutoTokenizer
+
+        self.print_and_status_update("Loading components")
+        transformer = CosmosTransformer3DModel.load_model(name, dtype=dtype)
+        vae = QwenImageVAE.load_model(name, dtype=dtype)
+        text_encoder = Qwen3ModelEncoder.load_model(name, dtype=dtype)
+        text_conditioner = AnimaTextConditioner.load_model(name, dtype=dtype)
+        tokenizer = AutoTokenizer.from_pretrained(name, subfolder="tokenizer")
+        t5_tokenizer = AutoTokenizer.from_pretrained(name, subfolder="t5_tokenizer")
+        pipe.update_components(
+            transformer=transformer,
+            vae=vae,
+            text_encoder=text_encoder,
+            text_conditioner=text_conditioner,
+            tokenizer=tokenizer,
+            t5_tokenizer=t5_tokenizer,
+            scheduler=self.get_train_scheduler(),
+        )
 
         transformer = pipe.transformer
         text_conditioner = pipe.text_conditioner
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
 
-            self.print_and_status_update("Quantizing Text Conditioner")
-            quantize(text_conditioner, weights=get_qtype(self.model_config.qtype))
-            freeze(text_conditioner)
-            flush()
+        # the text conditioner rides the transformer quantize flag (at qtype_te)
+        # but takes the text-encoder offload/placement policy
+        tc_kwargs = self.component_load_kwargs("te")
+        tc_kwargs["qtype"] = (
+            self.model_config.qtype_te if self.model_config.quantize else None
+        )
+        text_conditioner.aitk_post_load(**tc_kwargs)
+        flush()
 
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-            )
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                pipe.text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-            MemoryManager.attach(
-                text_conditioner,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-            text_conditioner.to("cpu")
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
-            text_conditioner.to(self.device_torch, dtype=dtype)
-
-        pipe.text_encoder.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        pipe.text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         pipe.text_encoder.requires_grad_(False)
         pipe.text_encoder.eval()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(pipe.text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(pipe.text_encoder)
-            flush()
-
-        if self.model_config.low_vram:
-            pipe.text_encoder.to("cpu")
-            flush()
+        flush()
 
         self.noise_scheduler = pipe.scheduler
         self.vae = pipe.vae

@@ -8,6 +8,7 @@ import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
+import { encodeFilePathForUrl } from '@/utils/basic';
 import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
@@ -32,7 +33,7 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
       const zipPath = res.data.zipPath; // e.g. /mnt/Train2/out/ui/.../samples.zip
       if (!zipPath) throw new Error('No zipPath in response');
 
-      const downloadPath = `/api/files/${encodeURIComponent(zipPath)}`;
+      const downloadPath = `/api/files/${encodeFilePathForUrl(zipPath)}`;
       const a = document.createElement('a');
       a.href = downloadPath;
       // optional: suggest filename (browser may ignore if server sets Content-Disposition)

@@ -445,7 +445,6 @@ class TrainConfig:
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
-        self.latent_multiplier = kwargs.get('latent_multiplier', 1.0)
         self.negative_prompt = kwargs.get('negative_prompt', None)
         self.max_negative_prompts = kwargs.get('max_negative_prompts', 1)
         # multiplier applied to loos on regularization images
@@ -514,7 +513,6 @@ class TrainConfig:
 
         # standardize inputs to the meand std of the model knowledge
         self.standardize_images = kwargs.get('standardize_images', False)
-        self.standardize_latents = kwargs.get('standardize_latents', False)
 
         # if self.train_turbo and not self.noise_scheduler.startswith("euler"):
         #     raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
@@ -606,7 +604,7 @@ class TrainConfig:
         # toward 1.0 as sigma falls (effective = 1 + (target - 1) * sigma) so the
         # extrapolation never amplifies the unpredictable fresh-noise term at low
         # sigma. Needed for guidance-distilled models with no guidance embedding.
-        self.guidance_loss_schedule: str = kwargs.get('guidance_loss_schedule', 'sigma')
+        self.guidance_loss_schedule: str = kwargs.get('guidance_loss_schedule', 'constant')
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
@@ -927,6 +925,7 @@ class DatasetConfig:
     """
 
     def __init__(self, **kwargs):
+        self.batch_size: Union[int, None] = kwargs.get('batch_size', None)
         self.type = kwargs.get('type', 'image')  # sd, slider, reference
         # will be legacy
         self.folder_path: str = kwargs.get('folder_path', None)
@@ -936,6 +935,10 @@ class DatasetConfig:
         self.default_caption: str = kwargs.get('default_caption', None)
         # trigger word for just this dataset
         self.trigger_word: str = kwargs.get('trigger_word', None)
+        # set automatically from the train config when diff output preservation is enabled.
+        # the dataset trigger word is replaced with the class in the caption for DOP embeddings
+        self.diff_output_preservation: bool = kwargs.get('diff_output_preservation', False)
+        self.diff_output_preservation_class: str = kwargs.get('diff_output_preservation_class', '')
         random_triggers = kwargs.get('random_triggers', [])
         # if they are a string, load them from a file
         if isinstance(random_triggers, str) and os.path.exists(random_triggers):
@@ -1050,6 +1053,12 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        # Pin DataLoader output tensors in page-locked RAM for faster CPU->GPU
+        # transfer. Off by default because page-locked RAM cannot be relocated
+        # by NVIDIA's Windows driver shared-memory VRAM-overflow fallback,
+        # which can cause severe PCIe thrashing for users at the VRAM ceiling.
+        # Opt in if you have stable VRAM headroom and want the transfer speedup.
+        self.pin_memory: bool = kwargs.get('pin_memory', False)
         # threads used to prep (decode/resize) items ahead of the VAE while caching latents
         self.cache_latents_num_workers: int = kwargs.get('cache_latents_num_workers', min(6, os.cpu_count() or 1))
         self.extra_values: List[float] = kwargs.get('extra_values', [])
@@ -1074,6 +1083,11 @@ class DatasetConfig:
         # Important, make sure fps for dataset is set correctly.
         # this wont work with bucketing for now until I can handle this before bucketing.
         self.auto_frame_count: bool = kwargs.get('auto_frame_count', False)
+        
+        #  old behavior shrank the video to fit the temporal spacing of the model. Which fits the whole video, but
+        # can lead to fast motion/chipmunking. This will prevent the video from shrinking to fit, and instead, trim
+        # the tail of the video. Usually only a few frames. 
+        self.trim_auto_frame_count_tail: bool = kwargs.get('trim_auto_frame_count_tail', True)
         
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
@@ -1496,11 +1510,6 @@ def validate_configs(
     # see if any datasets are caching text embeddings
     is_caching_text_embeddings = any(dataset.cache_text_embeddings for dataset in dataset_configs)
     if is_caching_text_embeddings:
-        
-        # check if they are doing differential output preservation
-        if train_config.diff_output_preservation:
-            raise ValueError("Cannot use differential output preservation with caching text embeddings. Please set diff_output_preservation to False.")
-    
         # make sure they are all cached
         for dataset in dataset_configs:
             if not dataset.cache_text_embeddings:
@@ -1513,6 +1522,3 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
-    
-    if train_config.batch_size > 1 and any(dataset_config.auto_frame_count for dataset_config in dataset_configs):
-        raise ValueError("Cannot use batch size greater than 1 with auto_frame_count. Please set batch_size to 1 or auto_frame_count to False.")

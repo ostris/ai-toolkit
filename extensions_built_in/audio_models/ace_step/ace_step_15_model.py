@@ -11,9 +11,7 @@ from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.util.quantize import get_qtype, quantize, quantize_model
 
-from optimum.quanto import freeze
 from .src.model import (
     AceStep15,
     OobleckVAE,
@@ -116,32 +114,22 @@ class AceStep15Model(BaseAudioModel):
         models = load_models(model_path, device=load_device, dtype=dtype)
 
         self.model = models["model"]
-        
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            # quantize_model(self, self.model.decoder)
-            quantize(self.model, weights=get_qtype(self.model_config.qtype))
-            freeze(self.model)
-            flush()
-        
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            self.model.to("cpu")
-            
-        
+
         if (
             self.model_config.layer_offloading
             and self.model_config.layer_offloading_transformer_percent > 0
         ):
             raise NotImplementedError("Layer offloading not yet implemented for AceStep15Model")
-        
+
+        # quantize + offload + placement, all driven by model_config
+        self.model.aitk_post_load(**self.component_load_kwargs("transformer"))
+        flush()
+
         self.text_encoder = models["text_encoder"]
-        
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(self.text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(self.text_encoder)
-            flush()
+
+        # quantize + offload + placement, all driven by model_config
+        self.text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
+        flush()
         
         self.vae = models["vae"]
         

@@ -30,12 +30,15 @@ from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.qwen3_vl import patch_qwen_vl_patch_embed
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLModelEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
 
-from optimum.quanto import freeze, QTensor
+
+from optimum.quanto import QTensor
 from diffusers import AutoencoderKL
 
 from .src.transformer import BooguImageTransformer2DModel
@@ -69,33 +72,6 @@ SYSTEM_PROMPT_T2I = (
 )
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
-
-
-def patch_qwen_vl_patch_embed(model) -> int:
-    """Swap Qwen-VL's vision ``patch_embed`` Conv3d for the equivalent ``F.linear``.
-
-    Qwen-VL's patch_embed is a Conv3d whose kernel == stride, i.e. just a linear
-    projection of each flattened patch. bf16 Conv3d has no fast cuDNN kernel and
-    falls back to a slow path that effectively locks up image caching for the edit
-    (TI2I) model. The weight is read lazily so this survives later ``.to()`` moves.
-    Returns the number of patch_embed modules patched. (Vendored from
-    extensions_built_in/captioner/Qwen3VLCaptioner.py.)
-    """
-    patched = 0
-    for module in model.modules():
-        proj = getattr(module, "proj", None)
-        if isinstance(proj, torch.nn.Conv3d) and tuple(proj.kernel_size) == tuple(
-            proj.stride
-        ):
-
-            def fast_forward(hidden_states, _proj=proj):
-                w = _proj.weight.reshape(_proj.weight.shape[0], -1)
-                x = hidden_states.view(-1, w.shape[1]).to(w.dtype)
-                return F.linear(x, w, _proj.bias)
-
-            module.forward = fast_forward
-            patched += 1
-    return patched
 
 
 class BooguImageModel(BaseModel):
@@ -167,8 +143,8 @@ class BooguImageModel(BaseModel):
         # deserialize -- use the bf16 repo and let ai-toolkit quantize if wanted.
         self.print_and_status_update("Loading transformer")
         try:
-            transformer = BooguImageTransformer2DModel.from_pretrained(
-                base, subfolder="transformer", torch_dtype=dtype, token=HF_TOKEN
+            transformer = BooguImageTransformer2DModel.load_model(
+                base, dtype=dtype, token=HF_TOKEN
             )
         except OSError as e:
             raise OSError(
@@ -188,16 +164,8 @@ class BooguImageModel(BaseModel):
         if attention_backend != "native":
             transformer.set_attention_backend(attention_backend)
 
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
 
         # --- instruction encoder (Qwen3-VL) + processor ---
@@ -212,8 +180,8 @@ class BooguImageModel(BaseModel):
         # AutoModel yields the inner Qwen3VLModel (the ``.model`` of the
         # *ForConditionalGeneration), whose last_hidden_state is exactly the
         # instruction feature the Boogu pipeline consumes.
-        text_encoder = AutoModel.from_pretrained(
-            te_path, subfolder=te_subfolder, torch_dtype=dtype, token=HF_TOKEN
+        text_encoder = Qwen3VLModelEncoder.load_model(
+            te_path, dtype=dtype, subfolder=te_subfolder, token=HF_TOKEN
         )
         text_encoder.eval()
         text_encoder.requires_grad_(False)
@@ -227,25 +195,13 @@ class BooguImageModel(BaseModel):
             )
         flush()
 
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing instruction encoder")
-            text_encoder.to(self.device_torch)
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving instruction encoder to CPU")
-            text_encoder.to("cpu")
-        else:
-            text_encoder.to(self.device_torch)
+        # quantize + offload + placement, all driven by model_config
+        text_encoder.aitk_post_load(**self.component_load_kwargs("te"))
         flush()
 
         # --- VAE (FLUX AutoencoderKL) ---
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            base, subfolder="vae", torch_dtype=self.vae_torch_dtype, token=HF_TOKEN
-        )
+        vae = KLVAE.load_model(base, dtype=self.vae_torch_dtype, token=HF_TOKEN)
         vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
         vae.eval()
         vae.requires_grad_(False)
@@ -446,14 +402,5 @@ class BooguImageModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["double_stream_layers", "single_stream_layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        return {
-            k.replace("transformer.", "diffusion_model."): v
-            for k, v in state_dict.items()
-        }
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        return {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in state_dict.items()
-        }

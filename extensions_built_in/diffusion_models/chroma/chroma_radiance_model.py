@@ -5,16 +5,13 @@ import torch
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
 from toolkit.basic import flush
-from diffusers import AutoencoderKL
 # from toolkit.pixel_shuffle_encoder import AutoencoderPixelMixer
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
+from optimum.quanto import QTensor
 from .pipeline import ChromaPipeline, prepare_latent_image_ids
 from einops import rearrange, repeat
 import random
@@ -38,33 +35,15 @@ scheduler_config = {
     "use_dynamic_shifting": True
 }
 
-class FakeConfig:
-    # for diffusers compatability
-    def __init__(self):
-        self.attention_head_dim = 128
-        self.guidance_embeds = True
-        self.in_channels = 64
-        self.joint_attention_dim = 4096
-        self.num_attention_heads = 24
-        self.num_layers = 19
-        self.num_single_layers = 38
-        self.patch_size = 1
-        
-class FakeCLIP(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.dtype = torch.bfloat16
-        self.device = 'cuda'
-        self.text_model = None
-        self.tokenizer = None
-        self.model_max_length = 77
-
-    def forward(self, *args, **kwargs):
-        return torch.zeros(1, 1, 1).to(self.device)
+# shared with the base chroma model (identical stubs)
+from .chroma_model import FakeCLIP, FakeConfig
 
 
 class ChromaRadianceModel(BaseModel):
     arch = "chroma_radiance"
+
+    def get_transformer_block_names(self):
+        return ["double_blocks", "single_blocks"]
 
     def __init__(
             self,
@@ -152,73 +131,30 @@ class ChromaRadianceModel(BaseModel):
         
         if model_path.endswith('.pth') or model_path.endswith('.pt'):
             chroma_state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+            transformer = Chroma.load_from_state_dict(chroma_state_dict, dtype)
         else:
-            chroma_state_dict = load_file(model_path, 'cpu')
-        
-        # determine number of double and single blocks
-        double_blocks = 0
-        single_blocks = 0
-        for key in chroma_state_dict.keys():
-            if "double_blocks" in key:
-                block_num = int(key.split(".")[1]) + 1
-                if block_num > double_blocks:
-                    double_blocks = block_num
-            elif "single_blocks" in key:
-                block_num = int(key.split(".")[1]) + 1
-                if block_num > single_blocks:
-                    single_blocks = block_num
-        print(f"Double Blocks: {double_blocks}")
-        print(f"Single Blocks: {single_blocks}")
-
-        chroma_params.depth = double_blocks
-        chroma_params.depth_single_blocks = single_blocks
-        transformer = Chroma(chroma_params)
-        
+            transformer = Chroma.load_model(model_path, dtype=dtype)
         # add dtype, not sure why it doesnt have it
         transformer.dtype = dtype
-        # load the state dict into the model
-        transformer.load_state_dict(chroma_state_dict)
-        
-        transformer.to(self.quantize_device, dtype=dtype)
-        
-        transformer.config = FakeConfig()
-        transformer.config.num_layers = double_blocks
-        transformer.config.num_single_layers = single_blocks
 
-        if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
-            self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
-            freeze(transformer)
-            transformer.to(self.device_torch)
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        transformer.config = FakeConfig()
+        transformer.config.num_layers = transformer.params.depth
+        transformer.config.num_single_layers = transformer.params.depth_single_blocks
+
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
 
         flush()
 
         self.print_and_status_update("Loading T5")
-        tokenizer_2 = T5TokenizerFast.from_pretrained(
-            extras_path, subfolder="tokenizer_2", torch_dtype=dtype
+        tokenizer_2 = T5TextEncoder.load_tokenizer(extras_path)
+        text_encoder_2 = T5TextEncoder.load(
+            extras_path, **self.component_load_kwargs("te")
         )
-        text_encoder_2 = T5EncoderModel.from_pretrained(
-            extras_path, subfolder="text_encoder_2", torch_dtype=dtype
-        )
-        text_encoder_2.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantize(text_encoder_2, weights=get_qtype(
-                self.model_config.qtype))
-            freeze(text_encoder_2)
-            flush()
 
         # self.print_and_status_update("Loading CLIP")
-        text_encoder = FakeCLIP()
-        tokenizer = FakeCLIP()
+        text_encoder = FakeCLIP(device=self.device_torch)
+        tokenizer = FakeCLIP(device=self.device_torch)
         text_encoder.to(self.device_torch, dtype=dtype)
 
         self.noise_scheduler = ChromaRadianceModel.get_train_scheduler()
@@ -256,11 +192,13 @@ class ChromaRadianceModel(BaseModel):
         pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        # low_vram: text encoders stay on cpu; get_prompt_embeds moves them
+        # to the gpu on demand
+        if not self.low_vram:
+            text_encoder[0].to(self.device_torch)
+            text_encoder[1].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
-        text_encoder[1].to(self.device_torch)
         text_encoder[1].requires_grad_(False)
         text_encoder[1].eval()
         pipe.transformer = pipe.transformer.to(self.device_torch)
@@ -406,40 +344,24 @@ class ChromaRadianceModel(BaseModel):
         return False
     
     def save_model(self, output_path, meta, save_dtype):
+        # comfy-format single-file save via the mixin (chroma's class keys ARE
+        # the original layout); handles torchao/Ostris dequant, not just quanto
         if not output_path.endswith(".safetensors"):
-            output_path =  output_path + ".safetensors"
-        # only save the unet
+            output_path = output_path + ".safetensors"
         transformer: Chroma = unwrap_model(self.model)
-        state_dict = transformer.state_dict()
-        save_dict = {}
-        for k, v in state_dict.items():
-            if isinstance(v, QTensor):
-                v = v.dequantize()
-            save_dict[k] = v.clone().to('cpu', dtype=save_dtype)
-        
-        meta = get_meta_for_safetensors(meta, name='chroma')
-        save_file(save_dict, output_path, metadata=meta)
+        transformer.save_model(
+            output_path,
+            dtype=save_dtype,
+            metadata=get_meta_for_safetensors(meta, name="chroma"),
+        )
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get('noise')
         batch = kwargs.get('batch')
         return (noise - batch.latents).detach()
     
-    def convert_lora_weights_before_save(self, state_dict):
-        # currently starte with transformer. but needs to start with diffusion_model. for comfyui
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        # saved as diffusion_model. but needs to be transformer. for ai-toolkit
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
     
     def get_base_model_version(self):
         return "chroma_radiance"

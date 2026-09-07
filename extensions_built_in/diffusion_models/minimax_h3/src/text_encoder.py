@@ -19,9 +19,98 @@ from typing import List, Optional
 
 import torch
 
+from dataclasses import dataclass, field
+
 from .packing import TEXT_TAG, VIDEO_TAG
 
 TEXT_ENCODER_LAYER = 50
+
+
+@dataclass
+class VideoRef:
+    """A reference VIDEO for the Qwen3-VL presentation: frames sampled at
+    2 fps with their timestamps (seconds). Presented ComfyUI-style as
+    ``<Video k>: `` plus one ``<T.T seconds>``-stamped vision block per
+    merged frame pair."""
+
+    frames: list = field(default_factory=list)  # PIL images
+    timestamps: list = field(default_factory=list)  # float seconds, per frame
+    # a soundtrack that rides as reference audio rows: the presentation gets an
+    # "<Audio j>: " label emitted BEFORE the "<Video k>: " block (audio itself
+    # never enters Qwen)
+    has_audio: bool = False
+
+
+def video_has_audio(path) -> bool:
+    try:
+        import av
+
+        with av.open(path) as c:
+            return len(c.streams.audio) > 0
+    except Exception:
+        return False
+
+
+def load_video_ref(path, max_frames: int = 0, has_audio=None) -> "VideoRef":
+    """Sample a video at 2 fps (slot rounding on its native fps) into a
+    VideoRef with per-frame timestamps in seconds."""
+    import cv2
+    from PIL import Image as _Image
+
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open control video {path}")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    indices = []
+    i = 0
+    while True:
+        idx = round(i * fps / 2.0)
+        if idx >= total:
+            break
+        if not indices or idx != indices[-1]:
+            indices.append(idx)
+        i += 1
+        if max_frames and len(indices) >= max_frames:
+            break
+    frames, times = [], []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frames.append(_Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+        times.append(idx / fps)
+    cap.release()
+    if not frames:
+        raise ValueError(f"No frames decoded from control video {path}")
+    if has_audio is None:
+        has_audio = video_has_audio(path)
+    return VideoRef(frames=frames, timestamps=times, has_audio=has_audio)
+
+
+def trim_caption_tokens(embeds: torch.Tensor, tags: torch.Tensor, max_length):
+    """Cap the CAPTION rows of an already-encoded prompt at ``max_length``.
+
+    The presentation is ``[labels + vision blocks ...] + caption``: everything
+    up to and including the last vision row (tag 0) is structural conditioning
+    and kept intact; only the trailing text-tagged caption tail is truncated.
+    Lets embeds cached with a longer max_text_length serve a shorter one
+    without re-encoding. Returns (embeds, tags) — same objects when nothing to
+    trim.
+    """
+    if max_length is None or max_length <= 0:
+        return embeds, tags
+    is_vision = tags.to("cpu") == VIDEO_TAG
+    if bool(is_vision.any()):
+        head = int(is_vision.nonzero()[-1].item()) + 1
+    else:
+        head = 0
+    caption_len = int(tags.shape[0]) - head
+    if caption_len <= max_length:
+        return embeds, tags
+    keep = head + max_length
+    return embeds[:keep], tags[:keep]
 
 
 @torch.no_grad()
@@ -33,7 +122,9 @@ def encode_minimax_h3_prompt(
     keyframes: Optional[List] = None,  # PIL images already on the target canvas
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
-    max_length: Optional[int] = None,  # cap on PROMPT tokens (vision blocks are never cut)
+    max_length: Optional[
+        int
+    ] = None,  # cap on PROMPT tokens (vision blocks are never cut)
 ):
     """Encode ONE prompt (with optional keyframes) into MiniMax-H3 conditioning.
 
@@ -53,24 +144,81 @@ def encode_minimax_h3_prompt(
         device = text_encoder.device
 
     pixel_values, image_grid_thw = None, None
+    pixel_values_videos, video_grid_thw = None, None
     token_ids: List[int] = []
     token_tags: List[int] = []
     if keyframes:
-        vision = processor.image_processor(images=keyframes, return_tensors="pt")
-        pixel_values = vision["pixel_values"]
-        image_grid_thw = vision["image_grid_thw"]
+        images = [k for k in keyframes if not isinstance(k, VideoRef)]
+        videos = [k for k in keyframes if isinstance(k, VideoRef)]
         merge = processor.image_processor.merge_size**2
         vision_start = tokenizer.convert_tokens_to_ids("<|vision_start|>")
         vision_end = tokenizer.convert_tokens_to_ids("<|vision_end|>")
         image_pad = tokenizer.convert_tokens_to_ids("<|image_pad|>")
-        for i in range(len(keyframes)):
-            num_image_tokens = int(image_grid_thw[i].prod()) // merge
-            label_ids = tokenizer(f"<Picture {i + 1}>: ", add_special_tokens=False)[
-                "input_ids"
-            ]
-            vision_ids = [vision_start] + [image_pad] * num_image_tokens + [vision_end]
-            token_ids += label_ids + vision_ids
-            token_tags += [TEXT_TAG] * len(label_ids) + [VIDEO_TAG] * len(vision_ids)
+        video_pad = tokenizer.convert_tokens_to_ids("<|video_pad|>")
+        if images:
+            vision = processor.image_processor(images=images, return_tensors="pt")
+            pixel_values = vision["pixel_values"]
+            image_grid_thw = vision["image_grid_thw"]
+        if videos:
+            import numpy as np
+
+            # frames are already sampled at 2 fps: do_sample_frames=False keeps
+            # the video processor from resampling them (official diffusers
+            # ref2va encoder passes the same flag)
+            vids = processor.video_processor(
+                videos=[np.stack([np.asarray(f.convert("RGB")) for f in v.frames]) for v in videos],
+                do_sample_frames=False,
+                return_tensors="pt",
+            )
+            pixel_values_videos = vids["pixel_values_videos"]
+            video_grid_thw = vids["video_grid_thw"]
+
+        pic_idx, vid_idx, aud_idx = 0, 0, 0
+        for k in keyframes:
+            if isinstance(k, VideoRef):
+                grid = video_grid_thw[vid_idx]
+                per_pair = int(grid[1] * grid[2]) // merge
+                label_ids = []
+                if k.has_audio:
+                    aud_idx += 1
+                    label_ids += tokenizer(
+                        f"<Audio {aud_idx}>: ", add_special_tokens=False
+                    )["input_ids"]
+                label_ids += tokenizer(
+                    f"<Video {vid_idx + 1}>: ", add_special_tokens=False
+                )["input_ids"]
+                token_ids += label_ids
+                token_tags += [TEXT_TAG] * len(label_ids)
+                # one timestamped vision block per merged frame PAIR: the
+                # video processor merges temporal_patch_size=2 frames, repeat-
+                # padding an odd count; the timestamp is the pair's mean time
+                times = list(k.timestamps)
+                if len(times) % 2 == 1:
+                    times.append(times[-1])
+                for t_pair in range(int(grid[0])):
+                    mean_t = (times[2 * t_pair] + times[2 * t_pair + 1]) / 2.0
+                    ts_ids = tokenizer(
+                        f"<{round(mean_t, 1):.1f} seconds>", add_special_tokens=False
+                    )["input_ids"]
+                    vision_ids = [vision_start] + [video_pad] * per_pair + [vision_end]
+                    token_ids += ts_ids + vision_ids
+                    token_tags += [TEXT_TAG] * len(ts_ids) + [VIDEO_TAG] * len(
+                        vision_ids
+                    )
+                vid_idx += 1
+            else:
+                num_image_tokens = int(image_grid_thw[pic_idx].prod()) // merge
+                label_ids = tokenizer(
+                    f"<Picture {pic_idx + 1}>: ", add_special_tokens=False
+                )["input_ids"]
+                vision_ids = (
+                    [vision_start] + [image_pad] * num_image_tokens + [vision_end]
+                )
+                token_ids += label_ids + vision_ids
+                token_tags += [TEXT_TAG] * len(label_ids) + [VIDEO_TAG] * len(
+                    vision_ids
+                )
+                pic_idx += 1
 
     prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
     if max_length is not None and max_length > 0:
@@ -101,6 +249,10 @@ def encode_minimax_h3_prompt(
         if pixel_values is None
         else pixel_values.to(device, text_encoder.dtype),
         image_grid_thw=None if image_grid_thw is None else image_grid_thw.to(device),
+        pixel_values_videos=None
+        if pixel_values_videos is None
+        else pixel_values_videos.to(device, text_encoder.dtype),
+        video_grid_thw=None if video_grid_thw is None else video_grid_thw.to(device),
         use_cache=False,
         output_hidden_states=True,
     )

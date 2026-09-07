@@ -1,4 +1,6 @@
 import os
+from toolkit.models.v2.text_encoders.qwen25_vl import Qwen25VLTextEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
@@ -12,8 +14,6 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype
 from .src.pipelines.omnigen2.pipeline_omnigen2 import OmniGen2Pipeline
 from .src.models.transformers import OmniGen2Transformer2DModel
 from .src.models.transformers.repo import OmniGen2RotaryPosEmbed
@@ -78,48 +78,26 @@ class OmniGen2Model(BaseModel):
             extras_path, subfolder="processor", use_fast=True
         )
 
-        mllm = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            extras_path, subfolder="mllm", torch_dtype=torch.bfloat16
+        # load + quantize + offload + placement, all driven by model_config
+        mllm = Qwen25VLTextEncoder.load(
+            extras_path, subfolder="mllm", **self.component_load_kwargs("te")
         )
-        mllm.to(self.device_torch, dtype=dtype)
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Qwen2.5 VL model")
-            quantization_type = get_qtype(self.model_config.qtype_te)
-            quantize(mllm, weights=quantization_type)
-            freeze(mllm)
-
-        if self.low_vram:
-            # unload it for now
-            mllm.to("cpu")
 
         flush()
 
         self.print_and_status_update("Loading transformer")
 
-        transformer = OmniGen2Transformer2DModel.from_pretrained(
-            model_path, subfolder="transformer", torch_dtype=torch.bfloat16
+        transformer = OmniGen2Transformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-
-        if not self.low_vram:
-            transformer.to(self.device_torch, dtype=dtype)
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantization_type = get_qtype(self.model_config.qtype)
-            quantize(transformer, weights=quantization_type)
-            freeze(transformer)
-
-        if self.low_vram:
-            # unload it for now
-            transformer.to("cpu")
 
         flush()
 
         self.print_and_status_update("Loading vae")
 
-        vae = AutoencoderKL.from_pretrained(
-            extras_path, subfolder="vae", torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        vae = KLVAE.load_model(extras_path, dtype=torch.bfloat16).to(
+            self.device_torch, dtype=dtype
+        )
 
         flush()
         self.print_and_status_update("Loading Qwen2.5 VLProcessor")
@@ -343,21 +321,7 @@ class OmniGen2Model(BaseModel):
             return ["noise_refiner", "context_refiner", "ref_image_refiner", "layers"]
         return ["noise_refiner", "context_refiner", "layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        # currently starte with transformer. but needs to start with diffusion_model. for comfyui
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
-
-    def convert_lora_weights_before_load(self, state_dict):
-        # saved as diffusion_model. but needs to be transformer. for ai-toolkit
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
     def get_base_model_version(self):
         return "omnigen2"

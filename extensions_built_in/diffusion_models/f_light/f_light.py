@@ -6,15 +6,14 @@ import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
 from toolkit.basic import flush
-from diffusers import AutoencoderKL
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel
+from optimum.quanto import QTensor
+
 from .src import FLitePipeline, DiT
 
 if TYPE_CHECKING:
@@ -33,6 +32,9 @@ scheduler_config = {
 
 class FLiteModel(BaseModel):
     arch = "f-lite"
+
+    def get_transformer_block_names(self):
+        return ["blocks"]
 
     def __init__(
             self,
@@ -74,54 +76,22 @@ class FLiteModel(BaseModel):
 
         self.print_and_status_update("Loading transformer")
 
-        transformer = DiT.from_pretrained(
-            model_path,
-            subfolder="dit_model",
-            torch_dtype=dtype,
+        transformer = DiT.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-        
-        transformer.to(self.quantize_device, dtype=dtype)
-
-        if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
-            self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
-            freeze(transformer)
-            transformer.to(self.device_torch)
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
 
         flush()
 
         self.print_and_status_update("Loading T5")
-        tokenizer = T5TokenizerFast.from_pretrained(
-            extras_path, subfolder="tokenizer", torch_dtype=dtype
+        tokenizer = T5TextEncoder.load_tokenizer(extras_path, subfolder="tokenizer")
+        text_encoder = T5TextEncoder.load(
+            extras_path, subfolder="text_encoder", **self.component_load_kwargs("te")
         )
-        text_encoder = T5EncoderModel.from_pretrained(
-            extras_path, subfolder="text_encoder", torch_dtype=dtype
-        )
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantize(text_encoder, weights=get_qtype(
-                self.model_config.qtype))
-            freeze(text_encoder)
-            flush()
 
         self.noise_scheduler = FLiteModel.get_train_scheduler()
         
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            extras_path,
-            subfolder="vae",
-            torch_dtype=dtype
-        )
-        vae = vae.to(self.device_torch, dtype=dtype)
+        vae = KLVAE.load_model(extras_path, dtype=dtype, device=self.device_torch)
 
         self.print_and_status_update("Making pipe")
 
@@ -145,8 +115,10 @@ class FLiteModel(BaseModel):
         pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        # low_vram: the text encoder stays on cpu; get_prompt_embeds moves it
+        # to the gpu on demand
+        if not self.low_vram:
+            text_encoder[0].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         pipe.transformer = pipe.transformer.to(self.device_torch)
@@ -270,21 +242,8 @@ class FLiteModel(BaseModel):
         # return (noise - batch.latents).detach()
         return (batch.latents - noise).detach()
     
-    def convert_lora_weights_before_save(self, state_dict):
-        # currently starte with transformer. but needs to start with diffusion_model. for comfyui
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        # saved as diffusion_model. but needs to be transformer. for ai-toolkit
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
     
     def get_base_model_version(self):
         return "f-lite"
