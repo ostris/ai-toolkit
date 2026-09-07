@@ -35,6 +35,19 @@ import torch
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     torch.autograd.set_detect_anomaly(True)
 
+# torch 2.13 prefers cuDNN for scaled_dot_product_attention, and its backward graph
+# fails to execute on the attention shapes FLUX produces:
+#
+#   Expected mha_graph.execute(...).is_good() to be true, but got false.
+#   raised from run_cudnn_SDP_bprop at aten/src/ATen/native/cudnn/MHA.cpp:1736
+#
+# Without CUDA_LAUNCH_BLOCKING that lands on whichever CUDA call comes next, so one
+# run reports an illegal memory access and the next reports a CUBLAS execution
+# failure, for one bug. It only bites the shapes torch routes to cuDNN, which reads
+# as a flaky model rather than a backend. Flash and mem-efficient serve the same
+# attention and are what these models trained on before torch 2.13.
+torch.backends.cuda.enable_cudnn_sdp(False)
+
 if seed is not None:
     import random
     import numpy as np
