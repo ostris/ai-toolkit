@@ -4,9 +4,15 @@ Covers t2v (t2va) and first-frame i2v (fl2va), always denoising the joint
 audio stream alongside the video (the packed sequence contains audio rows by
 construction; decoding the audio track is optional).
 
-MiniMax-H3 is guidance-distilled: there is no negative prompt, no CFG and
-exactly one transformer forward per step. ``unconditional_embeds`` and
-``guidance_scale`` are accepted for harness compatibility and ignored.
+MiniMax-H3 is guidance-distilled: the released recipe is no negative prompt,
+no CFG and exactly one transformer forward per step (``guidance_scale = 1``,
+the default). ``guidance_scale > 1`` with ``unconditional_embeds`` enables
+*true* two-pass classifier-free guidance — off-recipe for the base model, but
+it restores sharpness on checkpoints whose distillation has drifted from
+naive fine-tuning (the model partially un-distills toward the un-guided
+distribution; real CFG re-applies the guidance the weights no longer carry).
+Each prompt packs into its own sequence (text length shifts the rotary media
+clock), so the two passes run on separate layouts over shared latent state.
 
 Scheduler (the released math, not diffusers'):
   - sigma grid: ``linspace(1, 0, steps + 1)`` through the exponential shift
@@ -65,12 +71,12 @@ class MiniMaxH3Pipeline:
     def __call__(
         self,
         conditional_embeds,  # AdvancedPromptEmbeds: text_embeds [(L, 5120)], text_token_tags [(L,)]
-        unconditional_embeds=None,  # ignored: MiniMax-H3 is guidance-distilled
+        unconditional_embeds=None,  # used only when guidance_scale > 1 (true CFG)
         height: int = 768,
         width: int = 768,
         num_frames: int = 124,
         num_inference_steps: int = 28,
-        guidance_scale: float = 1.0,  # ignored
+        guidance_scale: float = 1.0,  # 1 = released single-pass recipe; > 1 = true CFG
         latents: Optional[torch.Tensor] = None,
         generator: Optional[torch.Generator] = None,
         ctrl_img: Optional[
@@ -87,6 +93,12 @@ class MiniMaxH3Pipeline:
         dtype = model.torch_dtype
         transformer = model.transformer
 
+        do_cfg = (
+            guidance_scale is not None
+            and float(guidance_scale) > 1.0
+            and unconditional_embeds is not None
+        )
+
         is_video = num_frames > 1
         if is_video:
             num_frames = packing.align_num_frames_down(num_frames)
@@ -101,15 +113,7 @@ class MiniMaxH3Pipeline:
         w_lat = width // 16
         a_lat = packing.audio_latent_num_frames(num_frames)
 
-        text_embeds, token_tags = trim_caption_tokens(
-            conditional_embeds.text_embeds[0],
-            conditional_embeds.text_token_tags[0],
-            getattr(model, "max_text_length", None),
-        )
-        text_embeds = text_embeds.to(device, dtype)
-        token_tags = token_tags.to("cpu", torch.long)
-
-        # --- packed layout -------------------------------------------------
+        # --- packed layouts (one per prompt: text length shifts the layout) --
         if ctrl_img is not None and ref_images:
             raise ValueError("ctrl_img (first frame) and ref_images are exclusive")
         anchors = ("first",) if ctrl_img is not None else ()
@@ -121,23 +125,44 @@ class MiniMaxH3Pipeline:
             if isinstance(r, dict):
                 lat = r["latent"]
                 a = r.get("audio_rows")
-                a_lat = int(a.shape[0]) // 2 if a is not None else 0
-                ref_blocks.append((lat.shape[1], lat.shape[2], lat.shape[3], a_lat))
+                ref_a_lat = int(a.shape[0]) // 2 if a is not None else 0
+                ref_blocks.append((lat.shape[1], lat.shape[2], lat.shape[3], ref_a_lat))
             elif isinstance(r, torch.Tensor):
                 ref_blocks.append((r.shape[1], r.shape[2], r.shape[3]))
             else:
                 ref_blocks.append((1, r.size[1] // 16, r.size[0] // 16))
         ref_blocks = tuple(ref_blocks)
-        layout = build_packed_sequence(
-            text_token_tags=token_tags,
-            num_latent_frames=t_lat,
-            latent_height=h_lat,
-            latent_width=w_lat,
-            num_audio_latents=a_lat,
-            keyframe_anchors=anchors,
-            ref_blocks=ref_blocks,
-        )
-        num_cond = layout.num_condition_video_rows
+
+        def _prompt_context(embeds):
+            text_embeds, token_tags = trim_caption_tokens(
+                embeds.text_embeds[0],
+                embeds.text_token_tags[0],
+                getattr(model, "max_text_length", None),
+            )
+            text_embeds = text_embeds.to(device, dtype)
+            token_tags = token_tags.to("cpu", torch.long)
+            layout = build_packed_sequence(
+                text_token_tags=token_tags,
+                num_latent_frames=t_lat,
+                latent_height=h_lat,
+                latent_width=w_lat,
+                num_audio_latents=a_lat,
+                keyframe_anchors=anchors,
+                ref_blocks=ref_blocks,
+            )
+            return {
+                "text_embeds": text_embeds,
+                "layout": layout,
+                "position_ids": layout.position_ids[None].to(device),
+                "tags": layout.token_tags[None].to(device),
+                "video_indices": layout.video_indices.to(device),
+                "audio_indices": layout.audio_indices.to(device),
+                "text_indices": layout.text_indices.to(device),
+            }
+
+        contexts = [_prompt_context(conditional_embeds)]
+        if do_cfg:
+            contexts.append(_prompt_context(unconditional_embeds))
 
         # --- conditioning rows (draw order: condition noise, video, audio) --
         def encode_condition_image(img: Image.Image) -> torch.Tensor:
@@ -209,12 +234,6 @@ class MiniMaxH3Pipeline:
         # shift remap so both streams sit at the same underlying position
         sigmas_a = remap_sigma(sigmas_v, VIDEO_SIGMA_SHIFT, AUDIO_SIGMA_SHIFT)
 
-        position_ids = layout.position_ids[None].to(device)
-        tags = layout.token_tags[None].to(device)
-        video_indices = layout.video_indices.to(device)
-        audio_indices = layout.audio_indices.to(device)
-        text_indices = layout.text_indices.to(device)
-
         # --- denoise loop --------------------------------------------------
         num_steps = sigmas_v.shape[0] - 1
         for i in range(num_steps):
@@ -223,8 +242,6 @@ class MiniMaxH3Pipeline:
             t_v = 1.0 - float(sv)
             t_a = 1.0 - float(sa)
 
-            row_t = build_row_timesteps(layout, t_v, t_a)[None].to(device)
-
             video_in = video_rows
             if cond_rows is not None:
                 video_in = torch.cat([cond_rows, video_rows], dim=1)
@@ -232,21 +249,36 @@ class MiniMaxH3Pipeline:
             if cond_audio_rows is not None:
                 audio_in = torch.cat([cond_audio_rows, audio_rows], dim=1)
 
-            video_pred, audio_pred = transformer(
-                hidden_states=video_in.to(dtype),
-                audio_hidden_states=audio_in.to(dtype),
-                encoder_hidden_states=text_embeds[None],
-                row_timesteps=row_t,
-                token_tags=tags,
-                position_ids=position_ids,
-                video_indices=video_indices,
-                audio_indices=audio_indices,
-                text_indices=text_indices,
-                # target-video token grid (patch 1x2x2); consumed only by VSA models
-                vsa_video_grid=(t_lat, h_lat // 2, w_lat // 2),
-            )
-            v_video = video_pred[:, num_cond:].float()
-            v_audio = audio_pred[:, layout.num_condition_audio_rows :].float()
+            preds = []
+            for ctx in contexts:
+                layout = ctx["layout"]
+                row_t = build_row_timesteps(layout, t_v, t_a)[None].to(device)
+                video_pred, audio_pred = transformer(
+                    hidden_states=video_in.to(dtype),
+                    audio_hidden_states=audio_in.to(dtype),
+                    encoder_hidden_states=ctx["text_embeds"][None],
+                    row_timesteps=row_t,
+                    token_tags=ctx["tags"],
+                    position_ids=ctx["position_ids"],
+                    video_indices=ctx["video_indices"],
+                    audio_indices=ctx["audio_indices"],
+                    text_indices=ctx["text_indices"],
+                    # target-video token grid (patch 1x2x2); consumed only by VSA models
+                    vsa_video_grid=(t_lat, h_lat // 2, w_lat // 2),
+                )
+                preds.append(
+                    (
+                        video_pred[:, layout.num_condition_video_rows :].float(),
+                        audio_pred[:, layout.num_condition_audio_rows :].float(),
+                    )
+                )
+
+            v_video, v_audio = preds[0]
+            if do_cfg:
+                vu_video, vu_audio = preds[1]
+                g = float(guidance_scale)
+                v_video = vu_video + g * (v_video - vu_video)
+                v_audio = vu_audio + g * (v_audio - vu_audio)
 
             denoised_v = video_rows + sv * v_video
             ratio_v = sv_next / sv
