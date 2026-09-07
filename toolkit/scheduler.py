@@ -21,6 +21,14 @@ def get_lr_scheduler(
             optimizer, **kwargs
         )
     elif name == "step":
+        # StepLR decays purely on step_size/gamma and has no notion of run
+        # length, so drop the total_iters the trainer injects.
+        kwargs.pop('total_iters', None)
+        if 'step_size' not in kwargs:
+            raise ValueError(
+                "lr_scheduler 'step' requires lr_scheduler_params.step_size "
+                "(number of steps between each lr decay)"
+            )
 
         return torch.optim.lr_scheduler.StepLR(
             optimizer, **kwargs
@@ -40,7 +48,7 @@ def get_lr_scheduler(
         if 'num_warmup_steps' not in kwargs:
             print(f"WARNING: num_warmup_steps not in kwargs. Using default value of 1000")
             kwargs['num_warmup_steps'] = 1000
-        del kwargs['total_iters']
+        kwargs.pop('total_iters', None)
         return get_constant_schedule_with_warmup(optimizer, **kwargs)
     else:
         # try to use a diffusers scheduler
