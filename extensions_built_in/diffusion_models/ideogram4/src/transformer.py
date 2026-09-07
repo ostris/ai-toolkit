@@ -12,6 +12,8 @@ import math
 from dataclasses import dataclass
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
@@ -355,8 +357,19 @@ class Ideogram4FinalLayer(nn.Module):
         return self.linear(self.norm_final(x) * scale)
 
 
-class Ideogram4Transformer2DModel(nn.Module):
+class Ideogram4Transformer2DModel(nn.Module, OstrisModelMixin):
     """Ideogram 4 flow-matching transformer."""
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["layers"]
+
+    def get_offload_ignore_modules(self):
+        return [
+            self.rotary_emb.inv_freq,
+            self.input_proj,
+            self.llm_cond_proj,
+        ]
 
     def __init__(self, config: Ideogram4Config) -> None:
         super().__init__()

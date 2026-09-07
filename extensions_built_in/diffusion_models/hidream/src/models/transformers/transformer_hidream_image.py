@@ -8,6 +8,8 @@ from einops import repeat
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.modeling_utils import ModelMixin
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -228,9 +230,15 @@ class HiDreamImageBlock(nn.Module):
         )
 
 class HiDreamImageTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
+    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, OstrisModelMixin
 ):
     _supports_gradient_checkpointing = True
+    aitk_subfolder = "transformer"
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["double_stream_blocks", "single_stream_blocks"]
+
     _no_split_modules = ["HiDreamImageBlock"]
 
     @register_to_config

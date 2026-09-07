@@ -17,6 +17,8 @@ weights::
 import math
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -420,7 +422,26 @@ class BigVGANDecoder(nn.Module):
         return torch.clamp(x, min=-1.0, max=1.0)
 
 
-class MiniMaxH3AudioVAE(nn.Module):
+class MiniMaxH3AudioVAE(nn.Module, OstrisModelMixin):
+    @classmethod
+    def load_from_state_dict(cls, state_dict, dtype=None, **kwargs):
+        """Comfy single-file load: stats buffers ride along; original-repo
+        files still carry the raw weight-norm parametrization and get folded."""
+        state_dict = dict(state_dict)
+        stats = {
+            k: state_dict.pop(k).float()
+            for k in ("latents_mean", "latents_std")
+            if k in state_dict
+        }
+        if any(k.endswith("weight_g") for k in state_dict.keys()):
+            state_dict = fold_audio_vae_weight_norm(state_dict)
+        model = cls()
+        model.load_state_dict(state_dict, strict=True, assign=True)
+        for k, v in stats.items():
+            getattr(model, k).copy_(v)
+        model.to(torch.float32).eval().requires_grad_(False)
+        return model
+
     """Frozen MiniMax-H3 audio autoencoder with diagonal latent normalization.
 
     - ``encode``: waveform ``(B, 1, samples)`` at 32 kHz -> latents ``(B, 32, T)``

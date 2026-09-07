@@ -359,6 +359,24 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.caption_dropout_rate': {
+    title: 'Caption Dropout Rate',
+    description: (
+      <>
+        Caption dropout rate is the probability that the caption for an image will be dropped (replaced with a blank
+        caption) for any given training step. For example, a value of 0.05 will drop the caption around 5% of the time.
+        Dropping captions helps the model learn the concept being trained without relying entirely on the caption,
+        and helps preserve the model&apos;s ability to generate without a prompt. If a trigger word is set, the trigger
+        word is still used when the caption is dropped, so the model still associates the dropped samples with your
+        trigger word. Regularization images, or images without a trigger word, drop to a fully blank caption.
+        <br />
+        <br />
+        Caption dropout also works when caching text embeddings. An additional embedding for the dropout caption
+        (blank, or the trigger word alone) is cached to disk alongside the normal one, and it is randomly swapped in
+        at train time at this rate.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

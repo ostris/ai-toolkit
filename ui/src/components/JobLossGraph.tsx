@@ -5,6 +5,7 @@ import useJobLossLog, { LossPoint } from '@/hooks/useJobLossLog';
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
+import { openConfirm } from '@/components/ConfirmModal';
 
 interface Props {
   job: Job;
@@ -138,7 +139,7 @@ function dulledColor(rgba: string): string {
 }
 
 export default function JobLossGraph({ job }: Props) {
-  const { series, lossKeys, status, refreshLoss } = useJobLossLog(job.id, 2000);
+  const { series, lossKeys, status, refreshLoss, deleteRange } = useJobLossLog(job.id, 2000);
 
   // Controls
   const [useLogScale, setUseLogScale] = useState(false);
@@ -222,7 +223,8 @@ export default function JobLossGraph({ job }: Props) {
     setEnabled(prev => {
       const next = { ...prev };
       for (const k of lossKeys) {
-        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? (k === 'loss/loss' || k === 'val/loss');
+        if (next[k] === undefined)
+          next[k] = persistedEnabledRef.current?.[k] ?? (k === 'loss/loss' || k === 'val/loss');
       }
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
@@ -529,6 +531,46 @@ export default function JobLossGraph({ job }: Props) {
     u.setScale('x', { min: xs[0], max: xs[xs.length - 1] });
   }, []);
 
+  const [deleting, setDeleting] = useState(false);
+
+  // Delete every logged step inside the current zoom window, then zoom back out.
+  const handleDeleteSelectedRange = useCallback(() => {
+    const u = uplotRef.current;
+    if (!u) return;
+    const xs = u.data[0] as number[];
+    if (!xs || !xs.length) return;
+    const sx = u.scales.x;
+    if (sx.min == null || sx.max == null) return;
+    // Snap the visible window to whole steps that actually fall inside it.
+    const minStep = Math.ceil(sx.min);
+    const maxStep = Math.floor(sx.max);
+    if (minStep > maxStep) return;
+    const count = xs.filter(x => x >= minStep && x <= maxStep).length;
+
+    openConfirm({
+      title: 'Delete Selected Range',
+      message: `Permanently delete steps ${minStep.toLocaleString()}–${maxStep.toLocaleString()} (${count.toLocaleString()} plotted points) from the loss log for all metrics? This cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        setDeleting(true);
+        try {
+          await deleteRange(minStep, maxStep);
+          // Zoom out: clear the zoom flag first so the data-update effect
+          // refits the x-scale to the remaining data instead of holding the
+          // old window.
+          isZoomedRef.current = false;
+          setIsZoomed(false);
+          handleResetZoom();
+        } catch (e) {
+          console.error('Error deleting loss range:', e);
+        } finally {
+          setDeleting(false);
+        }
+      },
+    });
+  }, [deleteRange, handleResetZoom]);
+
   const totalPoints = built.data[0]?.length ?? 0;
 
   return (
@@ -568,13 +610,23 @@ export default function JobLossGraph({ job }: Props) {
           ) : (
             <>
               {isZoomed && (
-                <button
-                  type="button"
-                  onClick={handleResetZoom}
-                  className="absolute top-2 right-2 z-10 px-2 py-1 rounded text-xs bg-blue-600/80 hover:bg-blue-600 text-white border border-blue-500/50"
-                >
-                  Reset zoom
-                </button>
+                <div className="absolute top-2 right-2 z-10 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelectedRange}
+                    disabled={deleting}
+                    className="px-2 py-1 rounded text-xs bg-red-600/80 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white border border-red-500/50"
+                  >
+                    {deleting ? 'Deleting...' : 'Delete Selected Range'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetZoom}
+                    className="px-2 py-1 rounded text-xs bg-blue-600/80 hover:bg-blue-600 text-white border border-blue-500/50"
+                  >
+                    Reset zoom
+                  </button>
+                </div>
               )}
               <div ref={chartHostRef} className="absolute top-0 left-0 right-0 bottom-2 overflow-hidden">
                 <div ref={containerRef} />

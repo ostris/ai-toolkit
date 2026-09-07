@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { isVideo, isAudio } from '@/utils/basic';
+import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -78,7 +78,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       // ?thumb=1: the server sends the small pre-generated thumbnail when one
       // exists, otherwise the full file. Videos without a thumb come back as
       // video/* — abort the transfer and render the <video> element instead.
-      fetch(`/api/img/${encodeURIComponent(imageUrl)}?thumb=1`, { signal: controller.signal })
+      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}?thumb=1`, { signal: controller.signal })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const contentType = r.headers.get('content-type') || '';
@@ -137,7 +137,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
             ) : isItVideo && videoFallback ? (
               <video
                 ref={videoRef}
-                src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                src={`/api/img/${encodeFilePathForUrl(imageUrl)}`}
                 className="w-full h-full object-cover"
                 preload="none"
                 playsInline

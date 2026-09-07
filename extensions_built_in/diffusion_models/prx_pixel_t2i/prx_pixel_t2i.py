@@ -43,19 +43,20 @@ import torch
 import yaml
 
 from transformers import AutoTokenizer, Qwen3VLTextModel
-from optimum.quanto import freeze
+
 
 from toolkit.accelerator import unwrap_model
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextOnlyEncoder
 from toolkit.models.FakeVAE import FakeVAE
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.train_tools import apply_noise_offset
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+
 
 from .src.transformer_prx import PRXTransformer2DModel
 from .src.pipeline import PRXPixelPipeline
@@ -126,39 +127,21 @@ class PRXPixelT2IModel(BaseModel):
         self.print_and_status_update("Loading transformer")
         # from_pretrained reads config.json (bottleneck_size, resolution_embeds,
         # in_channels=3, ...) and the safetensors in one shot.
-        transformer = PRXTransformer2DModel.from_pretrained(
-            model_path, subfolder="transformer", torch_dtype=dtype
+        # load + quantize + offload + placement, all driven by model_config
+        transformer = PRXTransformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-        transformer.to(dtype=dtype)
-        flush()
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if self.model_config.low_vram:
-            transformer.to("cpu")
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
         flush()
 
         # --- text encoder + tokenizer (Qwen3-VL text tower) ---
         self.print_and_status_update("Loading text encoder")
         tokenizer = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
-        text_encoder = Qwen3VLTextModel.from_pretrained(
-            model_path, subfolder="text_encoder", torch_dtype=dtype
+        text_encoder = Qwen3VLTextOnlyEncoder.load(
+            model_path, **self.component_load_kwargs("te")
         )
-        text_encoder.to(self.te_device_torch)
         text_encoder.eval()
         text_encoder.requires_grad_(False)
         flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing text encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
 
         # --- "VAE": identity, since PRXPixel is pixel space ---
         self.print_and_status_update("Preparing pixel-space VAE (identity)")
@@ -332,14 +315,5 @@ class PRXPixelT2IModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["blocks"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        return {
-            k.replace("transformer.", "diffusion_model."): v
-            for k, v in state_dict.items()
-        }
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        return {
-            k.replace("diffusion_model.", "transformer."): v
-            for k, v in state_dict.items()
-        }

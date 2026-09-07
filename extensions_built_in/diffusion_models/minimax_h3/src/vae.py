@@ -22,6 +22,8 @@ import math
 from contextlib import nullcontext
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
@@ -434,7 +436,24 @@ class ViTDecoder3d(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-class MiniMaxH3VideoVAE(nn.Module):
+class MiniMaxH3VideoVAE(nn.Module, OstrisModelMixin):
+    @classmethod
+    def load_from_state_dict(cls, state_dict, dtype=None, **kwargs):
+        """Comfy single-file load: the normalization stats ride along in the
+        file and land in the non-persistent fp32 buffers."""
+        state_dict = dict(state_dict)
+        stats = {
+            k: state_dict.pop(k).float()
+            for k in ("latents_mean", "latents_std")
+            if k in state_dict
+        }
+        model = cls()
+        model.load_state_dict(state_dict, strict=True, assign=True)
+        for k, v in stats.items():
+            getattr(model, k).copy_(v)
+        model.eval().requires_grad_(False)
+        return model
+
     def __init__(
         self,
         in_channels=3,

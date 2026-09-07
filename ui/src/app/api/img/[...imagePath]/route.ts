@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settings';
+import { catchAllToFilePath } from '@/server/catchAllPath';
 
 const contentTypeMap: { [key: string]: string } = {
   // Images
@@ -29,11 +30,12 @@ const contentTypeMap: { [key: string]: string } = {
   '.ogg': 'audio/ogg',
 };
 
-export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
+export async function GET(request: NextRequest, { params }: { params: { imagePath: string | string[] } }) {
   const { imagePath } = await params;
   try {
-    // Decode the path
-    const filepath = decodeURIComponent(imagePath);
+    // Segments are already URL-decoded by Next.js; accepts both the legacy
+    // single-segment form and the `<folder>/<filename>` form.
+    const filepath = catchAllToFilePath(imagePath);
 
     // Get allowed directories
     const datasetRoot = await getDatasetsRoot();

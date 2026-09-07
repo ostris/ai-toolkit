@@ -3,7 +3,7 @@ from diffusers.models.transformers import (
     ZImageTransformer2DModel as DiffusersZImageTransformer2DModel,
 )
 
-from ._mixin import OstrisModelMixin
+from .._mixin import OstrisModelMixin
 
 
 class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMixin):
@@ -11,9 +11,23 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
     # repo to pull the config from when loading a single-file checkpoint
     aitk_config_repo = "Tongyi-MAI/Z-Image-Turbo"
 
+    aitk_comfy_repo = "Comfy-Org/z_image_turbo"
+    # the int8_convrot file marks the FUSED attention.qkv modules; the load
+    # converter splits those entries exactly into to_q/to_k/to_v (row-sliced
+    # qdata + scales), so it attaches onto this split layout directly
+    aitk_comfy_weight_names = {
+        "Tongyi-MAI/Z-Image-Turbo": [
+            "split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors",
+            "split_files/diffusion_models/z_image_turbo_bf16.safetensors",
+        ],
+    }
+
     @classmethod
-    def get_quantization_block_names(cls):
+    def get_transformer_block_names(cls):
         return ["layers"]
+
+    def get_offload_ignore_modules(self):
+        return [self.x_pad_token, self.cap_pad_token]
 
     @classmethod
     def get_quantization_exclude_modules(cls):
@@ -36,6 +50,22 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
     @classmethod
     def convert_state_dict_on_load(cls, state_dict):
         """Convert a single-file Z-Image checkpoint to diffusers transformer keys."""
+        from toolkit.util.comfy_quant_import import split_fused_quantized_keys
+
+        state_dict = dict(state_dict)
+        # quantized fused qkv entries (comfy convrot/fp8/nvfp4 files) split
+        # exactly into the three projections: row-consecutive weights/scales
+        for marker_key in [
+            k for k in list(state_dict) if k.endswith(".attention.qkv.comfy_quant")
+        ]:
+            prefix = marker_key[: -len(".comfy_quant")]
+            base = prefix[: -len(".qkv")]
+            split_fused_quantized_keys(
+                state_dict,
+                prefix,
+                [f"{base}.to_q", f"{base}.to_k", f"{base}.to_v"],
+            )
+
         new_sd = {}
         for key, value in state_dict.items():
             k = key
@@ -47,9 +77,10 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
                 new_sd[prefix + ".attention.to_k.weight"] = k_proj
                 new_sd[prefix + ".attention.to_v.weight"] = v
                 continue
-            k = k.replace(".attention.out.weight", ".attention.to_out.0.weight")
-            k = k.replace(".attention.q_norm.weight", ".attention.norm_q.weight")
-            k = k.replace(".attention.k_norm.weight", ".attention.norm_k.weight")
+            # module-prefix renames so weight/bias/scale/marker keys all map
+            k = k.replace(".attention.out.", ".attention.to_out.0.")
+            k = k.replace(".attention.q_norm.", ".attention.norm_q.")
+            k = k.replace(".attention.k_norm.", ".attention.norm_k.")
             if k.startswith("x_embedder."):
                 k = "all_x_embedder.2-1." + k[len("x_embedder.") :]
             elif k.startswith("final_layer."):
@@ -60,6 +91,20 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
     @classmethod
     def convert_state_dict_on_save(cls, state_dict):
         """Convert a diffusers transformer state dict back to the single-file layout."""
+        from toolkit.util.comfy_quant_import import fuse_split_quantized_keys
+
+        state_dict = dict(state_dict)
+        # quantized split projections fuse back into the single-file qkv entry
+        for marker_key in [
+            k for k in list(state_dict) if k.endswith(".attention.to_q.comfy_quant")
+        ]:
+            base = marker_key[: -len(".to_q.comfy_quant")]
+            fuse_split_quantized_keys(
+                state_dict,
+                [f"{base}.to_q", f"{base}.to_k", f"{base}.to_v"],
+                f"{base}.qkv",
+            )
+
         new_sd = {}
         qkv_cache = {}
         for key, value in state_dict.items():
@@ -90,9 +135,9 @@ class ZImageTransformer2DModel(DiffusersZImageTransformer2DModel, OstrisModelMix
                     break
             if matched:
                 continue
-            k = k.replace(".attention.to_out.0.weight", ".attention.out.weight")
-            k = k.replace(".attention.norm_q.weight", ".attention.q_norm.weight")
-            k = k.replace(".attention.norm_k.weight", ".attention.k_norm.weight")
+            k = k.replace(".attention.to_out.0.", ".attention.out.")
+            k = k.replace(".attention.norm_q.", ".attention.q_norm.")
+            k = k.replace(".attention.norm_k.", ".attention.k_norm.")
             if k.startswith("all_x_embedder.2-1."):
                 k = "x_embedder." + k[len("all_x_embedder.2-1.") :]
             elif k.startswith("all_final_layer.2-1."):

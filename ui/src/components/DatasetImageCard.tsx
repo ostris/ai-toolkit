@@ -1,10 +1,10 @@
 import React, { useEffect, useState, ReactNode, KeyboardEvent, useRef } from 'react';
-import { FaTrashAlt } from 'react-icons/fa';
+import { FaTrashAlt, FaPlay } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
-import { isVideo, isAudio } from '@/utils/basic';
+import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
 import useCaptionBatch, { setCachedCaption } from '@/hooks/useCaptionBatch';
 
 interface DatasetImageCardProps {
@@ -38,12 +38,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [showAudioPlayer, setShowAudioPlayer] = useState(true);
   const [pollTick, setPollTick] = useState(0);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [streamVideo, setStreamVideo] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
-  const isItImage = !isItAVideo && !isItAudio;
 
   // Track actual viewport visibility — Virtuoso keeps a buffer of cards mounted
   // outside the visible region, so we can't rely on mount/unmount alone.
@@ -72,9 +72,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   // Drive image loads through fetch + AbortController so scrolling past actually
   // cancels in-flight requests. Debounced 80ms so fast scroll-throughs never
-  // start a request.
+  // start a request. Both images and videos pull the 300x300 thumb (the server
+  // generates it on a miss); ?thumb=1 falls through to the real file only when
+  // a thumb can't be made, so a video/* response means "no thumb available" —
+  // abort before downloading the body and stream a <video> tag instead.
   useEffect(() => {
-    if (!isItImage) return;
+    if (isItAudio) return;
     if (!isVisible) return;
 
     const controller = new AbortController();
@@ -82,13 +85,21 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     let objectUrl: string | null = null;
 
     const timer = window.setTimeout(() => {
-      fetch(`/api/img/${encodeURIComponent(imageUrl)}`, { signal: controller.signal })
+      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}?thumb=1`, { signal: controller.signal })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          if ((r.headers.get('content-type') || '').startsWith('video/')) {
+            controller.abort();
+            if (!cancelled) {
+              setStreamVideo(true);
+              setLoaded(true);
+            }
+            return null;
+          }
           return r.blob();
         })
         .then(blob => {
-          if (cancelled) return;
+          if (cancelled || !blob) return;
           objectUrl = URL.createObjectURL(blob);
           setBlobUrl(objectUrl);
           setLoaded(true);
@@ -104,9 +115,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setBlobUrl(null);
+      setStreamVideo(false);
       setLoaded(false);
     };
-  }, [imageUrl, isItImage, isVisible]);
+  }, [imageUrl, isItAudio, isVisible]);
 
   const combinedRefreshKey = captionRefreshKey + pollTick;
   const { caption: fetchedCaption, isLoaded: isCaptionLoaded } = useCaptionBatch(
@@ -118,6 +130,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
   const dirtyRef = useRef<boolean>(false);
+
+  // Cards are keyed by image path, so this never needs resetting. Once loaded,
+  // keep the textarea mounted through poll refreshes — swapping in the
+  // "Loading caption..." placeholder unmounts it and resets scroll.
+  const hasLoadedCaptionRef = useRef(false);
+  if (isCaptionLoaded) hasLoadedCaptionRef.current = true;
 
   // Sync from the fetched caption, but don't clobber unsaved local edits.
   useEffect(() => {
@@ -189,17 +207,21 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       <div className="relative w-full" style={{ paddingBottom: '100%' }}>
         <div
           className={classNames('absolute inset-0 rounded-t-lg shadow-md bg-gray-900', {
-            'animate-pulse': isItImage && !loaded,
+            'animate-pulse': !isItAudio && !loaded,
           })}
         >
-          {isItAVideo && (
+          {streamVideo && (
             <video
-              src={`/api/img/${encodeURIComponent(imageUrl)}`}
-              className={`w-full h-full object-contain`}
+              src={`/api/img/${encodeFilePathForUrl(imageUrl)}`}
+              className={classNames('w-full h-full object-contain', {
+                'cursor-zoom-in': !!onImageClick,
+              })}
+              onClick={onImageClick}
               autoPlay={false}
+              preload="metadata"
+              playsInline
               loop
               muted
-              controls
             />
           )}
           {isItAudio && !showAudioPlayer && (
@@ -218,9 +240,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </div>
           )}
           {isItAudio && showAudioPlayer && (
-            <AudioPlayer src={`/api/img/${encodeURIComponent(imageUrl)}`} title={imageUrl.replace(/^.*[\\/]/, '')} />
+            <AudioPlayer src={`/api/img/${encodeFilePathForUrl(imageUrl)}`} title={imageUrl.replace(/^.*[\\/]/, '')} />
           )}
-          {isItImage && blobUrl && (
+          {!isItAudio && blobUrl && (
             <img
               src={blobUrl}
               alt={alt}
@@ -229,6 +251,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                 'cursor-zoom-in': !!onImageClick,
               })}
             />
+          )}
+          {isItAVideo && loaded && (
+            <div className="absolute bottom-2 left-2 bg-gray-900/70 rounded-full p-2 pointer-events-none">
+              <FaPlay className="w-3 h-3 text-white" />
+            </div>
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
           <div className="absolute top-1 right-1 flex space-x-2 z-10">
@@ -265,7 +292,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'border-transparent border-2': isCaptionCurrent,
         })}
       >
-        {isCaptionLoaded ? (
+        {isCaptionLoaded || hasLoadedCaptionRef.current ? (
           <form
             onSubmit={e => {
               e.preventDefault();

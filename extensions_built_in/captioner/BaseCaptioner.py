@@ -45,6 +45,15 @@ class CaptionConfig:
             "caption_prompt", "Describe this image in detail."
         )
         self.compile = kwargs.get("compile", False)
+        # batched captioners: files generated per model.generate call, and CPU
+        # preprocessing threads that keep the GPU fed. Default 1 for VRAM
+        # safety; raise it to saturate a large GPU.
+        self.batch_size = kwargs.get("batch_size", 1)
+        self.num_workers = kwargs.get("num_workers", 3)
+        # stream weights from CPU per layer instead of keeping them resident
+        # (low-vram machines); percent is the fraction of linears offloaded
+        self.layer_offloading = kwargs.get("layer_offloading", False)
+        self.layer_offloading_percent = kwargs.get("layer_offloading_percent", 1.0)
 
 
 class BaseCaptioner(BaseExtensionProcess):
@@ -158,7 +167,8 @@ class BaseCaptioner(BaseExtensionProcess):
     def find_files(self):
         # recursivly find all the files in the path_to_caption with the specified extensions and save the paths to self.file_paths
         for root, dirs, files in os.walk(self.caption_config.path_to_caption):
-            dirs[:] = [d for d in dirs if d != "_controls"]
+            # skip _controls and hidden dirs (.thumbs, .tmp)
+            dirs[:] = [d for d in dirs if d != "_controls" and not d.startswith(".")]
             for file in files:
                 if any(
                     file.lower().endswith(f".{ext}") and not file.startswith(".")

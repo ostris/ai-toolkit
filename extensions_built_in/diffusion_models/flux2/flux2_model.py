@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, List, Optional
 import huggingface_hub
 import torch
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
-from toolkit.memory_management.manager import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
@@ -13,15 +12,18 @@ from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
-from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from optimum.quanto import QTensor
 
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration
+from toolkit.models.v2.text_encoders.mistral3 import Mistral3TextEncoder
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
-from .src.autoencoder import AutoEncoder, AutoEncoderParams, AutoEncoderSmallDecoderParams
+from toolkit.models.v2.vae.flux2_kl import (
+    AutoEncoder,
+    AutoEncoderParams,
+    AutoEncoderSmallDecoderParams,
+)
 from safetensors.torch import load_file, save_file
 from PIL import Image
 import torch.nn.functional as F
@@ -95,33 +97,22 @@ class Flux2Model(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Mistral")
 
-        text_encoder: Mistral3ForConditionalGeneration = (
-            Mistral3ForConditionalGeneration.from_pretrained(
-                MISTRAL_PATH,
-                torch_dtype=dtype,
-            )
+        # load + quantize + offload + placement, all driven by model_config
+        # tie_word_embeddings=False: the checkpoint carries both embed_tokens
+        # and lm_head with different values; the config's tie claim is wrong
+        text_encoder = Mistral3TextEncoder.load(
+            MISTRAL_PATH,
+            subfolder="",
+            tie_word_embeddings=False,
+            **self.component_load_kwargs("te"),
         )
-        text_encoder.to(self.device_torch, dtype=dtype)
-
         flush()
 
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Mistral")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
-            freeze(text_encoder)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        tokenizer = AutoProcessor.from_pretrained(MISTRAL_PATH)
+        # fix_mistral_regex=False: keep the exact tokenization flux2 has always
+        # used (True would change the pre-tokenizer and shift conditioning)
+        tokenizer = AutoProcessor.from_pretrained(
+            MISTRAL_PATH, fix_mistral_regex=False
+        )
         return text_encoder, tokenizer
 
     def load_model(self):
@@ -132,9 +123,6 @@ class Flux2Model(BaseModel):
         transformer_path = model_path
 
         self.print_and_status_update("Loading transformer")
-        with torch.device("meta"):
-            transformer = Flux2(self.get_flux2_params())
-
         # use local path if provided
         if os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
             transformer_path = os.path.join(transformer_path, self.flux2_te_filename)
@@ -148,38 +136,13 @@ class Flux2Model(BaseModel):
             )
 
         transformer_state_dict = load_file(transformer_path, device="cpu")
+        transformer = Flux2.load_from_state_dict(
+            transformer_state_dict, dtype, config=self.get_flux2_params()
+        )
 
-        # cast to dtype
-        for key in transformer_state_dict:
-            transformer_state_dict[key] = transformer_state_dict[key].to(dtype)
-
-        transformer.load_state_dict(transformer_state_dict, assign=True)
-
-        if self.model_config.quantize:
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            # Avoid full-model peak VRAM allocation before quantization.
-            self.print_and_status_update("Keeping transformer on CPU for quantization")
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+        # quantize + offload + placement, all driven by model_config
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
 
         text_encoder, tokenizer = self.load_te()
 
@@ -207,21 +170,8 @@ class Flux2Model(BaseModel):
                 token=HF_TOKEN,
             )
         
-        vae_state_dict = load_file(vae_path, device="cpu")
-        
-        autoencoder_params = AutoEncoderParams()
-        if vae_state_dict['decoder.up.0.block.0.conv1.bias'].shape[0] == 96:
-            # this is the small decoder version
-            autoencoder_params = AutoEncoderSmallDecoderParams()
-        
-        with torch.device("meta"):
-            vae = AutoEncoder(autoencoder_params)
-
-        # cast to dtype
-        for key in vae_state_dict:
-            vae_state_dict[key] = vae_state_dict[key].to(dtype)
-
-        vae.load_state_dict(vae_state_dict, assign=True)
+        # config sniffed from the checkpoint (small-decoder detection)
+        vae = AutoEncoder.load_model(vae_path, dtype=dtype)
 
         self.noise_scheduler = Flux2Model.get_train_scheduler()
 
@@ -505,19 +455,7 @@ class Flux2Model(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["double_blocks", "single_blocks"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
-
-    def convert_lora_weights_before_load(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
     def encode_images(self, image_list: List[torch.Tensor], device=None, dtype=None):
         if device is None:

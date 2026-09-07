@@ -1,10 +1,26 @@
+"""The BFL-style Flux2 KL autoencoder (32ch latents, 2x2 pixel-shuffle
+packing to 128ch), shared by the flux2 family and ideogram4.
+
+flux2 loads the raw BFL ae.safetensors layout and uses encode/decode (with the
+BatchNorm running-stats latent normalization); ideogram4 loads diffusers-format
+checkpoints via convert_diffusers_state_dict and drives encoder/decoder
+directly with its own patchify + latent-norm tables. The two models pack the
+128 latent channels in different orders — the packing/normalization stays
+per-model.
+"""
+
+from __future__ import annotations
+
+import math
+import re
 from dataclasses import dataclass, field
 
 import torch
+import torch.utils.checkpoint as ckpt
 from einops import rearrange
 from torch import Tensor, nn
-import math
-import torch.utils.checkpoint as ckpt
+
+from .._mixin import OstrisModelMixin
 
 
 @dataclass
@@ -340,7 +356,14 @@ class Decoder(nn.Module):
         return h
 
 
-class AutoEncoder(nn.Module):
+class AutoEncoder(nn.Module, OstrisModelMixin):
+    @classmethod
+    def aitk_config_from_state_dict(cls, state_dict):
+        # small decoder builds report 96ch at the first decoder block
+        if state_dict["decoder.up.0.block.0.conv1.bias"].shape[0] == 96:
+            return AutoEncoderSmallDecoderParams()
+        return AutoEncoderParams()
+
     def __init__(self, params: AutoEncoderParams):
         super().__init__()
         self.params = params
@@ -433,3 +456,93 @@ class AutoEncoder(nn.Module):
         )
         dec = self.decoder(z)
         return dec
+
+
+_NUM_RESOLUTIONS = 4
+
+
+def convert_diffusers_state_dict(src: dict[str, Tensor]) -> dict[str, Tensor]:
+    out: dict[str, Tensor] = {}
+    attn_substrings = (".mid.attn_1.",)
+    for src_key, tensor in src.items():
+        dst_key = _rewrite_diffusers_key(src_key)
+        if dst_key is None:
+            raise KeyError(f"Unrecognized diffusers VAE state-dict key: {src_key}")
+        if (
+            any(s in dst_key for s in attn_substrings)
+            and dst_key.endswith(".weight")
+            and tensor.ndim == 2
+        ):
+            tensor = tensor.unsqueeze(-1).unsqueeze(-1)
+        out[dst_key] = tensor
+    return out
+
+
+def _rewrite_diffusers_key(key: str) -> str | None:
+    if key.startswith("bn."):
+        return key
+
+    if key.startswith("quant_conv."):
+        return key.replace("quant_conv.", "encoder.quant_conv.", 1)
+    if key.startswith("post_quant_conv."):
+        return key.replace("post_quant_conv.", "decoder.post_quant_conv.", 1)
+
+    if key == "encoder.conv_norm_out.weight":
+        return "encoder.norm_out.weight"
+    if key == "encoder.conv_norm_out.bias":
+        return "encoder.norm_out.bias"
+    if key == "decoder.conv_norm_out.weight":
+        return "decoder.norm_out.weight"
+    if key == "decoder.conv_norm_out.bias":
+        return "decoder.norm_out.bias"
+
+    m = re.match(r"^(encoder|decoder)\.mid_block\.resnets\.(\d+)\.(.+)$", key)
+    if m:
+        side, idx, rest = m.group(1), int(m.group(2)), m.group(3)
+        rest = rest.replace("conv_shortcut", "nin_shortcut")
+        return f"{side}.mid.block_{idx + 1}.{rest}"
+    m = re.match(r"^(encoder|decoder)\.mid_block\.attentions\.0\.(.+)$", key)
+    if m:
+        side, rest = m.group(1), m.group(2)
+        rest = (
+            rest.replace("group_norm.", "norm.")
+            .replace("to_q.", "q.")
+            .replace("to_k.", "k.")
+            .replace("to_v.", "v.")
+            .replace("to_out.0.", "proj_out.")
+        )
+        return f"{side}.mid.attn_1.{rest}"
+
+    m = re.match(r"^encoder\.down_blocks\.(\d+)\.resnets\.(\d+)\.(.+)$", key)
+    if m:
+        level, res_idx, rest = m.group(1), m.group(2), m.group(3)
+        rest = rest.replace("conv_shortcut", "nin_shortcut")
+        return f"encoder.down.{level}.block.{res_idx}.{rest}"
+    m = re.match(r"^encoder\.down_blocks\.(\d+)\.downsamplers\.0\.conv\.(.+)$", key)
+    if m:
+        return f"encoder.down.{m.group(1)}.downsample.conv.{m.group(2)}"
+
+    m = re.match(r"^decoder\.up_blocks\.(\d+)\.resnets\.(\d+)\.(.+)$", key)
+    if m:
+        diffusers_idx = int(m.group(1))
+        res_idx = m.group(2)
+        rest = m.group(3).replace("conv_shortcut", "nin_shortcut")
+        return (
+            f"decoder.up.{_NUM_RESOLUTIONS - 1 - diffusers_idx}.block.{res_idx}.{rest}"
+        )
+    m = re.match(r"^decoder\.up_blocks\.(\d+)\.upsamplers\.0\.conv\.(.+)$", key)
+    if m:
+        diffusers_idx = int(m.group(1))
+        return f"decoder.up.{_NUM_RESOLUTIONS - 1 - diffusers_idx}.upsample.conv.{m.group(2)}"
+
+    if key.startswith(
+        (
+            "encoder.conv_in.",
+            "encoder.conv_out.",
+            "decoder.conv_in.",
+            "decoder.conv_out.",
+        )
+    ):
+        return key
+
+    return None

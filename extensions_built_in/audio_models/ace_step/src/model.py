@@ -19,6 +19,8 @@ import os
 import time
 
 import torch
+
+from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn.functional as F
 import torchaudio
 from safetensors.torch import load_file
@@ -857,7 +859,35 @@ class DiTModel(nn.Module):
 # ── Top-level model ──
 
 
-class AceStep15(nn.Module):
+class AceStep15(nn.Module, OstrisModelMixin):
+    @classmethod
+    def load_from_state_dict(cls, state_dict, dtype=None, **kwargs):
+        cfg = infer_dit_config(state_dict)
+        model = cls(
+            hidden=cfg["hidden"],
+            inter=cfg["inter"],
+            heads=cfg["heads"],
+            kv=cfg["kv"],
+            head_dim=cfg["head_dim"],
+            n_dit=cfg["n_dit"],
+            n_lyric=cfg["n_lyric"],
+            n_timbre=cfg["n_timbre"],
+            enc_hidden=cfg["enc_hidden"],
+            enc_heads=cfg["enc_heads"],
+            enc_kv=cfg["enc_kv"],
+            enc_inter=cfg["enc_inter"],
+        )
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        # tokenizer/detokenizer keys are expected to be unused (cover mode only)
+        unexpected = [
+            k for k in unexpected if not k.startswith(("tokenizer.", "detokenizer."))
+        ]
+        if missing:
+            print(f"    DiT missing: {len(missing)} (first 3: {missing[:3]})")
+        if unexpected:
+            print(f"    DiT unexpected: {len(unexpected)} (first 3: {unexpected[:3]})")
+        return model
+
     def __init__(
         self,
         hidden=2048,
@@ -1051,7 +1081,17 @@ class _SeqWrap(nn.Module):
         return self.layers(x)
 
 
-class OobleckVAE(nn.Module):
+class OobleckVAE(nn.Module, OstrisModelMixin):
+    @classmethod
+    def load_from_state_dict(cls, state_dict, dtype=None, **kwargs):
+        vae = cls()
+        m, u = vae.load_state_dict(state_dict, strict=False)
+        if m:
+            print(f"    VAE missing: {len(m)} (first 3: {m[:3]})")
+        if u:
+            print(f"    VAE unexpected: {len(u)}")
+        return vae
+
     def __init__(
         self,
         in_ch=2,
@@ -1152,7 +1192,28 @@ class OobleckVAE(nn.Module):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TextEncoder(nn.Module):
+class TextEncoder(nn.Module, OstrisModelMixin):
+    @classmethod
+    def load_from_state_dict(cls, state_dict, dtype=None, **kwargs):
+        from transformers import Qwen3Config, Qwen3Model
+
+        qwen_cfg = Qwen3Config(
+            vocab_size=151669,
+            hidden_size=1024,
+            intermediate_size=3072,
+            num_hidden_layers=28,
+            num_attention_heads=16,
+            num_key_value_heads=8,
+            head_dim=128,
+            max_position_embeddings=32768,
+            rms_norm_eps=1e-6,
+        )
+        qwen = Qwen3Model(qwen_cfg)
+        m2, u2 = qwen.load_state_dict(state_dict, strict=False)
+        if m2:
+            print(f"    TE missing: {len(m2)} (first 3: {m2[:3]})")
+        return cls(qwen)
+
     """Wraps Qwen3 weights loaded from AIO. Forward returns last_hidden_state."""
 
     def __init__(self, qwen_model):
@@ -1261,41 +1322,13 @@ def load_models(checkpoint_path, device="cuda", dtype=torch.bfloat16):
         for k, v in sd.items()
         if k.startswith("model.diffusion_model.")
     }
-    cfg = infer_dit_config(dit_sd)
-    model = AceStep15(
-        hidden=cfg["hidden"],
-        inter=cfg["inter"],
-        heads=cfg["heads"],
-        kv=cfg["kv"],
-        head_dim=cfg["head_dim"],
-        n_dit=cfg["n_dit"],
-        n_lyric=cfg["n_lyric"],
-        n_timbre=cfg["n_timbre"],
-        enc_hidden=cfg["enc_hidden"],
-        enc_heads=cfg["enc_heads"],
-        enc_kv=cfg["enc_kv"],
-        enc_inter=cfg["enc_inter"],
-    )
-    missing, unexpected = model.load_state_dict(dit_sd, strict=False)
-    # tokenizer/detokenizer keys are expected to be unused (cover mode only)
-    unexpected = [
-        k for k in unexpected if not k.startswith(("tokenizer.", "detokenizer."))
-    ]
-    if missing:
-        print(f"    DiT missing: {len(missing)} (first 3: {missing[:3]})")
-    if unexpected:
-        print(f"    DiT unexpected: {len(unexpected)} (first 3: {unexpected[:3]})")
+    model = AceStep15.load_from_state_dict(dit_sd, dtype)
     model = model.to(device).to(dtype).eval()
 
     # --- VAE ---
     print("  Loading VAE...")
     vae_sd = {k.removeprefix("vae."): v for k, v in sd.items() if k.startswith("vae.")}
-    vae = OobleckVAE()
-    m, u = vae.load_state_dict(vae_sd, strict=False)
-    if m:
-        print(f"    VAE missing: {len(m)} (first 3: {m[:3]})")
-    if u:
-        print(f"    VAE unexpected: {len(u)}")
+    vae = OobleckVAE.load_from_state_dict(vae_sd, dtype)
     vae = vae.to(device).to(dtype).eval()
 
     # --- Text encoder (Qwen3-Embedding from AIO) ---
@@ -1305,25 +1338,7 @@ def load_models(checkpoint_path, device="cuda", dtype=torch.bfloat16):
         for k, v in sd.items()
         if k.startswith("text_encoders.qwen3_06b.transformer.model.")
     }
-    # Load Qwen3 model structure from transformers, then override weights
-    from transformers import Qwen3Model, Qwen3Config
-
-    qwen_cfg = Qwen3Config(
-        vocab_size=151669,
-        hidden_size=1024,
-        intermediate_size=3072,
-        num_hidden_layers=28,
-        num_attention_heads=16,
-        num_key_value_heads=8,
-        head_dim=128,
-        max_position_embeddings=32768,
-        rms_norm_eps=1e-6,
-    )
-    qwen = Qwen3Model(qwen_cfg)
-    m2, u2 = qwen.load_state_dict(te_sd, strict=False)
-    if m2:
-        print(f"    TE missing: {len(m2)} (first 3: {m2[:3]})")
-    te = TextEncoder(qwen).to(device).to(dtype).eval()
+    te = TextEncoder.load_from_state_dict(te_sd, dtype).to(device).to(dtype).eval()
 
     # Tokenizer — download from HF
     print("  Loading tokenizer...")

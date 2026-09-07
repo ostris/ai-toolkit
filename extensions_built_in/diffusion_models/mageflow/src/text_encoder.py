@@ -18,7 +18,8 @@ import math
 from typing import List, Optional
 
 import torch
-import torch.nn.functional as F
+
+from toolkit.models.v2.text_encoders.qwen3_vl import patch_qwen_vl_patch_embed
 
 
 # Prompt templates from the reference (mage_flow/models/utils.py). ``start_idx``
@@ -55,30 +56,6 @@ def edit_prompt_body(instruction: str, num_refs: int) -> str:
         f"Image {j}: {EDIT_IMAGE_PLACEHOLDER}" for j in range(1, num_refs + 1)
     )
     return prefix + instruction
-
-
-def patch_qwen_vl_patch_embed(model):
-    """Qwen-VL's vision patch_embed is a Conv3d whose kernel == stride, i.e. a plain
-    linear projection of each flattened patch. bf16 Conv3d has no fast cuDNN kernel and
-    falls back to a slow, GPU-underutilizing path. Swap it for the equivalent F.linear
-    (a GEMM). The weight is read lazily so this survives later .to(device)/dtype moves.
-    Returns the number of patch_embed modules patched. (Same patch as the krea2
-    extension / Qwen3VLCaptioner.)"""
-    patched = 0
-    for module in model.modules():
-        proj = getattr(module, "proj", None)
-        if isinstance(proj, torch.nn.Conv3d) and tuple(proj.kernel_size) == tuple(
-            proj.stride
-        ):
-
-            def fast_forward(hidden_states, _proj=proj):
-                w = _proj.weight.reshape(_proj.weight.shape[0], -1)
-                x = hidden_states.view(-1, w.shape[1]).to(w.dtype)
-                return F.linear(x, w, _proj.bias)
-
-            module.forward = fast_forward
-            patched += 1
-    return patched
 
 
 def resize_vl_images(

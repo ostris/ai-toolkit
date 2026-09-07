@@ -9,7 +9,11 @@ from toolkit import train_tools
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from PIL import Image
 from toolkit.models.base_model import BaseModel
-from diffusers import AutoencoderKL, TorchAoConfig
+from toolkit.models.v2.text_encoders.t5 import T5TextEncoder
+from toolkit.models.v2.text_encoders.llama import LlamaTextEncoder
+from toolkit.models.v2.text_encoders.clip import CLIPTextEncoderWithProjection
+from toolkit.models.v2.vae.autoencoder_kl import KLVAE
+from diffusers import TorchAoConfig
 from toolkit.basic import flush
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
@@ -18,8 +22,6 @@ from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
-from toolkit.util.quantize import quantize, get_qtype
-from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer, TorchAoConfig as TorchAoConfigTransformers
 from .src.pipelines.hidream_image.pipeline_hidream_image import HiDreamImagePipeline
 from .src.models.transformers.transformer_hidream_image import HiDreamImageTransformer2DModel
 from .src.schedulers.fm_solvers_unipc import FlowUniPCMultistepScheduler
@@ -28,15 +30,6 @@ from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
 from tqdm import tqdm
-from transformers import (
-    CLIPTextModelWithProjection,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5Tokenizer,
-    LlamaForCausalLM,
-    PreTrainedTokenizerFast
-)
-
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
@@ -103,117 +96,61 @@ class HidreamModel(BaseModel):
             use_fast=False
         )
         
-        text_encoder_4 = LlamaForCausalLM.from_pretrained(
+        # load + quantize + offload + placement, all driven by model_config
+        text_encoder_4 = LlamaTextEncoder.load(
             llama_model_path,
+            subfolder="",
             output_hidden_states=True,
             output_attentions=True,
-            torch_dtype=torch.bfloat16,
+            **self.component_load_kwargs("te"),
         )
-        text_encoder_4.to(self.device_torch, dtype=dtype)
-        
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing llama 8b model")
-            quantization_type = get_qtype(self.model_config.qtype_te)
-            quantize(text_encoder_4, weights=quantization_type)
-            freeze(text_encoder_4)
-        
-        if self.low_vram:
-            # unload it for now
-            text_encoder_4.to('cpu')
-            
+
         flush()
-        
+
         self.print_and_status_update("Loading transformer")
-            
-        transformer = self.hidream_transformer_class.from_pretrained(
-            model_path, 
-            subfolder="transformer", 
-            torch_dtype=torch.bfloat16
+
+        transformer = self.hidream_transformer_class.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-        
-        if not self.low_vram:
-            transformer.to(self.device_torch, dtype=dtype)
-        
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing transformer")
-            quantization_type = get_qtype(self.model_config.qtype)
-            if self.low_vram:
-                # move and quantize only certain pieces at a time.
-                all_blocks = list(transformer.double_stream_blocks) + list(transformer.single_stream_blocks)
-                self.print_and_status_update(" - quantizing transformer blocks")
-                for block in tqdm(all_blocks):
-                    block.to(self.device_torch, dtype=dtype)
-                    quantize(block, weights=quantization_type)
-                    freeze(block)
-                    block.to('cpu')
-                    # flush()
-                
-                self.print_and_status_update(" - quantizing extras")
-                transformer.to(self.device_torch, dtype=dtype)
-                quantize(transformer, weights=quantization_type)
-                freeze(transformer)
-            else: 
-                quantize(transformer, weights=quantization_type)
-                freeze(transformer)
-            
-        if self.low_vram:
-            # unload it for now
-            transformer.to('cpu')
-        
+
         flush()
         
         self.print_and_status_update("Loading vae")
         
-        vae = AutoencoderKL.from_pretrained(
-            extras_path,
-            subfolder="vae",
-            torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        vae = KLVAE.load_model(extras_path, dtype=torch.bfloat16).to(
+            self.device_torch, dtype=dtype
+        )
         
         
         self.print_and_status_update("Loading clip encoders")
         
-        text_encoder = CLIPTextModelWithProjection.from_pretrained(
-            extras_path,
-            subfolder="text_encoder",
-            torch_dtype=torch.bfloat16
+        text_encoder = CLIPTextEncoderWithProjection.load_model(
+            extras_path, dtype=torch.bfloat16
         ).to(self.device_torch, dtype=dtype)
-        
-        tokenizer = CLIPTokenizer.from_pretrained(
-            extras_path,
-            subfolder="tokenizer"
+
+        tokenizer = CLIPTextEncoderWithProjection.load_tokenizer(
+            extras_path, use_fast=False
         )
-        
-        text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(
-            extras_path,
-            subfolder="text_encoder_2",
-            torch_dtype=torch.bfloat16
+
+        text_encoder_2 = CLIPTextEncoderWithProjection.load_model(
+            extras_path, dtype=torch.bfloat16, subfolder="text_encoder_2"
         ).to(self.device_torch, dtype=dtype)
-        
-        tokenizer_2 = CLIPTokenizer.from_pretrained(
-            extras_path,
-            subfolder="tokenizer_2"
+
+        tokenizer_2 = CLIPTextEncoderWithProjection.load_tokenizer(
+            extras_path, subfolder="tokenizer_2", use_fast=False
         )
         
         flush()
         self.print_and_status_update("Loading T5 encoders")
         
-        text_encoder_3 = T5EncoderModel.from_pretrained(
-            extras_path,
-            subfolder="text_encoder_3",
-            torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        # load + quantize + offload + placement, all driven by model_config
+        text_encoder_3 = T5TextEncoder.load(
+            extras_path, subfolder="text_encoder_3", **self.component_load_kwargs("te")
+        )
+        flush()
         
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing T5")
-            quantization_type = get_qtype(self.model_config.qtype_te)
-            quantize(text_encoder_3, weights=quantization_type)
-            freeze(text_encoder_3)
-            flush()
-        
-        tokenizer_3 = T5Tokenizer.from_pretrained(
-            extras_path,
-            subfolder="tokenizer_3"
+        tokenizer_3 = T5TextEncoder.load_tokenizer(
+            extras_path, subfolder="tokenizer_3", use_fast=False
         )
         flush()
         
@@ -432,21 +369,8 @@ class HidreamModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ['double_stream_blocks', 'single_stream_blocks']
 
-    def convert_lora_weights_before_save(self, state_dict):
-        # currently starte with transformer. but needs to start with diffusion_model. for comfyui
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        # saved as diffusion_model. but needs to be transformer. for ai-toolkit
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd
     
     def get_base_model_version(self):
         return "hidream_i1"

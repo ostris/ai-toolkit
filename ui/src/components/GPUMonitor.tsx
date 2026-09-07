@@ -1,43 +1,13 @@
-import React, { useState, useRef, useMemo } from 'react';
-import { GPUApiResponse } from '@/types';
+import React, { useMemo } from 'react';
 import Loading from '@/components/Loading';
 import GPUWidget from '@/components/GPUWidget';
-import { apiClient } from '@/utils/api';
-import usePollLoop from '@/hooks/usePollLoop';
+import useMonitorStream from '@/hooks/useMonitorStream';
 
 const GpuMonitor: React.FC = () => {
-  const [gpuData, setGpuData] = useState<GPUApiResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const isFetchingGpuRef = useRef(false);
-
-  const fetchGpuInfo = () => {
-    if (isFetchingGpuRef.current) {
-      return;
-    }
-    setLoading(true);
-    isFetchingGpuRef.current = true;
-    return apiClient
-      .get('/api/gpu')
-      .then(res => res.data)
-      .then(data => {
-        setGpuData(data);
-        setLastUpdated(new Date());
-        setError(null);
-      })
-      .catch(err => {
-        setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
-      })
-      .finally(() => {
-        isFetchingGpuRef.current = false;
-        setLoading(false);
-      });
-  };
-
-  // Fetch every second, but only schedule the next fetch after the current
-  // one finishes so slow responses can't stack requests
-  usePollLoop(fetchGpuInfo, 1000);
+  // Live samples arrive every MONITOR_TICK_MS over the shared /api/monitor SSE stream
+  const { gpu: gpuData, lastUpdated } = useMonitorStream();
+  const loading = gpuData === null;
+  const error = null;
 
   const getGridClasses = (gpuCount: number): string => {
     switch (gpuCount) {

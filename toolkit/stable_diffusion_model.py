@@ -101,6 +101,46 @@ DO_NOT_TRAIN_WEIGHTS = [
 DeviceStatePreset = Literal['cache_latents', 'generate']
 
 
+# diffusers-class name -> v2 wrapper for the legacy archs' components. The
+# adoption is an in-place class swap, so pipeline-held references stay valid.
+_V2_ADOPTION_MAP = {
+    "UNet2DConditionModel": ("toolkit.models.v2.diffusion_models.unet", "UNet2DConditionModel"),
+    "AutoencoderKL": ("toolkit.models.v2.vae.autoencoder_kl", "KLVAE"),
+    "CLIPTextModel": ("toolkit.models.v2.text_encoders.clip", "CLIPTextEncoder"),
+    "CLIPTextModelWithProjection": ("toolkit.models.v2.text_encoders.clip", "CLIPTextEncoderWithProjection"),
+    "T5EncoderModel": ("toolkit.models.v2.text_encoders.t5", "T5TextEncoder"),
+    "UMT5EncoderModel": ("toolkit.models.v2.text_encoders.umt5", "UMT5TextEncoder"),
+    "SD3Transformer2DModel": ("toolkit.models.v2.diffusion_models.sd3", "SD3Transformer2DModel"),
+    "PixArtTransformer2DModel": ("toolkit.models.v2.diffusion_models.pixart", "PixArtTransformer2DModel"),
+    "Transformer2DModel": ("toolkit.models.v2.diffusion_models.pixart", "Transformer2DModel"),
+    "AuraFlowTransformer2DModel": ("toolkit.models.v2.diffusion_models.auraflow", "AuraFlowTransformer2DModel"),
+    "FluxTransformer2DModel": ("toolkit.models.v2.diffusion_models.flux", "FluxTransformer2DModel"),
+    "Lumina2Transformer2DModel": ("toolkit.models.v2.diffusion_models.lumina2", "Lumina2Transformer2DModel"),
+    "Gemma2Model": ("toolkit.models.v2.text_encoders.gemma2", "Gemma2ModelEncoder"),
+}
+
+
+def _adopt_v2(module):
+    """Rebind a loaded legacy component onto its v2 wrapper class so every
+    resident component is an OstrisModelMixin instance the inference engine
+    can pool and hot-swap. No-op for unknown or already-adopted classes."""
+    import importlib
+
+    from toolkit.models.v2._mixin import OstrisModelMixin, adopt_component
+
+    if module is None or isinstance(module, OstrisModelMixin):
+        return module
+    entry = _V2_ADOPTION_MAP.get(type(module).__name__)
+    if entry is None:
+        return module
+    try:
+        wrapper = getattr(importlib.import_module(entry[0]), entry[1])
+        return adopt_component(module, wrapper)
+    except (ImportError, TypeError):
+        return module
+
+
+
 class BlankNetwork:
 
     def __init__(self):
@@ -215,6 +255,15 @@ class StableDiffusion:
         
         # set true for models that encode control image into text embeddings
         self.encode_control_in_text_embeddings = False
+        # control files may be VIDEOS (paths exposed on the batch as
+        # control_video_paths_list); see minimax_h3 ref2va
+        self.supports_video_control_images = False
+        # D-OPSD: cache per-item teacher text embeds (item's own media as reference 1)
+        self.dopsd_self_ref = False
+        # weight of the normal-target loss added alongside the D-OPSD teacher loss
+        self.dopsd_bleed_strength = 1.0
+        # forces cache_tensors_to_disk on latent-caching datasets (BaseSDTrainProcess)
+        self.require_pixel_tensor_cache = False
         # control images will come in as a list for encoding some things if true
         self.has_multiple_control_images = False
         # do not resize control images
@@ -292,7 +341,20 @@ class StableDiffusion:
         if self.is_flux or self.is_v3:
             divisibility = divisibility * 2
         return divisibility * 2 # todo remove this
-        
+
+    def get_frame_count_snapper(self):
+        """Optional hook for video models whose VAE accepts frame counts on a
+        grid other than the default ``temporal_compression * n + 1``. Return a
+        MODULE-LEVEL function ``(num_frames) -> int`` (picklable — file items
+        travel into dataloader workers) that snaps a frame count DOWN to a
+        valid count, or None for the default auto_frame_count math."""
+        return None
+
+    def prepare_sample_prompt_context(self, gen_config):
+        """Optional hook called right before a sample prompt is encoded, with
+        the sample's GenerateImageConfig, for models whose control conditioning
+        in the text embeds depends on sample settings."""
+        return None
 
     def load_model(self):
         if self.is_loaded:
@@ -1027,6 +1089,16 @@ class StableDiffusion:
         self.unet.to(self.device_torch, dtype=dtype)
         self.unet.requires_grad_(False)
         self.unet.eval()
+
+        # every resident component joins the v2 mixin system (in-place class
+        # adoption for components the pipeline loaders built directly)
+        _adopt_v2(self.unet)
+        _adopt_v2(self.vae)
+        if isinstance(text_encoder, list):
+            for te in text_encoder:
+                _adopt_v2(te)
+        elif text_encoder is not None:
+            _adopt_v2(text_encoder)
 
         # load any loras we have
         if self.model_config.lora_path is not None and not self.is_flux and not self.is_lumina2:

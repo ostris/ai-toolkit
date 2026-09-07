@@ -5,15 +5,14 @@ import torch
 import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.text_encoders.mistral3 import Mistral3ModelEncoder
+from toolkit.models.v2.vae.autoencoder_kl_flux2 import Flux2KLVAE
 from toolkit.basic import flush
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.accelerator import unwrap_model
-from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype, quantize_model
-from toolkit.memory_management import MemoryManager
 
 from transformers import AutoTokenizer, AutoModel
 
@@ -79,42 +78,17 @@ class ErnieImageModel(BaseModel):
 
         self.print_and_status_update("Loading transformer")
 
-        transformer_path = model_path
-        transformer_subfolder = "transformer"
-        if os.path.exists(transformer_path):
-            transformer_subfolder = None
-            transformer_path = os.path.join(transformer_path, "transformer")
+        if os.path.exists(model_path):
             # check if the path is a full checkpoint.
             te_folder_path = os.path.join(model_path, "text_encoder")
             # if we have the te, this folder is a full checkpoint, use it as the base
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
-        transformer = ErnieImageTransformer2DModel.from_pretrained(
-            transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
+        # load + quantize + offload + placement, all driven by model_config
+        transformer = ErnieImageTransformer2DModel.load(
+            model_path, **self.component_load_kwargs("transformer")
         )
-
-        if self.model_config.quantize:
-            self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, transformer)
-            flush()
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                    transformer.x_embedder,
-                ],
-            )
-
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
 
         flush()
 
@@ -122,32 +96,13 @@ class ErnieImageModel(BaseModel):
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype
         )
-        text_encoder = AutoModel.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
+        text_encoder = Mistral3ModelEncoder.load(
+            base_model_path, subfolder="text_encoder", **self.component_load_kwargs("te")
         )
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
-            )
-
-        text_encoder.to(self.device_torch, dtype=dtype)
         flush()
 
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
-
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKLFlux2.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype
+        vae = Flux2KLVAE.load_model(            base_model_path, dtype=dtype
         ).to(self.device_torch, dtype=dtype)
 
         self.noise_scheduler = ErnieImageModel.get_train_scheduler()
@@ -178,8 +133,10 @@ class ErnieImageModel(BaseModel):
             pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        # low_vram: the text encoder stays on cpu; get_prompt_embeds moves it
+        # to the gpu on demand
+        if not self.low_vram:
+            text_encoder[0].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         flush()
@@ -377,16 +334,5 @@ class ErnieImageModel(BaseModel):
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["layers"]
 
-    def convert_lora_weights_before_save(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
-            new_sd[new_key] = value
-        return new_sd
+    lora_keys_use_comfy_prefix = True
 
-    def convert_lora_weights_before_load(self, state_dict):
-        new_sd = {}
-        for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
-            new_sd[new_key] = value
-        return new_sd

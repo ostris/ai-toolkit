@@ -46,6 +46,10 @@ def hacked_state_dict(self, *args, **kwargs):
 
 # hacks the state dict so we can dequantize before saving
 def patch_dequantization_on_save(model):
+    # idempotent: re-patching would capture the hacked state_dict as
+    # orig_state_dict and recurse on save
+    if getattr(model, "orig_state_dict", None) is not None:
+        return
     model.orig_state_dict = model.state_dict
     model.state_dict = partial(hacked_state_dict, model)
   
