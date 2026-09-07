@@ -168,9 +168,10 @@ class DiffusionFeatureExtractor(nn.Module):
 
 
 class DiffusionFeatureExtractor3(nn.Module):
-    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None, sd: BaseModel = None):
         super().__init__()
         self.version = 3
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
         if vae is None:
             vae = AutoencoderTiny.from_pretrained(
                 "madebyollin/taef1", torch_dtype=torch.bfloat16)
@@ -272,6 +273,8 @@ class DiffusionFeatureExtractor3(nn.Module):
         
         if model is not None and hasattr(model, 'get_stepped_pred'):
             stepped_latents = model.get_stepped_pred(noise_pred, noise)
+        elif self.sd_ref is not None and getattr(self.sd_ref(), "x0_pred", False):
+            stepped_latents = noise_pred
         else:
             # stepped_latents = noise - noise_pred
             # first we step the scheduler from current timestep to the very end for a full denoise
@@ -369,9 +372,10 @@ class DiffusionFeatureExtractor3(nn.Module):
         return total_loss
 
 class DiffusionFeatureExtractor4(nn.Module):
-    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None, sd: BaseModel = None):
         super().__init__()
         self.version = 4
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
         if vae is None:
             raise ValueError("vae must be provided for DFE4")
         self.vae = vae
@@ -548,8 +552,11 @@ class DiffusionFeatureExtractor4(nn.Module):
                     # min 0.001
                     tv = torch.clamp(tv, min=0.001)
 
-            # step latent
-            x0 = noisy_latents - tv * noise_pred
+            if self.sd_ref is not None and getattr(self.sd_ref(), "x0_pred", False):
+                x0 = noise_pred
+            else:
+                # step latent
+                x0 = noisy_latents - tv * noise_pred
 
             stepped_latents = x0
 
@@ -616,8 +623,8 @@ class DiffusionFeatureExtractor4(nn.Module):
         return total_loss
     
 class DiffusionFeatureExtractor5(DiffusionFeatureExtractor4):
-    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
-        super().__init__(device=device, dtype=dtype, vae=vae)
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None, sd: BaseModel = None):
+        super().__init__(device=device, dtype=dtype, vae=vae, sd=sd)
         self.version = 5
     
     def step_latents(self, noise, noise_pred, noisy_latents, timesteps, scheduler, total_steps: int = 1000, eps: float = 1e-6):
@@ -663,9 +670,10 @@ class DiffusionFeatureExtractor5(DiffusionFeatureExtractor4):
 
 
 class DiffusionFeatureExtractor6(nn.Module):
-    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None, sd: BaseModel = None):
         super().__init__()
         self.version = 6
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
         if vae is None:
             raise ValueError("vae must be provided for DFE4")
         self.vae = vae
@@ -688,6 +696,15 @@ class DiffusionFeatureExtractor6(nn.Module):
         # them (CPU tensor construction + H2D copy) on every call
         self.image_mean = torch.tensor(self.processor.image_mean, device=device, dtype=dtype).view(1, 3, 1, 1)
         self.image_std = torch.tensor(self.processor.image_std, device=device, dtype=dtype).view(1, 3, 1, 1)
+
+        # last_hidden_state token order: [CLS, registers..., patches]
+        self.num_prefix_tokens = 1 + getattr(self.model.config, "num_register_tokens", 0)
+        # CLS is a global anchor only; patch tokens carry the spatial signal
+        self.cls_weight = 0.1
+
+    def _dino_features(self, inputs):
+        hidden = self.model(**inputs).last_hidden_state
+        return hidden[:, 0], hidden[:, self.num_prefix_tokens:]
 
     def prepare_inputs(self, tensor_0_1: torch.Tensor):
         """
@@ -764,8 +781,11 @@ class DiffusionFeatureExtractor6(nn.Module):
                 # min 0.001
                 tv = torch.clamp(tv, min=0.001)
             
-        # step latent
-        x0 = noisy_latents - tv * noise_pred
+        if self.sd_ref is not None and getattr(self.sd_ref(), "x0_pred", False):
+            x0 = noise_pred
+        else:
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
         
         stepped_latents = x0
             
@@ -791,23 +811,29 @@ class DiffusionFeatureExtractor6(nn.Module):
             # go from -1 to 1 to 0 to 1
             target_img = (target_img + 1) / 2
             target_dino_input = self.prepare_inputs(target_img)
-            target_dino_output = self.model(**target_dino_input).pooler_output.detach()
-            # normalize
-            target_dino_output = (target_dino_output - target_dino_output.mean()) / (target_dino_output.std() + 1e-6)
+            target_cls, target_patches = self._dino_features(target_dino_input)
+            target_cls = target_cls.detach()
+            target_patches = target_patches.detach()
         pred_dino_input = self.prepare_inputs(pred_images)
-        pred_dino_output = self.model(**pred_dino_input).pooler_output
-        # normalize
-        pred_dino_output = (pred_dino_output - pred_dino_output.mean()) / (pred_dino_output.std() + 1e-6)
-        dino_loss = torch.nn.functional.mse_loss(
-            pred_dino_output.float(), target_dino_output.float()
-        )
+        pred_cls, pred_patches = self._dino_features(pred_dino_input)
+
+        # per-token cosine so no single bright region dominates
+        patch_loss = (1.0 - F.cosine_similarity(pred_patches.float(), target_patches.float(), dim=-1)).mean(dim=1)
+        cls_loss = 1.0 - F.cosine_similarity(pred_cls.float(), target_cls.float(), dim=-1)
+        # (B*T,) -> (B,) so video frames fold back into their source sample
+        bs = noise_pred.shape[0]
+        patch_loss = patch_loss.view(bs, -1).mean(dim=1)
+        cls_loss = cls_loss.view(bs, -1).mean(dim=1)
+        # per-sample (B,); trainer applies the model's per-sample loss scaling and reduces
+        dino_loss = patch_loss + self.cls_weight * cls_loss
         
         # accumulate on-GPU; .item() every step forces a full pipeline sync,
         # so only sync when we actually log
-        if 'dinov3' not in self.losses:
-            self.losses['dinov3'] = dino_loss.detach()
-        else:
-            self.losses['dinov3'] = self.losses['dinov3'] + dino_loss.detach()
+        for key, val in (('dinov3_patch', patch_loss.mean()), ('dinov3_cls', cls_loss.mean())):
+            if key not in self.losses:
+                self.losses[key] = val.detach()
+            else:
+                self.losses[key] = self.losses[key] + val.detach()
 
         with torch.no_grad():
             if self.step % self.log_every == 0 and self.step > 0:
@@ -1376,19 +1402,19 @@ class DiffusionFeatureExtractor10(nn.Module):
 
 def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureExtractor:
     if model_path == "v3":
-        dfe = DiffusionFeatureExtractor3(vae=vae)
+        dfe = DiffusionFeatureExtractor3(vae=vae, sd=sd)
         dfe.eval()
         return dfe
     if model_path == "v4":
-        dfe = DiffusionFeatureExtractor4(vae=vae)
+        dfe = DiffusionFeatureExtractor4(vae=vae, sd=sd)
         dfe.eval()
         return dfe
     if model_path == "v5":
-        dfe = DiffusionFeatureExtractor5(vae=vae)
+        dfe = DiffusionFeatureExtractor5(vae=vae, sd=sd)
         dfe.eval()
         return dfe
     if model_path == "v6":
-        dfe = DiffusionFeatureExtractor6(vae=vae)
+        dfe = DiffusionFeatureExtractor6(vae=vae, sd=sd)
         dfe.eval()
         return dfe
     if model_path == "v7":
