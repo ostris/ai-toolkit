@@ -925,7 +925,9 @@ class SDTrainer(BaseSDTrainProcess):
                     if self.train_config.do_fft_velocity_equiv_weight:
                         velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
                         fft_loss = fft_loss * velocity_equiv_weight
-                    additional_loss += fft_loss.mean()
+                    fft_loss = fft_loss.mean()
+                    self.additional_logs['loss/fft'] = fft_loss.item()
+                    additional_loss += fft_loss
             if self.train_config.loss_type == "pseudo_huber":
                 diff = pred.float() - target.float()
                 c=0.01
