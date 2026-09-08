@@ -1094,6 +1094,7 @@ class DiffusionFeatureExtractor9(nn.Module):
         self.model = Sapiens2(arch="sapiens2_1b", img_size=(1024, 768), patch_size=16).eval().cuda()  # img_size is (H, W)
         self.model.load_state_dict(load_file(ckpt_path))
         self.model.to(device, dtype=dtype)
+        self.model.enable_gradient_checkpointing()
 
         self.losses = {}
         self.log_every = 100
