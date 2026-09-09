@@ -1296,6 +1296,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     timestep_indices = timestep_indices.long()
                 else:
                     raise ValueError(f"Unknown content_or_style {content_or_style}")
+
+                if self.train_config.first_timestep_chance > 0.0:
+                    # index 0 is full noise; per-sample chance to force it
+                    force_first = torch.rand((batch_size,), device=timestep_indices.device) < self.train_config.first_timestep_chance
+                    timestep_indices = torch.where(force_first, torch.zeros_like(timestep_indices), timestep_indices)
             with self.timer('convert_timestep_indices_to_timesteps'):
                 # convert the timestep_indices to a timestep
                 timesteps = self.sd.noise_scheduler.timesteps[timestep_indices.long()]
