@@ -369,7 +369,8 @@ class VisionTransformer(nn.Module):
         self, x: torch.Tensor, collect_indices: Optional[Sequence[int]] = None
     ):
         collected = [] if collect_indices is not None else None
-        use_ckpt = self.gradient_checkpointing and self.training
+        # gate on is_grad_enabled, not self.training: DFE keeps this in eval
+        use_ckpt = self.gradient_checkpointing and torch.is_grad_enabled()
         for i, blk in enumerate(self.blocks):
             if use_ckpt:
                 x = torch.utils.checkpoint.checkpoint(blk, x, use_reentrant=False)

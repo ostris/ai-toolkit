@@ -1000,7 +1000,8 @@ class DiffusionFeatureExtractor7(nn.Module):
         device = self.model.device
         dtype = self.model.dtype
         
-        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+        # velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+        velocity_equiv_weight = 1.0
 
         with torch.no_grad():
             target = self.get_pred(target_0_1)
@@ -1094,7 +1095,6 @@ class DiffusionFeatureExtractor9(nn.Module):
         self.model = Sapiens2(arch="sapiens2_1b", img_size=(1024, 768), patch_size=16).eval().cuda()  # img_size is (H, W)
         self.model.load_state_dict(load_file(ckpt_path))
         self.model.to(device, dtype=dtype)
-        self.model.enable_gradient_checkpointing()
 
         self.losses = {}
         self.log_every = 100
