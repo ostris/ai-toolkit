@@ -45,8 +45,9 @@ class ExponentialMovingAverage:
             parameters: Iterable[torch.nn.Parameter] = None,
             decay: float = 0.995,
             use_num_updates: bool = False,
-            # feeds back the decat to the parameter
+            # pulls the parameter toward the shadow each update
             use_feedback: bool = False,
+            feedback_rate: float = 0.001,
             param_multiplier: float = 1.0
     ):
         if parameters is None:
@@ -56,6 +57,7 @@ class ExponentialMovingAverage:
         self.decay = decay
         self.num_updates = 0 if use_num_updates else None
         self.use_feedback = use_feedback
+        self.feedback_rate = feedback_rate
         self.param_multiplier = param_multiplier
         parameters = list(parameters)
         self.shadow_params = [
@@ -130,15 +132,12 @@ class ExponentialMovingAverage:
                 param_float = param
                 if param.dtype != torch.float32:
                     param_float = param_float.to(torch.float32)
-                tmp = (s_param_float - param_float)
-                # tmp will be a new tensor so we can do in-place
-                tmp.mul_(one_minus_decay)
-                s_param_float.sub_(tmp)
+                gap = (s_param_float - param_float)
+                s_param_float.add_(gap * one_minus_decay)
                 
                 update_param = False
                 if self.use_feedback:
-                    # make feedback 10x decay
-                    param_float.add_(tmp * 10)
+                    param_float.add_(gap * self.feedback_rate)
                     update_param = True
                 
                 if self.param_multiplier != 1.0:

@@ -826,6 +826,8 @@ class EMAConfig:
         self.ema_decay: float = kwargs.get('ema_decay', 0.999)
         # feeds back the decay difference into the parameter
         self.use_feedback: bool = kwargs.get('use_feedback', False)
+        # per-step fraction of (shadow - param) pulled back into the param; keep well below 1 - ema_decay
+        self.feedback_rate: float = kwargs.get('feedback_rate', 0.001)
         
         # every update, the params are multiplied by this amount
         # only use for things without a bias like lora

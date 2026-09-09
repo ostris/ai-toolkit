@@ -799,6 +799,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 params,
                 decay=self.train_config.ema_config.ema_decay,
                 use_feedback=self.train_config.ema_config.use_feedback,
+                feedback_rate=self.train_config.ema_config.feedback_rate,
                 param_multiplier=self.train_config.ema_config.param_multiplier,
             )
             # expose to the model: models that run an EMA-teacher forward during training
