@@ -52,18 +52,24 @@ const CACHE_MS = 2000;
 /** Every inference-engine job that is running (or starting), with its endpoint when published. */
 export async function listEngines(forceFresh = false): Promise<EngineHandle[]> {
   if (!forceFresh && cache && Date.now() - cache.ts < CACHE_MS) return cache.handles;
-  const jobs = await prisma.job.findMany({
-    where: { job_type: 'inference', status: { in: ['running', 'queued', 'stopping'] } },
-    orderBy: { updated_at: 'desc' },
-  });
+  // every inference job: a row already marked stopped can still be a live
+  // process finishing (or ignoring) its shutdown, which engine.json's pid tells us
+  const jobs = await prisma.job.findMany({ where: { job_type: 'inference' }, orderBy: { updated_at: 'desc' } });
   const trainingFolder = await getTrainingFolder();
-  const handles: EngineHandle[] = jobs.map(job => ({
-    jobId: job.id,
-    jobName: job.name,
-    gpuIds: job.gpu_ids,
-    status: job.status,
-    endpoint: job.status === 'running' ? readEndpoint(path.join(trainingFolder, job.name)) : null,
-  }));
+  const handles: EngineHandle[] = [];
+  for (const job of jobs) {
+    const active = ['running', 'queued', 'stopping'].includes(job.status);
+    const endpoint = readEndpoint(path.join(trainingFolder, job.name));
+    if (!active && !endpoint) continue;
+    handles.push({
+      jobId: job.id,
+      jobName: job.name,
+      gpuIds: job.gpu_ids,
+      // process still alive after the row was stopped: report it as stopping
+      status: !active && endpoint ? 'stopping' : job.status,
+      endpoint,
+    });
+  }
   cache = { ts: Date.now(), handles };
   return handles;
 }

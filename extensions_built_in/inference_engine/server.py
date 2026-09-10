@@ -98,23 +98,41 @@ def create_app(engine: Engine, token: Optional[str] = None) -> FastAPI:
         if body.get("wait"):
             # plain JSON mode for scripts: block until the job is done, drop frames
             job = engine.submit(model, sample, {"latents": "none"})
+            q = job.subscribe(replay=False)
             while True:
-                frame = await asyncio.to_thread(job.frames.get)
+                frame = await asyncio.to_thread(q.get)
                 if frame is END:
                     break
             return JSONResponse(job.info(), status_code=200 if job.status == "done" else 500)
 
         job = engine.submit(model, sample, body.get("stream"))
+        # a dropped connection (page reload) must not cancel: the client
+        # reattaches via /stream/{id}; cancelling is explicit (/cancel)
+        return _stream_job(job, cancel_on_disconnect=False)
+
+    @app.get("/stream/{request_id}")
+    async def stream(request: Request, request_id: str):
+        """(Re)attach to a request's frame stream: replays everything so far
+        (status/progress/result frames and the newest latent) then follows
+        live until the end frame. Disconnecting does not cancel the job."""
+        check_auth(request)
+        job = engine.get_job(request_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown request")
+        return _stream_job(job, cancel_on_disconnect=False)
+
+    def _stream_job(job, cancel_on_disconnect: bool):
+        q = job.subscribe(replay=True)
 
         async def frames():
             try:
                 while True:
-                    frame = await asyncio.to_thread(job.frames.get)
+                    frame = await asyncio.to_thread(q.get)
                     if frame is END:
                         break
                     yield frame
             finally:
-                if job.status in ("queued", "running"):
+                if cancel_on_disconnect and job.status in ("queued", "running"):
                     engine.cancel(job.request_id)
 
         return StreamingResponse(

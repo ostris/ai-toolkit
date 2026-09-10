@@ -129,3 +129,25 @@ body {
     @apply text-sm text-gray-200;
   }
 }
+
+/* Generate page sidebar: tighter version of the shared form inputs */
+.compact-form label {
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.125rem !important;
+  font-size: 11px !important;
+}
+.compact-form input[type='text'],
+.compact-form input[type='number'],
+.compact-form input[type='password'],
+.compact-form textarea {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+  font-size: 12px !important;
+}
+.compact-form textarea {
+  min-height: 3.5rem;
+}
+.compact-form [class*='control'] {
+  min-height: 30px !important;
+  font-size: 12px !important;
+}

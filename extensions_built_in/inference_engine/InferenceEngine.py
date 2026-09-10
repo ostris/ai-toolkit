@@ -76,12 +76,27 @@ class InferenceEngine(BaseExtensionProcess):
         token = self.engine_config.token or secrets.token_urlsafe(24)
         self.start_server(create_app(self.engine, token), token)
 
-        self.ui.start_stop_watcher(lambda reason: self.engine.stop(reason))
+        def _on_signal(signum, frame):
+            # first signal: stop after the current request; if a request (or a
+            # model load) is in flight, interrupt it right here on the main
+            # thread so a long load cannot hold the shutdown hostage
+            self.engine.stop("stopped")
+            if self.engine.current is not None or self.engine.loading:
+                raise KeyboardInterrupt()
+
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                signal.signal(sig, lambda *_: self.engine.stop("stopped"))
+                signal.signal(sig, _on_signal)
             except Exception:
                 pass
+
+        def _on_db_stop(reason):
+            self.engine.stop(reason)
+            # deliver a real SIGINT to the main thread (never os.kill: on
+            # Windows that is TerminateProcess)
+            signal.raise_signal(signal.SIGINT)
+
+        self.ui.start_stop_watcher(_on_db_stop)
 
         if self.engine_config.default_model:
             with torch.no_grad():
@@ -133,7 +148,7 @@ class InferenceEngine(BaseExtensionProcess):
                 self.engine.unload()
             except Exception:
                 pass
-        self.ui.update_status("queued" if reason == "queued" else "stopped", "Engine stopped")
+        self.ui.update_status("stopped", "Engine stopped")
 
     def on_error(self, e: Exception):
         super().on_error(e)

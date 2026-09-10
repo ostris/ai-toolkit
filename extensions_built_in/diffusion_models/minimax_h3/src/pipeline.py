@@ -249,6 +249,11 @@ class MiniMaxH3Pipeline:
             v_audio = audio_pred[:, layout.num_condition_audio_rows :].float()
 
             denoised_v = video_rows + sv * v_video
+            # inference engine preview: the video x0 estimate as (1, C, T, H, W);
+            # the audio stream is not previewed
+            emit = getattr(model, "_emit_sample_step", None)
+            if emit is not None and getattr(model, "sample_step_hook", None) is not None:
+                emit(unpatchify_video_tokens(denoised_v, t_lat, h_lat, w_lat), i, num_steps)
             ratio_v = sv_next / sv
             video_rows = ratio_v * video_rows + (1.0 - ratio_v) * denoised_v
 

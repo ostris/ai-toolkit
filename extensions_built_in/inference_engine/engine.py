@@ -41,7 +41,13 @@ class GenerationJob:
         self.sample = sample
         self.stream = {"latents": "raw", "every_n_steps": 1, "max_frames": 4}
         self.stream.update(stream or {})
-        self.frames: "queue.Queue[Optional[bytes]]" = queue.Queue()
+        # every frame so far (latents: only the newest kept) so a client can
+        # attach late / reattach after a reload and see the same stream
+        self.history: List[bytes] = []
+        self._latent_index: Optional[int] = None
+        self._subscribers: List["queue.Queue[Optional[bytes]]"] = []
+        self._sub_lock = threading.Lock()
+        self.finished = False
         self.cancel = threading.Event()
         self.status = "queued"
         self.created_at = time.time()
@@ -54,12 +60,41 @@ class GenerationJob:
 
     def emit(self, type_: str, payload: bytes = b"", **fields):
         header = {"type": type_, "request_id": self.request_id, **fields}
-        self.frames.put(encode_frame(header, payload))
+        data = encode_frame(header, payload)
+        with self._sub_lock:
+            if type_ == "latent":
+                if self._latent_index is not None:
+                    self.history[self._latent_index] = data
+                else:
+                    self._latent_index = len(self.history)
+                    self.history.append(data)
+            else:
+                self.history.append(data)
+            for q in self._subscribers:
+                q.put(data)
+
+    def subscribe(self, replay: bool = True) -> "queue.Queue[Optional[bytes]]":
+        """A queue that receives this job's frames (history first when
+        replay) and END once the job is finished."""
+        q: "queue.Queue[Optional[bytes]]" = queue.Queue()
+        with self._sub_lock:
+            if replay:
+                for data in self.history:
+                    q.put(data)
+            if self.finished:
+                q.put(END)
+            else:
+                self._subscribers.append(q)
+        return q
 
     def finish(self):
         self.finished_at = time.time()
         self.emit("end", status=self.status)
-        self.frames.put(END)
+        with self._sub_lock:
+            self.finished = True
+            for q in self._subscribers:
+                q.put(END)
+            self._subscribers = []
 
     def info(self) -> dict:
         return {
@@ -79,6 +114,15 @@ class GenerationJob:
 
 def _model_key(model: dict) -> str:
     return json.dumps({k: v for k, v in sorted(model.items()) if v is not None}, sort_keys=True)
+
+
+# settings that can change on a loaded holder without reloading any weights:
+# the memory manager is detached and re-attached at the new fractions
+OFFLOAD_KEYS = ("layer_offloading", "layer_offloading_transformer_percent", "layer_offloading_text_encoder_percent")
+
+
+def _without(model: dict, keys) -> dict:
+    return {k: v for k, v in model.items() if k not in keys}
 
 
 class Engine:
@@ -102,6 +146,7 @@ class Engine:
         self.current: Optional[GenerationJob] = None
         self.stop_event = threading.Event()
         self.stop_reason = "stopped"
+        self.loading = False
         self.holder = None
         self.holder_key: Optional[str] = None
         self.holder_model: Optional[dict] = None
@@ -118,8 +163,17 @@ class Engine:
         job = GenerationJob(model, sample, stream)
         with self._lock:
             self.jobs[job.request_id] = job
+            # bounded memory: drop the oldest finished jobs' frame history
+            finished = [j for j in self.jobs.values() if j.finished]
+            if len(finished) > 100:
+                finished.sort(key=lambda j: j.created_at)
+                for old in finished[: len(finished) - 100]:
+                    self.jobs.pop(old.request_id, None)
         self.queue.put(job)
         return job
+
+    def get_job(self, request_id: str) -> Optional[GenerationJob]:
+        return self.jobs.get(request_id)
 
     def cancel(self, request_id: str) -> bool:
         job = self.jobs.get(request_id)
@@ -197,6 +251,7 @@ class Engine:
         run_forever."""
         job = GenerationJob(dict(model), {}, {"latents": "none"})
         job.status = "running"
+        self.current = job
         try:
             self._ensure_holder(job)
             job.status = "done"
@@ -205,6 +260,7 @@ class Engine:
             job.error = f"{type(e).__name__}: {e}"
             traceback.print_exc()
         finally:
+            self.current = None
             job.finish()
         return job
 
@@ -268,11 +324,21 @@ class Engine:
         key = _model_key(model)
         if self.holder is not None and key == self.holder_key:
             return self.holder
+        if (
+            self.holder is not None
+            and _model_key(_without(model, OFFLOAD_KEYS)) == _model_key(_without(self.holder_model, OFFLOAD_KEYS))
+        ):
+            # same weights, different offloading: re-stage in place
+            self._apply_offload(job, model)
+            self.holder_model = model
+            self.holder_key = key
+            return self.holder
         if self.holder is not None:
             self._drop_holder()
 
         self.pool.begin_request()
         ComponentPool.current = self.pool
+        self.loading = True
         try:
             try:
                 holder, is_legacy = self._build_holder(job, model)
@@ -287,6 +353,7 @@ class Engine:
                 holder, is_legacy = self._build_holder(job, model)
         finally:
             ComponentPool.current = None
+            self.loading = False
         freed = self.pool.release_unused()
         if freed:
             job.emit("status", message=f"Released {freed / 1e9:.1f} GB of components not used by {model['arch']}")
@@ -296,6 +363,58 @@ class Engine:
         self.holder_model = model
         self.holder_is_legacy = is_legacy
         return holder
+
+    def _apply_offload(self, job: GenerationJob, model: dict):
+        """Detach/re-attach layer offloading on the loaded holder's components
+        at the requested fractions. No weights are reloaded."""
+        from toolkit.memory_management import MemoryManager
+
+        holder = self.holder
+        mc = holder.model_config
+        enabled = bool(model.get("layer_offloading", False))
+        t_pct = float(model.get("layer_offloading_transformer_percent", 1.0))
+        te_pct = float(model.get("layer_offloading_text_encoder_percent", 1.0))
+        mc.layer_offloading = enabled
+        mc.layer_offloading_transformer_percent = t_pct
+        mc.layer_offloading_text_encoder_percent = te_pct
+        device = torch.device(self.device)
+
+        targets = []
+        model_module = getattr(holder, "model", None)
+        subs = [getattr(model_module, n, None) for n in ("transformer_1", "transformer_2")]
+        if model_module is not None and all(m is not None for m in subs):
+            targets += [(m, t_pct) for m in subs]
+        elif model_module is not None:
+            targets.append((model_module, t_pct))
+        tes = getattr(holder, "text_encoder", None)
+        for te in tes if isinstance(tes, list) else [tes]:
+            targets.append((te, te_pct))
+
+        desc = f"offload {'on' if enabled else 'off'} (transformer {t_pct:.0%}, text encoder {te_pct:.0%})"
+        job.emit("status", message=f"Applying {desc}")
+        self.status_cb(f"Applying {desc}")
+        changed = 0
+        for module, pct in targets:
+            if not isinstance(module, torch.nn.Module) or type(module).__name__.startswith("Fake"):
+                continue
+            if next(module.parameters(), None) is None:
+                continue
+            if hasattr(module, "_memory_manager"):
+                MemoryManager.detach(module)
+            if enabled and pct > 0:
+                get_ignore = getattr(module, "get_offload_ignore_modules", None)
+                ignore = get_ignore() if callable(get_ignore) else None
+                MemoryManager.attach(module, device, offload_percent=pct, ignore_modules=list(ignore or []))
+            else:
+                module.to(device)
+            # keep the pool's policy record in sync so a later identical
+            # request is a no-op rather than a re-attach
+            policy = getattr(module, "_aitk_policy", None)
+            if isinstance(policy, dict):
+                policy["offload"] = pct if enabled else 0.0
+            changed += 1
+        flush()
+        job.emit("status", message=f"Applied {desc} to {changed} components")
 
     def _build_holder(self, job: GenerationJob, model: dict):
         model_config = self._build_model_config(model)
@@ -473,12 +592,15 @@ class Engine:
                 job.emit("result", **result)
             job.status = "done"
             self.stats["generations"] += 1
-        except GenerationCancelled:
+        except (GenerationCancelled, KeyboardInterrupt) as e:
             job.status = "cancelled"
             job.error = "cancelled"
             self.stats["cancelled"] += 1
-            job.emit("error", message="cancelled", cancelled=True)
+            job.emit("error", message="cancelled" if isinstance(e, GenerationCancelled) else "engine stopping", cancelled=True)
             flush()
+            if isinstance(e, KeyboardInterrupt):
+                job.finish()
+                raise
         except Exception as e:
             job.status = "error"
             job.error = f"{type(e).__name__}: {e}"
