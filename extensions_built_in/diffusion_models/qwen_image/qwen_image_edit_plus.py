@@ -211,7 +211,7 @@ class QwenImageEditPlusModel(QwenImageModel):
                 )
 
             prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
-                prompt,
+                [prompt[b]],
                 image=batch_control_images,
                 device=self.device_torch,
                 num_images_per_prompt=1,
@@ -223,6 +223,20 @@ class QwenImageEditPlusModel(QwenImageModel):
                 )
             prompt_embeds_list.append(prompt_embeds)
             prompt_embeds_mask_list.append(prompt_embeds_mask)
+
+        # each sample is encoded separately, so sequence lengths differ.
+        # pad on the right before concatenating, same as diffusers does internally.
+        max_seq_len = max(e.shape[1] for e in prompt_embeds_list)
+        for i, (e, m) in enumerate(zip(prompt_embeds_list, prompt_embeds_mask_list)):
+            pad_len = max_seq_len - e.shape[1]
+            if pad_len > 0:
+                prompt_embeds_list[i] = torch.cat(
+                    [e, e.new_zeros(e.shape[0], pad_len, e.shape[2])], dim=1
+                )
+                prompt_embeds_mask_list[i] = torch.cat(
+                    [m, m.new_zeros(m.shape[0], pad_len)], dim=1
+                )
+
         pe = PromptEmbeds(torch.cat(prompt_embeds_list, dim=0))
         pe.attention_mask = torch.cat(prompt_embeds_mask_list, dim=0)
         return pe
