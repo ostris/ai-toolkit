@@ -193,7 +193,7 @@ class QwenImageEditPlusModel(QwenImageModel):
         prompt_embeds_mask_list = []
         
         for b in range(len(prompt)):
-            batch_control_images = control_images[b]
+            batch_control_images = list(control_images[b])  # copy so we don't mutate the caller's list
 
             for i in range(len(batch_control_images)):
                 if len(batch_control_images[i].shape) == 3:
