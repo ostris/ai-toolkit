@@ -191,6 +191,8 @@ class StableDiffusion:
         self.te_torch_dtype = get_torch_dtype(model_config.te_dtype)
 
         self.model_config = model_config
+        # inference engine: hook(step_index, num_steps, latents) per scheduler step
+        self.sample_step_hook = None
         self.prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
         self.arch = model_config.arch
 
@@ -1417,6 +1419,10 @@ class StableDiffusion:
             # disable progress bar
             pipeline.set_progress_bar_config(disable=True)
 
+        from toolkit.sample_step_hook import install_sample_step_hooks
+
+        unwrap_step_hooks = install_sample_step_hooks(self, pipeline)
+
         refiner_pipeline = None
         if self.refiner_unet:
             # build refiner pipeline
@@ -1495,6 +1501,7 @@ class StableDiffusion:
 
                     if network is not None:
                         network.multiplier = gen_config.network_multiplier
+                    self._sample_step_index = 0
                     torch.manual_seed(gen_config.seed)
                     torch.cuda.manual_seed(gen_config.seed)
                     
@@ -1792,6 +1799,7 @@ class StableDiffusion:
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                     self.adapter.clear_memory()
 
+        unwrap_step_hooks()
         # clear pipeline and cache to reduce vram usage
         del pipeline
         if refiner_pipeline is not None:
