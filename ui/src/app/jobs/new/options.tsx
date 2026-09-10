@@ -1419,7 +1419,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-O1-Image', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [false, false],
-      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].network.conv': [undefined, 16],
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].train.max_loss': [1.0, undefined],

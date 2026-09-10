@@ -962,7 +962,8 @@ class SDTrainer(BaseSDTrainProcess):
                 timestep_weight = self.sd.noise_scheduler.get_weights_for_timesteps(
                     timesteps,
                     v2=self.train_config.linear_timesteps2,
-                    timestep_type=self.train_config.timestep_type
+                    timestep_type=self.train_config.timestep_type,
+                    x0_pred=self.sd.x0_pred,
                 ).to(loss.device, dtype=loss.dtype)
                 if len(loss.shape) == 4:
                     timestep_weight = timestep_weight.view(-1, 1, 1, 1).detach()
@@ -1079,6 +1080,8 @@ class SDTrainer(BaseSDTrainProcess):
             if additional_model_loss is not None:
                 loss = loss + additional_model_loss
                 self.additional_logs["additional_model_loss"] = additional_model_loss.item()
+            # per-term breakdown, if the model keeps one
+            self.additional_logs.update(getattr(self.sd, "additional_loss_logs", None) or {})
 
         if self.train_config.max_loss_debug and self.train_config.max_loss is not None:
             if loss.item() > self.train_config.max_loss:

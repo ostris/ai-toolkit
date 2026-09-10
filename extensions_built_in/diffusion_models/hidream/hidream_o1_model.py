@@ -95,6 +95,7 @@ class FakeTextEncoder(torch.nn.Module):
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.config = FakeConfig()
         self.config.scaling_factor = scaling_factor
+        self.x0_pred = True  # the model predicts x0, not noise
 
     @property
     def dtype(self):
@@ -463,11 +464,13 @@ class HidreamO1Model(BaseModel):
 
         # Model emits an x0-prediction; convert to flow-matching velocity
         # (x_1 - x_0) so it matches the loss target from get_loss_target.
-        sigma = (timestep.float() / 1000.0).clamp_min(T_EPS).to(device)
-        while sigma.dim() < latent_model_input.dim():
-            sigma = sigma.unsqueeze(-1)
-        pred = (latent_model_input.float().to(device) - x0_pred.float()) / sigma
-        return pred.to(in_dtype)
+        # sigma = (timestep.float() / 1000.0).clamp_min(T_EPS).to(device)
+        # while sigma.dim() < latent_model_input.dim():
+        #     sigma = sigma.unsqueeze(-1)
+        # pred = (latent_model_input.float().to(device) - x0_pred.float()) / sigma
+        
+        # return pred.to(in_dtype)
+        return x0_pred
 
     def get_prompt_embeds(self, prompt: list) -> AdvancedPromptEmbeds:
         if not isinstance(prompt, list):
@@ -487,15 +490,15 @@ class HidreamO1Model(BaseModel):
     def save_model(self, output_path, meta, save_dtype):
         from toolkit.util.quantize import dequantize_if_quantized
         transformer: Qwen3VLForConditionalGeneration = unwrap_model(self.model)
+        # dequantize any quantized (e.g. torchao) weights so we save plain full precision tensors;
+        # strip torch.compile's "._orig_mod." prefixes so the checkpoint loads into a fresh module
+        save_dict = {
+            k.replace("._orig_mod.", "."): dequantize_if_quantized(v).clone().to("cpu", dtype=save_dtype)
+            for k, v in transformer.state_dict().items()
+        }
         if self.is_comfy_weight:
-            sd = transformer.state_dict()
-            save_dict = {}
-            for key, value in sd.items():
-                if "lm_head.weight" in key:
-                    continue  # comfy checkpoint doesnt have the lm head, so skip it
-                # dequantize any quantized (e.g. torchao) weights so we save plain full precision tensors
-                save_dict[key] = dequantize_if_quantized(value).clone().to("cpu", dtype=save_dtype)
-            
+            # comfy checkpoint doesnt have the lm head, so skip it
+            save_dict = {k: v for k, v in save_dict.items() if "lm_head.weight" not in k}
             if not output_path.endswith(".safetensors"):
                 output_path += ".safetensors"
             meta = get_meta_for_safetensors(meta, name=self.arch)
@@ -503,6 +506,7 @@ class HidreamO1Model(BaseModel):
         else:
             transformer.save_pretrained(
                 save_directory=output_path,
+                state_dict=save_dict,
                 safe_serialization=True,
             )
 
@@ -517,7 +521,7 @@ class HidreamO1Model(BaseModel):
         noise = kwargs.get("noise")
         batch = kwargs.get("batch")
         noise_scale = self.noise_scale
-        return (noise * noise_scale - batch.latents).detach()
+        return (batch.latents).detach()
 
     def get_base_model_version(self):
         return self.arch
