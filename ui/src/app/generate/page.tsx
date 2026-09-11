@@ -3,7 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@headlessui/react';
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, OctagonX, Play, Square, Sparkles, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, OctagonX, Play, Plus, Square, Sparkles, Trash2, X } from 'lucide-react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { Checkbox, CreatableSelectInput, NumberInput, SelectInput, SliderInput, TextAreaInput, TextInput } from '@/components/formInputs';
@@ -18,6 +18,7 @@ import { latentToImage, payloadToFloat32, readEngineFrames, PreviewInfo } from '
 import { isMac } from '@/helpers/basic';
 import { modelArchs, getGenerateDefaults, GenerateDefaults } from '@/app/jobs/new/options';
 import GenerateFooter from '@/components/generate/GenerateFooter';
+import LoraBrowserModal, { LoraPick } from '@/components/generate/LoraBrowserModal';
 
 
 interface EngineStatus {
@@ -298,6 +299,13 @@ function GeneratePageInner() {
   const [showPreview, setShowPreview] = useState<boolean>(!persisted.results?.length);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(persisted.sidebarOpen ?? true);
   const [cards, setCards] = useState<{ [key: string]: boolean }>(persisted.cards || {});
+  const [loraModalOpen, setLoraModalOpen] = useState(false);
+  const loras: { path: string; name: string; strength: number }[] = model.loras || [];
+  const setLoras = (next: { path: string; name: string; strength: number }[]) => setModel(m => ({ ...m, loras: next }));
+  const addLora = (pick: LoraPick) => {
+    if (loras.some(l => l.path === pick.path)) return;
+    setLoras([...loras, { path: pick.path, name: pick.name, strength: 1.0 }]);
+  };
   const cardOpen = (key: string) => cards[key] ?? true;
   const toggleCard = (key: string) => setCards(c => ({ ...c, [key]: !(c[key] ?? true) }));
   const resultUrl = (r: ResultItem) => `/api/files/${encodeFilePathForUrl(r.path)}`;
@@ -934,6 +942,70 @@ function GeneratePageInner() {
                   )}
                 </Card>
     
+                <Card title="LoRAs" subtitle={loras.length ? `${loras.length} loaded` : 'none'} open={cardOpen('loras')} onToggle={() => toggleCard('loras')}>
+                  <div className="space-y-2">
+                    {loras.map((l, i) => (
+                      <div key={l.path} className="bg-gray-950/60 border border-gray-800 rounded-md px-2 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-200 truncate flex-1" title={l.path}>
+                            {l.name}
+                          </span>
+                          <input
+                            type="number"
+                            step={0.05}
+                            min={-2}
+                            max={3}
+                            value={l.strength}
+                            onChange={e => {
+                              const v = parseFloat(e.target.value);
+                              const next = [...loras];
+                              next[i] = { ...l, strength: isNaN(v) ? 0 : v };
+                              setLoras(next);
+                            }}
+                            className="w-16 text-xs px-1.5 py-0.5 bg-gray-950 border border-gray-700 rounded text-gray-100 text-right"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setLoras(loras.filter(x => x.path !== l.path))}
+                            className="text-gray-500 hover:text-red-400"
+                            title="Remove"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => setLoraModalOpen(true)}
+                        className="flex-1 px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs flex items-center justify-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add LoRA
+                      </Button>
+                    </div>
+                    <Checkbox
+                      label="Merge into weights"
+                      checked={model.lora_mode === 'merge'}
+                      onChange={v => setModel(m => ({ ...m, lora_mode: v ? 'merge' : 'hook' }))}
+                      doc={{
+                        title: 'Merge LoRAs into weights',
+                        description: (
+                          <>
+                            <p>
+                              <strong>Off</strong> (default): each LoRA is applied dynamically as an extra term on the layers it targets. Strength
+                              changes take effect on the next generation and adding or removing a LoRA never reloads the model.
+                            </p>
+                            <p className="mt-2">
+                              <strong>On</strong>: the LoRA deltas are added into the model weights. Quantized weights are dequantized, merged, and
+                              re-quantized with stochastic rounding so small deltas are not rounded away. Merged weights cannot be un-merged, so
+                              changing the LoRA set or strengths reloads the affected components. Slightly faster per step than the dynamic path.
+                            </p>
+                          </>
+                        ),
+                      }}
+                    />
+                  </div>
+                </Card>
                 <Card title="Prompt" open={cardOpen('prompt')} onToggle={() => toggleCard('prompt')}>
                   <TextAreaInput label="Prompt" value={sample.prompt || ''} onChange={v => setSample(s => ({ ...s, prompt: v }))} placeholder={modality === 'audio' ? 'song description, lyrics, bpm…' : 'describe what to generate'} />
                   {(sample.guidance_scale ?? 4) > 1 && (
@@ -976,6 +1048,7 @@ function GeneratePageInner() {
         </div>
       </MainContent>
       <GenerateFooter jobId={engineJobId} status={footerStatus} busy={running || isStarting} progress={running ? progress : null} />
+      <LoraBrowserModal isOpen={loraModalOpen} onClose={() => setLoraModalOpen(false)} onPick={addLora} />
     </>
   );
 }

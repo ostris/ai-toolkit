@@ -160,6 +160,16 @@ class ComponentPool:
                 self._free(entry)
             return freed
 
+    def evict_where(self, predicate) -> int:
+        """Free every entry whose module satisfies predicate(module)."""
+        with self._lock:
+            victims = [e for e in self.entries.values() if predicate(e.module)]
+            freed = 0
+            for entry in victims:
+                freed += entry.bytes
+                self._free(entry)
+            return freed
+
     def clear(self):
         with self._lock:
             for entry in list(self.entries.values()):

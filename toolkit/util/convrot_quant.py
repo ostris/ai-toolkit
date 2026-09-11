@@ -1419,13 +1419,20 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         module.cr8_scales = scales.view(torch.uint8)
 
     @torch.no_grad()
-    def requantize_codes_(self, module, fp_weight: torch.Tensor) -> None:
+    def requantize_codes_(self, module, fp_weight: torch.Tensor, stochastic: bool = False) -> None:
         """Re-quantize only the codes on the module's STORED scales — the grid a
-        QAT run trains against (see ConvRotQuantizer.requantize_codes_)."""
+        QAT run trains against (see ConvRotQuantizer.requantize_codes_).
+        stochastic: floor(z + u) instead of round(z) — unbiased, so a small
+        delta (a merged LoRA) survives instead of rounding away."""
         w = fp_weight.to(device=module.cr8_qdata.device, dtype=torch.float32)
         w_rot = rotate(w, self._rot(module))
         s = self._scales(module).unsqueeze(1)
-        module.cr8_qdata = torch.round(w_rot / s).clamp_(-127, 127).to(torch.int8)
+        z = w_rot / s
+        if stochastic:
+            z = torch.floor(z + torch.rand_like(z))
+        else:
+            z = torch.round(z)
+        module.cr8_qdata = z.clamp_(-127, 127).to(torch.int8)
 
     def _gemv_args(self, module):
         """(qdata, gratio fp32 or None, bits) for the fused decode gemv, or None

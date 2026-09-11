@@ -22,6 +22,7 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.registry import OUTPUT_EXT, get_arch_entry
 from toolkit.models.v2.pool import ComponentPool
+from toolkit.inference_lora import InferenceLoRA, LoRAStack
 from toolkit.util.get_model import LEGACY_ARCHS, get_model_class
 
 from .latent_preview import preview_info
@@ -119,6 +120,10 @@ def _model_key(model: dict) -> str:
 # settings that can change on a loaded holder without reloading any weights:
 # the memory manager is detached and re-attached at the new fractions
 OFFLOAD_KEYS = ("layer_offloading", "layer_offloading_transformer_percent", "layer_offloading_text_encoder_percent")
+# LoRAs ride the request's model block but are applied on top of the loaded
+# holder (hook mode: dynamic; merge mode: into the weights, which reloads
+# the touched components when the merged set changes)
+LORA_KEYS = ("loras", "lora_mode")
 
 
 def _without(model: dict, keys) -> dict:
@@ -151,6 +156,7 @@ class Engine:
         self.holder_key: Optional[str] = None
         self.holder_model: Optional[dict] = None
         self.holder_is_legacy = False
+        self.lora_stack = None
         self.stats = {"holder_loads": 0, "generations": 0, "errors": 0, "cancelled": 0, "oom_retries": 0}
         self._lock = threading.Lock()
         # resident components shared across holders (same TE/VAE under two archs)
@@ -212,7 +218,12 @@ class Engine:
             "busy": self.current is not None,
             "queue": len([j for j in self.jobs.values() if j.status == "queued"]),
             "current": self.current.info() if self.current else None,
-            "active": {"model": self.holder_model, "arch": (self.holder_model or {}).get("arch")}
+            "active": {
+                "model": self.holder_model,
+                "arch": (self.holder_model or {}).get("arch"),
+                "loras": [l.summary() for l in self.lora_stack.loras] if self.lora_stack else [],
+                "lora_mode": self.lora_stack.mode if self.lora_stack else None,
+            }
             if self.holder is not None
             else None,
             "device": self.device,
@@ -224,6 +235,9 @@ class Engine:
     def _drop_holder(self):
         """Drop the holder object; its components stay resident in the pool
         until release_unused()/clear() decides."""
+        if self.lora_stack is not None and self.lora_stack.mode == "hook":
+            self.lora_stack.remove()
+        self.lora_stack = None
         holder = self.holder
         self.holder = None
         self.holder_key = None
@@ -321,8 +335,12 @@ class Engine:
         entry = get_arch_entry(model["arch"])
         for k, v in entry["model"].items():
             model.setdefault(k, v)
+        lora_specs = [l for l in (model.get("loras") or []) if l.get("path")]
+        lora_mode = model.get("lora_mode") or "hook"
+        model = _without(model, LORA_KEYS)
         key = _model_key(model)
         if self.holder is not None and key == self.holder_key:
+            self._apply_loras(job, lora_specs, lora_mode)
             return self.holder
         if (
             self.holder is not None
@@ -332,9 +350,19 @@ class Engine:
             self._apply_offload(job, model)
             self.holder_model = model
             self.holder_key = key
+            self._apply_loras(job, lora_specs, lora_mode)
             return self.holder
         if self.holder is not None:
             self._drop_holder()
+
+        # merged LoRAs live inside pooled weights: a component merged with a
+        # different set than this request wants must reload from disk
+        wanted = LoRAStack(None, lora_mode)
+        wanted.loras = [InferenceLoRA(l["path"], l.get("strength", 1.0)) for l in lora_specs] if lora_mode == "merge" else []
+        wanted_key = wanted.key() if lora_mode == "merge" else None
+        freed = self.pool.evict_where(lambda m: getattr(m, "_aitk_merged_loras", None) not in (None, wanted_key))
+        if freed:
+            job.emit("status", message=f"Reloading {freed / 1e9:.1f} GB of components that carried other merged LoRAs")
 
         self.pool.begin_request()
         ComponentPool.current = self.pool
@@ -362,7 +390,63 @@ class Engine:
         self.holder_key = key
         self.holder_model = model
         self.holder_is_legacy = is_legacy
+        self.lora_stack = None
+        self._apply_loras(job, lora_specs, lora_mode)
         return holder
+
+    def _apply_loras(self, job: GenerationJob, specs: List[dict], mode: str):
+        """Bring the holder's LoRA state to `specs` in `mode`. Hook mode:
+        strengths update in place, a different set re-attaches. Merge mode:
+        a different set than what the weights carry evicts and reloads them."""
+        wanted = LoRAStack(self.holder, mode)
+        wanted.loras = [InferenceLoRA(l["path"], l.get("strength", 1.0)) for l in specs]
+        wanted_key = wanted.key()
+        current = self.lora_stack
+        if current is not None and current.key() == wanted_key:
+            return
+        if current is not None and current.mode == "hook" and mode == "hook" and current.set_strengths(specs):
+            self.lora_stack = current
+            return
+
+        def status(msg):
+            job.emit("status", message=msg)
+            self.status_cb(msg)
+
+        if current is not None:
+            if current.mode == "merge":
+                # weights carry the old set: reload the merged components
+                status("Reloading weights to drop merged LoRAs")
+                merged_key = current.key()
+                self._drop_holder()
+                self.pool.evict_where(lambda m: getattr(m, "_aitk_merged_loras", None) == merged_key)
+                flush()
+                self.lora_stack = None
+                self._ensure_holder_for_loras(job, specs, mode)
+                return
+            current.remove()
+            self.lora_stack = None
+        if not specs:
+            return
+        stack = LoRAStack(self.holder, mode).load(specs, status_fn=status)
+        touched = stack.apply(status_fn=status)
+        if mode == "merge":
+            for root in [getattr(self.holder, "model", None)] + (
+                self.holder.text_encoder if isinstance(getattr(self.holder, "text_encoder", None), list) else [getattr(self.holder, "text_encoder", None)]
+            ):
+                if isinstance(root, torch.nn.Module) and any(id(m) in touched for m in root.modules()):
+                    root._aitk_merged_loras = stack.key()
+        self.lora_stack = stack
+
+    def _ensure_holder_for_loras(self, job: GenerationJob, specs: List[dict], mode: str):
+        model = dict(self.holder_model or job.model)
+        model["loras"] = specs
+        model["lora_mode"] = mode
+        job_model = job.model
+        job.model = model
+        try:
+            self._ensure_holder(job)
+        finally:
+            job.model = job_model
 
     def _apply_offload(self, job: GenerationJob, model: dict):
         """Detach/re-attach layer offloading on the loaded holder's components
@@ -510,7 +594,7 @@ class Engine:
             job.total_steps = gen.num_inference_steps
             job.emit(
                 "start",
-                model=self.holder_model,
+                model={**(self.holder_model or {}), "loras": job.model.get("loras") or [], "lora_mode": job.model.get("lora_mode") or "hook"},
                 sample={
                     "prompt": gen.prompt,
                     "negative_prompt": gen.negative_prompt,
