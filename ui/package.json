@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "concurrently -k -n WORKER,UI \"ts-node-dev --project tsconfig.worker.json --respawn --watch cron --transpile-only cron/worker.ts\" \"ts-node-dev --project tsconfig.worker.json --respawn --watch cron --transpile-only cron/fileServer.ts dev --port 3000\"",
     "build": "tsc -p tsconfig.worker.json && next build",
-    "start": "concurrently --restart-tries -1 --restart-after 1000 -n WORKER,UI \"node dist/cron/worker.js\" \"node dist/cron/fileServer.js start --port 8675\"",
+    "prestart": "node ./scripts/ensure-port-free.js 8675",
+    "start": "concurrently --restart-tries 3 --restart-after 1000 -n WORKER,UI \"node dist/cron/worker.js\" \"node dist/cron/fileServer.js start --port 8675\"",
     "install_deps": "npm install --no-save --no-audit --no-fund",
     "db_build_start": "npm run update_db && npm run build && npm run start",
     "build_and_start": "npm run install_deps && npm run db_build_start",
@@ -54,5 +55,12 @@
   "optionalDependencies": {
     "macstats": "^4.2.0"
   },
-  "prettier": "prettier-basic"
+  "prettier": "prettier-basic",
+  "allowScripts": {
+    "sqlite3@6.0.1": true,
+    "prisma@6.3.1": true,
+    "@prisma/engines@6.3.1": true,
+    "@prisma/client@6.3.1": true,
+    "sharp@0.34.5": true
+  }
 }
