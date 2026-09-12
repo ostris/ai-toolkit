@@ -124,7 +124,7 @@ extensions_built_in/inference_engine/
   InferenceEngine.py     # process: UI status/stop plumbing, server lifecycle
   server.py              # FastAPI app: /health /models /generate /cancel /queue /unload
   engine.py              # Engine: request queue, holder cache, pool orchestration
-  protocol.py            # frame encoder (python) — mirrored by ui/src/lib/engineStream.ts
+  protocol.py            # frame encoder (python) — mirrored by ui/src/utils/engineStream.ts
   latent_preview.py      # latent layout + rgb factor tables per arch family
 toolkit/models/v2/pool.py       # ComponentPool (identity, residency, eviction)
 toolkit/models/registry.py      # arch capabilities/defaults (shared with tests + UI)
@@ -134,7 +134,7 @@ testing/test_inference_engine.py
 ui/src/app/api/inference/[...path]/route.ts   # proxy to the engine (streams)
 ui/src/app/generate/page.tsx                   # Generate page
 ui/src/components/generate/*                   # model picker, prompt form, preview canvas, gallery
-ui/src/lib/engineStream.ts                     # frame parser + latent->canvas projection
+ui/src/utils/engineStream.ts                     # frame parser + latent->canvas projection
 ```
 
 ### Process (`InferenceEngine.py`)
@@ -260,7 +260,7 @@ ui/src/lib/engineStream.ts                     # frame parser + latent->canvas p
 - Jobs list / action bar: `job_type === 'inference'` rows show "Inference
   Engine" with a link to `/generate`; stop only (no edit/restart-from-step
   UI). Dashboard active-job widget same treatment as caption.
-- `ui/src/lib/engineStream.ts`: async frame reader over `fetch` +
+- `ui/src/utils/engineStream.ts`: async frame reader over `fetch` +
   `ReadableStream`, event emitter, `projectLatentToImageData(latent, layout,
   rgbFactors)`; video: shows a chosen frame (scrubber) — audio: heatmap.
 
@@ -297,7 +297,7 @@ Each step lands runnable + tested before the next.
       `/assets` `/outputs`, headless yaml. `fastapi`/`uvicorn` pinned in
       requirements_base.txt.
 - [x] **2. Streaming** — binary frame protocol (`protocol.py`, mirrored by
-      `ui/src/lib/engineStream.ts`), `BaseModel.sample_step_hook` via a
+      `ui/src/utils/engineStream.ts`), `BaseModel.sample_step_hook` via a
       scheduler.step wrap in `generate_images` (+ `_emit_sample_step` for
       hand-rolled loops; ace_step wired), latent layouts BCHW/BCFHW/BLC with
       flux-style packed-token unpacking and video frame subsampling, per-arch

@@ -77,7 +77,7 @@ Header always has `type` and `request_id`:
 - `end` — `{status}`
 
 Python reader: `protocol.FrameReader`; browser reader:
-`ui/src/lib/engineStream.ts` (also does the latent→RGB projection from the
+`ui/src/utils/engineStream.ts` (also does the latent→RGB projection from the
 `preview` block, so the client needs no per-arch code).
 
 ### Per-step latents

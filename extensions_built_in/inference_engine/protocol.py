@@ -6,7 +6,7 @@ One generation request is answered with a chunked HTTP body made of frames:
     u64 payload_len (little endian) | payload bytes
 
 Every frame header has "type" and "request_id". Text-only frames carry an
-empty payload. The javascript reader (ui/src/lib/engineStream.ts) mirrors
+empty payload. The javascript reader (ui/src/utils/engineStream.ts) mirrors
 this exactly. Frame types:
 
     start     resolved model/sample config, output kind, latent preview info

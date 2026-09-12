@@ -14,7 +14,7 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 import usePollLoop from '@/hooks/usePollLoop';
 import { defaultInferenceJobConfig } from '@/helpers/inferenceJobConfig';
 import { encodeFilePathForUrl } from '@/utils/basic';
-import { latentToImage, payloadToFloat32, readEngineFrames, PreviewInfo } from '@/lib/engineStream';
+import { latentToImage, payloadToFloat32, readEngineFrames, PreviewInfo } from '@/utils/engineStream';
 import { isMac } from '@/helpers/basic';
 import { modelArchs, getGenerateDefaults, GenerateDefaults } from '@/app/jobs/new/options';
 import GenerateFooter from '@/components/generate/GenerateFooter';
