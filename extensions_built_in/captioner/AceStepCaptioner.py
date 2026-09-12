@@ -6,9 +6,13 @@ except ImportError:
     librosa = None
 import numpy as np
 import torch
-import torchaudio
-from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
+
+try:
+    import torchaudio
+except Exception:  # optional: platforms without torchaudio wheels (e.g.
+    torchaudio = None  # Linux aarch64) fall back to librosa/soundfile
 from collections import OrderedDict
+from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
 
 from optimum.quanto import freeze
 from toolkit.basic import flush
@@ -35,6 +39,27 @@ MINOR_PROFILE = np.array(
     [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 )
 KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def load_audio_mono(audio_path: str, target_sr: int = TARGET_SAMPLE_RATE):
+    """Load an audio file as a mono tensor at ``target_sr``.
+
+    Uses torchaudio when available; otherwise falls back to librosa/soundfile
+    so platforms without torchaudio wheels (e.g. Linux aarch64) keep working.
+    Returns ``(waveform[1, samples], sample_rate)``.
+    """
+    if torchaudio is not None:
+        waveform, sr = torchaudio.load(audio_path)
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        if sr != target_sr:
+            waveform = torchaudio.functional.resample(waveform, sr, target_sr)
+        return waveform, target_sr
+
+    import librosa  # lazy: only needed on the fallback path
+
+    y, sr = librosa.load(audio_path, sr=target_sr, mono=True)
+    return torch.from_numpy(y).unsqueeze(0), target_sr
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -228,15 +253,9 @@ class AceStepCaptioner(BaseCaptioner):
             # analyze audio with librosa
             analysis = analyze_audio(file_path)
 
-            # load audio with torchaudio for transcription
-            waveform, sr = torchaudio.load(file_path)
+            # load audio for transcription (torchaudio or librosa fallback)
+            waveform, sr = load_audio_mono(file_path, TARGET_SAMPLE_RATE)
             waveform = waveform.to(self.device_torch)
-            if waveform.shape[0] > 1:
-                waveform = waveform.mean(dim=0, keepdim=True)
-            if sr != TARGET_SAMPLE_RATE:
-                waveform = torchaudio.functional.resample(
-                    waveform, sr, TARGET_SAMPLE_RATE
-                )
             audio_data = waveform.squeeze(0).cpu().numpy()
 
             # get the lyrics from the audio
