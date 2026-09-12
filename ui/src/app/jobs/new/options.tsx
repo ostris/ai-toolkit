@@ -58,10 +58,38 @@ export interface SampleTags {
   [key: string]: SampleTag;
 }
 
+export type GenerateModality = 'image' | 'video' | 'audio';
+
+// Per-arch overrides for the Generate page. Everything it needs is derived
+// from the training entry (name_or_path / quantize defaults, video/audio
+// group, ctrl_img section); set these only where the derivation is wrong.
+export interface GenerateOptions {
+  modality?: GenerateModality;
+  model?: { [key: string]: any }; // extra ModelConfig kwargs
+  sample?: { [key: string]: any }; // GenerateImageConfig kwargs
+  needsControlImage?: boolean;
+  sizeLocked?: boolean;
+}
+
+export interface GenerateDefaults {
+  arch: string;
+  label: string;
+  group: ModelGroup;
+  modality: GenerateModality;
+  model: { [key: string]: any };
+  sample: { [key: string]: any };
+  needsControlImage: boolean;
+  sizeLocked: boolean;
+}
+
 export interface ModelArch {
   name: string;
   label: string;
+  /** label shown by the Generate page instead of `label` (training-specific
+   * wording like "w/ Training Adapter" does not apply to inference) */
+  generateNameOverride?: string;
   group: ModelGroup;
+  generate?: GenerateOptions;
   controls?: Control[];
   isVideoModel?: boolean;
   hasMultiLinePrompts?: boolean;
@@ -658,6 +686,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'zimage:turbo',
     label: 'Z-Image Turbo (w/ Training Adapter)',
+    generateNameOverride: 'Z-Image Turbo',
     group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -1519,6 +1548,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'krea2:turbo',
     label: 'Krea 2 Turbo (w/ Training Adapter)',
+    generateNameOverride: 'Krea 2 Turbo',
     group: 'image',
     gateUrl: 'https://huggingface.co/krea/Krea-2-Turbo',
     defaults: {
@@ -1575,6 +1605,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'krea2:o_edit_turbo',
     label: 'Krea 2 Turbo (w/ Training Adapter) [Edit Training]',
+    generateNameOverride: 'Krea 2 Turbo (Edit)',
     gateUrl: 'https://huggingface.co/krea/Krea-2-Turbo',
     group: 'experimental',
     defaults: {
@@ -1770,3 +1801,65 @@ export const jobTypeOptions: JobTypeOption[] = [
     },
   },
 ];
+
+
+const MODEL_PREFIX = 'config.process[0].model.';
+const SAMPLE_PREFIX = 'config.process[0].sample';
+// training-only model settings: the training adapter (e.g. Z-Image Turbo's
+// de-distill LoRA) and the unconditional LoRA must not load for inference
+const TRAINING_ONLY_MODEL_KEYS = new Set(['assistant_lora_path', 'unconditional_lora_path', 'inference_lora_path']);
+
+/** What the Generate page sends the inference engine for an arch: ModelConfig
+ * kwargs + GenerateImageConfig kwargs, derived from the training defaults. */
+export const getGenerateDefaults = (arch: ModelArch): GenerateDefaults => {
+  const defaults = arch.defaults || {};
+  const model: { [key: string]: any } = {};
+  const sample: { [key: string]: any } = { width: 1024, height: 1024, num_inference_steps: 25, guidance_scale: 4 };
+  for (const [key, pair] of Object.entries(defaults)) {
+    const value = Array.isArray(pair) ? pair[0] : pair;
+    if (key.startsWith(MODEL_PREFIX)) {
+      const field = key.slice(MODEL_PREFIX.length);
+      if (value === '' || value === undefined || value === null) continue;
+      if (field.includes('.')) continue; // nested model_kwargs etc.
+      if (TRAINING_ONLY_MODEL_KEYS.has(field)) continue;
+      model[field] = value;
+    } else if (key === SAMPLE_PREFIX && value && typeof value === 'object') {
+      // whole SampleConfig object (audio models)
+      const sc = value as any;
+      if (sc.width) sample.width = sc.width;
+      if (sc.height) sample.height = sc.height;
+      if (sc.sample_steps) sample.num_inference_steps = sc.sample_steps;
+      if (sc.guidance_scale !== undefined) sample.guidance_scale = sc.guidance_scale;
+      if (sc.num_frames) sample.num_frames = sc.num_frames;
+      if (sc.fps) sample.fps = sc.fps;
+      if (sc.neg) sample.negative_prompt = sc.neg;
+    } else if (key.startsWith(SAMPLE_PREFIX + '.')) {
+      const field = key.slice(SAMPLE_PREFIX.length + 1);
+      if (value === undefined || value === null || value === '') continue;
+      if (field === 'sample_steps') sample.num_inference_steps = value;
+      else if (field === 'neg') sample.negative_prompt = value;
+      else if (['width', 'height', 'guidance_scale', 'num_frames', 'fps'].includes(field)) sample[field] = value;
+    }
+  }
+  // the engine defaults to convrot8; the training default qtype is the
+  // quanto one, which is the slower inference choice
+  if (model.quantize && (!model.qtype || model.qtype === 'qfloat8')) model.qtype = 'convrot8';
+  if (model.quantize_te && (!model.qtype_te || model.qtype_te === 'qfloat8')) model.qtype_te = 'convrot8';
+  const sections = arch.additionalSections || [];
+  const gen = arch.generate || {};
+  const modality: GenerateModality = gen.modality || (arch.group === 'audio' ? 'audio' : arch.isVideoModel ? 'video' : 'image');
+  if (modality !== 'video') {
+    delete sample.num_frames;
+    delete sample.fps;
+  }
+  return {
+    arch: arch.name,
+    label: arch.generateNameOverride || arch.label,
+    group: arch.group,
+    modality,
+    model: { ...model, ...(gen.model || {}) },
+    sample: { ...sample, ...(gen.sample || {}) },
+    needsControlImage: gen.needsControlImage ?? (sections.includes('sample.ctrl_img') || sections.includes('sample.multi_ctrl_imgs')),
+    sizeLocked: gen.sizeLocked ?? false,
+  };
+};

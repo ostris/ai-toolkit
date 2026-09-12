@@ -87,6 +87,7 @@ class AceStep15Pipeline:
         time_sig="N/A",
         language="en",
         guidance_scale=1.0,
+        step_callback=None,  # step_callback(i, num_steps, latents) after each update
     ):
         t_sched = compute_timesteps(num_inference_steps, 3.0)
         latent_len = int(duration * self.LATENT_RATE)
@@ -153,6 +154,9 @@ class AceStep15Pipeline:
             else:
                 vt = vt_cond
 
+            if step_callback is not None:
+                # x0 estimate at this step (flow matching: x_t - t * v)
+                step_callback(i, len(t_sched_t), xt - vt * tv)
             if i == len(t_sched_t) - 1:
                 xt = xt - vt * tv
             else:

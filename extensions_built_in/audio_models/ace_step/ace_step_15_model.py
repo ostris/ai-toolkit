@@ -264,6 +264,7 @@ class AceStep15Model(BaseAudioModel):
             time_sig=time_sig,
             language=language,
             guidance_scale=gen_config.guidance_scale,
+            step_callback=lambda i, n, latents: self._emit_sample_step(latents, i, n),
         )
         return output
 
