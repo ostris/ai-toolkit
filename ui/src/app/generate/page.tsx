@@ -300,8 +300,10 @@ function GeneratePageInner() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(persisted.sidebarOpen ?? true);
   const [cards, setCards] = useState<{ [key: string]: boolean }>(persisted.cards || {});
   const [loraModalOpen, setLoraModalOpen] = useState(false);
-  const loras: { path: string; name: string; strength: number }[] = model.loras || [];
-  const setLoras = (next: { path: string; name: string; strength: number }[]) => setModel(m => ({ ...m, loras: next }));
+  type LoraItem = { path: string; name: string; strength: number; disabled?: boolean };
+  const loras: LoraItem[] = model.loras || [];
+  const setLoras = (next: LoraItem[]) => setModel(m => ({ ...m, loras: next }));
+  const activeLoras = loras.filter(l => !l.disabled);
   const addLora = (pick: LoraPick) => {
     if (loras.some(l => l.path === pick.path)) return;
     setLoras([...loras, { path: pick.path, name: pick.name, strength: 1.0 }]);
@@ -528,7 +530,7 @@ function GeneratePageInner() {
     setStatusLine('Submitting');
     previewSizeRef.current = sample.width && sample.height ? { width: sample.width, height: sample.height } : null;
     const body: { model: any; sample: any; stream: any } = {
-      model: { ...model, arch },
+      model: { ...model, arch, loras: activeLoras },
       sample: { ...sample, seed: sample.seed === '' ? -1 : sample.seed },
       stream: { latents: 'raw', every_n_steps: 1, max_frames: 0 },
     };
@@ -942,12 +944,28 @@ function GeneratePageInner() {
                   )}
                 </Card>
     
-                <Card title="LoRAs" subtitle={loras.length ? `${loras.length} loaded` : 'none'} open={cardOpen('loras')} onToggle={() => toggleCard('loras')}>
+                <Card title="LoRAs" subtitle={loras.length ? `${activeLoras.length}/${loras.length} active` : 'none'} open={cardOpen('loras')} onToggle={() => toggleCard('loras')}>
                   <div className="space-y-2">
                     {loras.map((l, i) => (
-                      <div key={l.path} className="bg-gray-950/60 border border-gray-800 rounded-md px-2 py-1.5">
+                      <div key={l.path} className={`bg-gray-950/60 border border-gray-800 rounded-md px-2 py-1.5 ${l.disabled ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-200 truncate flex-1" title={l.path}>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={!l.disabled}
+                            onClick={() => {
+                              const next = [...loras];
+                              next[i] = { ...l, disabled: !l.disabled };
+                              setLoras(next);
+                            }}
+                            className={`relative shrink-0 w-7 h-4 rounded-full transition-colors ${l.disabled ? 'bg-gray-700' : 'bg-blue-600'}`}
+                            title={l.disabled ? 'Bypassed: enable for inference' : 'Active: click to bypass'}
+                          >
+                            <span
+                              className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${l.disabled ? '' : 'translate-x-3'}`}
+                            />
+                          </button>
+                          <span className={`text-xs truncate flex-1 ${l.disabled ? 'text-gray-500 line-through' : 'text-gray-200'}`} title={l.path}>
                             {l.name}
                           </span>
                           <input
