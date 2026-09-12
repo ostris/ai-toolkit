@@ -193,6 +193,7 @@ const startAndWatchJob = (job: Job) => {
 
     //log to path
     const logPath = path.join(trainingFolder, 'log.txt');
+    const stderrPath = path.join(trainingFolder, 'stderr.log');
 
     try {
       // if the log path exists, move it to a folder called logs and rename it {num}_log.txt, looking for the highest num
@@ -209,6 +210,20 @@ const startAndWatchJob = (job: Job) => {
         }
 
         fs.renameSync(logPath, path.join(logsFolder, `${num}_log.txt`));
+      }
+      // Also rotate stderr log if it exists
+      if (fs.existsSync(stderrPath)) {
+        const logsFolder = path.join(trainingFolder, 'logs');
+        if (!fs.existsSync(logsFolder)) {
+          fs.mkdirSync(logsFolder, { recursive: true });
+        }
+
+        let num = 0;
+        while (fs.existsSync(path.join(logsFolder, `${num}_stderr.log`))) {
+          num++;
+        }
+
+        fs.renameSync(stderrPath, path.join(logsFolder, `${num}_stderr.log`));
       }
     } catch (e) {
       console.error('Error moving log file:', e);
@@ -240,8 +255,24 @@ const startAndWatchJob = (job: Job) => {
       AITK_JOB_ID: jobID,
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
+      // ROCm equivalents - HIP respects these; set both for compatibility
+      HIP_VISIBLE_DEVICES: `${job.gpu_ids}`,
+      ROCR_VISIBLE_DEVICES: `${job.gpu_ids}`,
+      HIP_DEVICE_ORDER: 'PCI_BUS_ID',
       IS_AI_TOOLKIT_UI: '1',
       PYTHONUNBUFFERED: '1', // write Python output immediately so it is not lost on a crash
+      // ROCm environment variables - only pass through if already set in parent process
+      // run.py will set defaults if not present, so we don't override here
+      // This allows run.py to handle ROCm configuration consistently
+      ...(process.env.AMD_SERIALIZE_KERNEL && { AMD_SERIALIZE_KERNEL: process.env.AMD_SERIALIZE_KERNEL }),
+      ...(process.env.TORCH_USE_HIP_DSA && { TORCH_USE_HIP_DSA: process.env.TORCH_USE_HIP_DSA }),
+      ...(process.env.HSA_ENABLE_SDMA && { HSA_ENABLE_SDMA: process.env.HSA_ENABLE_SDMA }),
+      ...(process.env.PYTORCH_ROCM_ALLOC_CONF && { PYTORCH_ROCM_ALLOC_CONF: process.env.PYTORCH_ROCM_ALLOC_CONF }),
+      ...(process.env.HIP_LAUNCH_BLOCKING && { HIP_LAUNCH_BLOCKING: process.env.HIP_LAUNCH_BLOCKING }),
+      ...(process.env.HSA_OVERRIDE_GFX_VERSION && { HSA_OVERRIDE_GFX_VERSION: process.env.HSA_OVERRIDE_GFX_VERSION }),
+      ...(process.env.PYTORCH_ROCM_ARCH && { PYTORCH_ROCM_ARCH: process.env.PYTORCH_ROCM_ARCH }),
+      ...(process.env.ROCR_VISIBLE_DEVICES && { ROCR_VISIBLE_DEVICES: process.env.ROCR_VISIBLE_DEVICES }),
+      ...(process.env.HIP_VISIBLE_DEVICES && { HIP_VISIBLE_DEVICES: process.env.HIP_VISIBLE_DEVICES }),
     };
 
     // HF_TOKEN
@@ -269,7 +300,7 @@ const startAndWatchJob = (job: Job) => {
       // Capture errors that occur before run.py can initialize file logging.
       logFd = fs.openSync(logPath, 'a');
       let subprocess;
-
+      
       if (isWindows) {
         // Launch through the relay (see WINDOWS_RELAY_SCRIPT) so the job is not
         // a descendant of this worker and survives the UI being shut down or
@@ -291,8 +322,10 @@ const startAndWatchJob = (job: Job) => {
           windowsHide: true,
           stdio: ['ignore', logFd, logFd], // don't tie stdio to parent; log fd passed as stdout and stderr
         });
+        // On Windows, we need to keep the file descriptor open
+        // The child process will inherit it and close it when done
       } else {
-        // For non-Windows platforms, fully detach and ignore stdio so it survives daemon-like
+        // For non-Windows platforms, fully detach
         subprocess = spawn(pythonPath, args, {
           detached: true,
           stdio: ['ignore', logFd, logFd], // don't tie stdio to parent; log fd passed as stdout and stderr
