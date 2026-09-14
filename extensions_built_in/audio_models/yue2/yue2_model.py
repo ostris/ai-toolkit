@@ -195,6 +195,9 @@ class YuE2AudioModel(BaseAudioModel):
         self.abc_dropout = float(kw.get("abc_dropout", 0.5))
         self.sheetsage_path = kw.get("sheetsage_path", SHEETSAGE_FILE)
         self.transcriber: Optional[SheetSage2Transcriber] = None
+        # encoders are only needed while caching; once training steps run without encode calls they are released
+        self._train_calls = 0
+        self._last_encode_call = 0
         self.sample_max_seconds = float(kw.get("sample_max_seconds", 120.0))
         self.sample_ar_temperature = float(kw.get("sample_ar_temperature", 1.0))
         # reference sampler value; 1.0 lets a memorized song replay (the penalty knocks it off path)
@@ -292,6 +295,7 @@ class YuE2AudioModel(BaseAudioModel):
         "off", the SheetSage2 sheet as ``abc_ids`` [B, N] (text ids, -1 padded)."""
         if device is None:
             device = self.vae_device_torch
+        self._last_encode_call = self._train_calls
         if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
         latents = self.vae.encode(audio_tensor.to(device=device, dtype=self.vae.dtype))  # [B, 64, T]
@@ -386,35 +390,52 @@ class YuE2AudioModel(BaseAudioModel):
                     net.is_active = was_active
         want_info = self.debug and self._loss_log_every > 0 and (self._loss_log_step + 1) % self._loss_log_every == 0
         lm_head = model.ar.model.lm_head
-        ce_sum = hidden.new_zeros((), dtype=torch.float32)
-        kl_sum = hidden.new_zeros((), dtype=torch.float32) if base_hidden is not None else None
-        p_target, p_end_first = [], None
-        chunk = 2048
-        for s0 in range(0, n, chunk):
-            h = hidden[s0 : s0 + chunk]
-            tgt = ids[s0 : s0 + chunk]
-            if torch.is_grad_enabled():
-                logits = torch.utils.checkpoint.checkpoint(lambda x: lm_head(x).float(), h, use_reentrant=False)
-            else:
-                logits = lm_head(h).float()
-            ce_sum = ce_sum + torch.nn.functional.cross_entropy(logits, tgt, reduction="sum")
-            if base_hidden is not None:
+        want_kl = base_hidden is not None
+
+        def chunk_losses(h, tgt, bh):
+            # everything vocab-sized lives inside this checkpointed function, so autograd keeps only
+            # the [chunk, hidden] inputs and recomputes the fp32 logits/log-probs in backward
+            logits = lm_head(h).float()
+            ce = torch.nn.functional.cross_entropy(logits, tgt, reduction="sum")
+            if bh is not None:
                 with torch.no_grad():
-                    base_logp = torch.log_softmax(lm_head(base_hidden[s0 : s0 + chunk]).float(), -1)
-                kl_sum = kl_sum + torch.nn.functional.kl_div(torch.log_softmax(logits, -1), base_logp, log_target=True, reduction="sum")
+                    base_logp = torch.log_softmax(lm_head(bh).float(), -1)
+                kl = torch.nn.functional.kl_div(torch.log_softmax(logits, -1), base_logp, log_target=True, reduction="sum")
+            else:
+                kl = ce.new_zeros(())
             if want_info:
                 with torch.no_grad():
                     p = logits.softmax(-1)
-                    if s0 == 0:
-                        p_end_first = p[0, MUSIC_END].item()
-                    p_target.append(p.gather(1, tgt[:, None]).squeeze(1))
-            del logits
+                    p_first_end = p[0, MUSIC_END]
+                    p_tgt = p.gather(1, tgt[:, None]).squeeze(1)
+            else:
+                p_first_end, p_tgt = ce.new_zeros(()), ce.new_zeros((0,))
+            return ce, kl, p_first_end, p_tgt
+
+        ce_sum = hidden.new_zeros((), dtype=torch.float32)
+        kl_sum = hidden.new_zeros((), dtype=torch.float32)
+        p_target, p_end_first = [], None
+        chunk = 512  # vocab-sized fp32 transients scale with this (~1.9 GB per 512 positions incl. KL)
+        for s0 in range(0, n, chunk):
+            h = hidden[s0 : s0 + chunk]
+            tgt = ids[s0 : s0 + chunk]
+            bh = base_hidden[s0 : s0 + chunk] if want_kl else None
+            if torch.is_grad_enabled():
+                ce, kl, p_first, p_tgt = torch.utils.checkpoint.checkpoint(chunk_losses, h, tgt, bh, use_reentrant=False)
+            else:
+                ce, kl, p_first, p_tgt = chunk_losses(h, tgt, bh)
+            ce_sum = ce_sum + ce
+            kl_sum = kl_sum + kl
+            if want_info:
+                if s0 == 0:
+                    p_end_first = p_first.item()
+                p_target.append(p_tgt)
         info = ""
         if want_info:
             p_target = torch.cat(p_target)
             info = (f"[ar targets {n} unique {ids.unique().numel()} (song {total}, whole {whole_song}) "
                     f"prefix {prefix.shape[0]} p(END|prefix) {p_end_first:.3f} p(target) median {p_target.median().item():.3f}]")
-        return ce_sum / n, (kl_sum / n if kl_sum is not None else None), info
+        return ce_sum / n, (kl_sum / n if want_kl else None), info
 
     def _ar_inputs(self, prefix: torch.Tensor, abc_ids: torch.Tensor, tokens: torch.Tensor, end_token: bool = True):
         """One item: prefix head (unpadded [L, H]) + abc + [ABC_END, MUSIC_START] + codec tokens [+ MUSIC_END]
@@ -494,6 +515,13 @@ class YuE2AudioModel(BaseAudioModel):
         prefix_embeds = text_embeddings.text_embeds.to(device, self.torch_dtype)
         prefix_mask = text_embeddings.attention_mask.to(device)
         train_ar = self.ar_loss_weight > 0 and torch.is_grad_enabled()
+        if torch.is_grad_enabled():
+            self._train_calls += 1
+            if self._train_calls - self._last_encode_call > 2 and (self.semantic_tokenizer is not None or self.transcriber is not None):
+                # latents are cached: MERT + SheetSage2 (~4 GB) are dead weight for the rest of training
+                self.semantic_tokenizer = None
+                self.transcriber = None
+                flush()
         captions = batch.get_caption_list() if hasattr(batch, "get_caption_list") else None
         preds, lm_losses, kl_losses = [], [], []
         for i in range(latent_model_input.shape[0]):

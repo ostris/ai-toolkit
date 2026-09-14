@@ -1398,6 +1398,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['convrot8', 'qfloat8'],
       'config.process[0].sample': [defaultYue2SampleConfig, defaultSampleConfig],
       'config.process[0].datasets[x].cache_latents_to_disk': [true, true],
+      // audio has no resolution; every bucket would duplicate the whole dataset
+      'config.process[0].datasets[x].resolution': [[512], [512, 768, 1024]],
       // blank captions break lyric following; the AR must always see the prefix
       'config.process[0].datasets[x].caption_dropout_rate': [0, 0.05],
       'config.process[0].model.model_kwargs': [{ cot: 'full', abc_dropout: 0.5, sample_ar_repetition_penalty: 1.2, ar_kl_weight: 0.2 }, {}],
@@ -1449,12 +1451,24 @@ export const modelArchs: ModelArch[] = [
           close.
         </p>
         <p>
-          Training matches Comfy's Generate ABC path (<code>cot: full</code> in model kwargs): at cache time every song is
-          transcribed to an ABC lead sheet with SheetSage2 (the Comfy-Org/YuE2 <code>audio_encoders</code> weights, no
-          extra packages), the sheet is stored with the latents, and the AR learns
-          lyrics to sheet and sheet to tokens. <code>abc_dropout</code> (default 0.5) is the fraction of training steps fed
-          without the sheet as an off-mode prompt, so the same LoRA also works when Comfy's ABC input is empty. <code>cot: melody</code> uses sheets without chords; <code>cot: off</code> skips the sheet, which is what
-          Comfy runs when its ABC input is left empty. Changing the mode requires re-caching the dataset.
+          <b>ABC generation.</b> Generation is two stages: the AR first writes a lead sheet of the whole song in ABC
+          notation (sections, chords, vocal and instrumental melody), then writes the codec tokens conditioned on that
+          sheet. It can also run without a sheet ("off" mode), which uses a different instruction line. Samples here do
+          the two stages with <code>cot: full</code> (chords) or <code>cot: melody</code> (melody only), or the single
+          stage with <code>cot: off</code>.
+        </p>
+        <p>
+          <b>Training for both.</b> Every song is transcribed to an ABC sheet with SheetSage2 and the AR is trained on
+          lyrics to sheet and sheet to tokens. <code>abc_dropout</code> (default 0.5) is the fraction of training items
+          fed without the sheet instead, as an off-mode prompt, so one LoRA works in both modes. Set it to 0 to train
+          the sheet path only, or 1 to train off mode only.
+        </p>
+        <p>
+          <b>Caching is required.</b> The sheet is produced at latent-cache time and stored with the latents and codec
+          tokens, so Cache Latents to Disk must stay on: without it, SheetSage2 (about 12 s per song), the MERT
+          tokenizer and the VAE would run again on every training step. The cache records which mode built it; changing{' '}
+          <code>cot</code> means deleting the dataset's <code>_latent_cache</code> folder so the sheets are rebuilt.
+          Audio has no resolution, so keep a single resolution bucket per dataset or every bucket duplicates the songs.
         </p>
         <p>
           Prompt format: a style line, then <code>[Lyrics]</code>, then the lyrics with bracketed section headers such
