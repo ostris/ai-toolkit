@@ -37,7 +37,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     .map(file => {
       return path.join(samplesFolder, file);
     })
-    .sort();
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
   return NextResponse.json({ samples });
 }
