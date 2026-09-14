@@ -4,9 +4,8 @@ Weights: the Comfy-Org all-in-one checkpoint (``checkpoints/yue2_3b_bf16.safeten
 resolved under MODELS_PATH in ComfyUI's folder layout and downloaded there when missing.
 The official audio -> semantic-token tokenizer is unreleased; training conditioning comes
 from the community head (MERT-v2-FullSong + classifier) in
-``Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4``. Its companion NAR adapter is
-merged into the base NAR on load (``model_kwargs.merge_nar_lora``, default true) since the
-head's tokens are a dialect the stock renderer was not trained on.
+``Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4``. Its companion NAR adapter can
+be merged into the base NAR on load (``model_kwargs.merge_nar_lora``, default false).
 
 Training: per song the latent cache carries VAE latents plus the head's codec tokens; the
 "text embedding" is the AR prompt prefix (instruction + tags + lyrics) as token embeddings.
@@ -144,7 +143,7 @@ class YuE2AudioModel(BaseAudioModel):
         self.ar_lr_multiplier = float(kw.get("ar_lr_multiplier", 1.0))
         self._loss_log_every = int(kw.get("loss_log_every", 25))
         self._loss_log_step = 0
-        self.merge_nar_lora = bool(kw.get("merge_nar_lora", True))
+        self.merge_nar_lora = bool(kw.get("merge_nar_lora", False))
         self.nar_lora_path = kw.get("nar_lora_path", f"{HEAD_REPO}/{NAR_LORA_FILE}")
         self.semantic_head_path = kw.get("semantic_head_path", f"{HEAD_REPO}/{HEAD_FILE}")
         self.sample_max_seconds = float(kw.get("sample_max_seconds", 120.0))
