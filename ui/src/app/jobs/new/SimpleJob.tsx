@@ -1524,6 +1524,18 @@ export default function SimpleJob({
                 </div>
               )}
 
+              {modelArch?.additionalSections?.includes('sample.duration') && (
+                <div>
+                  <NumberInput
+                    label="Duration (seconds)"
+                    value={jobConfig.config.process[0].sample.duration ?? 120}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.duration')}
+                    placeholder="eg. 120"
+                    min={1}
+                    required
+                  />
+                </div>
+              )}
               <div>
                 <NumberInput
                   label="Seed"

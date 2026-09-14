@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { GroupedSelectOption, SelectOption, JobConfig, ConfigDoc } from '@/types';
 import { defaultSliderConfig } from './jobConfig';
-import { defaultAudioSampleConfig, defaultSampleConfig, defaultIdeogramSamplesConfig } from '@/helpers/defaultSamples';
+import { defaultAudioSampleConfig, defaultSampleConfig, defaultIdeogramSamplesConfig, defaultYue2SampleConfig } from '@/helpers/defaultSamples';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
@@ -27,6 +27,7 @@ type AdditionalSections =
   | 'datasets.auto_frame_count'
   | 'sample.ctrl_img'
   | 'sample.multi_ctrl_imgs'
+  | 'sample.duration'
   | 'train.audio_loss_multiplier'
   | 'datasets.num_frames'
   | 'model.multistage'
@@ -80,6 +81,8 @@ export interface GenerateDefaults {
   sample: { [key: string]: any };
   needsControlImage: boolean;
   sizeLocked: boolean;
+  /** structured prompt fields (audio models): the prompt is their tagged form */
+  sampleTags?: SampleTags;
 }
 
 export interface ModelArch {
@@ -1371,6 +1374,31 @@ export const modelArchs: ModelArch[] = [
     additionalSections: ['sample.multi_ctrl_imgs', 'model.low_vram', 'model.layer_offloading'],
   },
   {
+    name: 'yue2',
+    label: 'YuE2',
+    group: 'audio',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': [
+        'Comfy-Org/YuE2/checkpoints/yue2_3b_bf16.safetensors',
+        defaultNameOrPath,
+      ],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].model.low_vram': [false, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['sigmoid', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].sample': [defaultYue2SampleConfig, defaultSampleConfig],
+      'config.process[0].datasets[x].cache_latents_to_disk': [true, true],
+    },
+    // native YuE2 prompt: style text, a [Lyrics] line, the lyrics
+    hasMultiLinePrompts: true,
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram', 'sample.duration'],
+  },
+  {
     name: 'ace_step_15',
     label: 'ACE-Step 1.5',
     group: 'audio',
@@ -1832,13 +1860,14 @@ export const getGenerateDefaults = (arch: ModelArch): GenerateDefaults => {
       if (sc.guidance_scale !== undefined) sample.guidance_scale = sc.guidance_scale;
       if (sc.num_frames) sample.num_frames = sc.num_frames;
       if (sc.fps) sample.fps = sc.fps;
+      if (sc.duration) sample.duration = sc.duration;
       if (sc.neg) sample.negative_prompt = sc.neg;
     } else if (key.startsWith(SAMPLE_PREFIX + '.')) {
       const field = key.slice(SAMPLE_PREFIX.length + 1);
       if (value === undefined || value === null || value === '') continue;
       if (field === 'sample_steps') sample.num_inference_steps = value;
       else if (field === 'neg') sample.negative_prompt = value;
-      else if (['width', 'height', 'guidance_scale', 'num_frames', 'fps'].includes(field)) sample[field] = value;
+      else if (['width', 'height', 'guidance_scale', 'num_frames', 'fps', 'duration'].includes(field)) sample[field] = value;
     }
   }
   // the engine defaults to convrot8; the training default qtype is the
@@ -1861,5 +1890,6 @@ export const getGenerateDefaults = (arch: ModelArch): GenerateDefaults => {
     sample: { ...sample, ...(gen.sample || {}) },
     needsControlImage: gen.needsControlImage ?? (sections.includes('sample.ctrl_img') || sections.includes('sample.multi_ctrl_imgs')),
     sizeLocked: gen.sizeLocked ?? false,
+    sampleTags: arch.sampleTags,
   };
 };
