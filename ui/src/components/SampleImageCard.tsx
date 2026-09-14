@@ -9,7 +9,8 @@ interface SampleImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  selected?: boolean;
   /** pass your scroll container element (e.g. containerRef.current) */
   observerRoot?: Element | null;
   /** optional: tweak pre-load buffer */
@@ -24,6 +25,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   children,
   className = '',
   onClick = () => {},
+  selected = false,
   observerRoot = null,
   rootMargin = '200px 0px',
 }) => {
@@ -116,9 +118,18 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
   return (
     <div className={`flex flex-col ${className}`}>
-      <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: '100%' }} onClick={onClick}>
+      <div
+        ref={cardRef}
+        className={`relative w-full cursor-pointer select-none rounded-t-lg transition-colors duration-200 ${
+          selected ? 'bg-blue-500' : ''
+        }`}
+        style={{ paddingBottom: '100%' }}
+        onClick={onClick}
+      >
         <div
-          className={`absolute inset-0 rounded-t-lg shadow-md bg-gray-900 ${
+          className={`absolute rounded-t-lg shadow-md bg-gray-900 overflow-hidden transition-all duration-200 ${
+            selected ? 'inset-2' : 'inset-0'
+          } ${
             isVisible && !isItAudio && !loaded ? 'animate-pulse' : ''
           }`}
         >
