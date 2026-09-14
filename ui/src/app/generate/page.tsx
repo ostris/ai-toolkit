@@ -13,7 +13,7 @@ import { startQueue } from '@/utils/queue';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import usePollLoop from '@/hooks/usePollLoop';
 import { defaultInferenceJobConfig } from '@/helpers/inferenceJobConfig';
-import { encodeFilePathForUrl } from '@/utils/basic';
+import { encodeFilePathForUrl, objToTags, tagsToObj } from '@/utils/basic';
 import { latentToImage, payloadToFloat32, readEngineFrames, PreviewInfo } from '@/utils/engineStream';
 import { isMac } from '@/helpers/basic';
 import { modelArchs, getGenerateDefaults, GenerateDefaults } from '@/app/jobs/new/options';
@@ -842,7 +842,19 @@ function GeneratePageInner() {
                           className={`h-16 w-16 rounded-md overflow-hidden border-2 ${isSel ? 'border-blue-500' : 'border-transparent hover:border-gray-600'} bg-gray-800 block`}
                         >
                           {r.kind === 'audio' ? (
-                            <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">audio</div>
+                            <div className="relative w-full h-full flex items-center justify-center text-gray-400 text-[10px]">
+                              audio
+                              {/* embedded waveform cover; falls back to the label when the file has none */}
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={`/api/audio/art/${encodeFilePathForUrl(r.path)}`}
+                                alt=""
+                                className="absolute inset-0 w-full h-full object-cover"
+                                onError={e => {
+                                  (e.target as HTMLImageElement).style.display = 'none';
+                                }}
+                              />
+                            </div>
                           ) : r.kind === 'video' ? (
                             <video src={resultUrl(r)} muted className="w-full h-full object-cover" />
                           ) : (
@@ -1025,16 +1037,35 @@ function GeneratePageInner() {
                   </div>
                 </Card>
                 <Card title="Prompt" open={cardOpen('prompt')} onToggle={() => toggleCard('prompt')}>
-                  <TextAreaInput label="Prompt" value={sample.prompt || ''} onChange={v => setSample(s => ({ ...s, prompt: v }))} placeholder={modality === 'audio' ? 'song description, lyrics, bpm…' : 'describe what to generate'} />
-                  {(sample.guidance_scale ?? 4) > 1 && (
+                  {entry?.sampleTags ? (
+                    // tagged prompt archs (audio): one field per tag, stored as the tagged prompt string
+                    Object.entries(entry.sampleTags).map(([tagKey, tag]) => {
+                      const tags = tagsToObj(sample.prompt || '');
+                      const setTag = (v: any) => setSample(s => ({ ...s, prompt: objToTags({ ...tagsToObj(s.prompt || ''), [tagKey]: v }) }));
+                      const value = tags[tagKey] ?? '';
+                      if (tag.type === 'multiline') return <TextAreaInput key={tagKey} label={tag.title} value={value} onChange={setTag} placeholder={`Enter ${tag.title.toLowerCase()}`} />;
+                      if (tag.type === 'number') return <NumberInput key={tagKey} label={tag.title} value={value} onChange={setTag} placeholder={`Enter ${tag.title.toLowerCase()}`} />;
+                      return <TextInput key={tagKey} label={tag.title} value={value} onChange={setTag} placeholder={`Enter ${tag.title.toLowerCase()}`} />;
+                    })
+                  ) : (
+                    <TextAreaInput label="Prompt" value={sample.prompt || ''} onChange={v => setSample(s => ({ ...s, prompt: v }))} placeholder={modality === 'audio' ? 'song description, lyrics, bpm…' : 'describe what to generate'} />
+                  )}
+                  {(sample.guidance_scale ?? 4) > 1 && modality !== 'audio' && (
                     <TextAreaInput label="Negative prompt" value={sample.negative_prompt || ''} onChange={v => setSample(s => ({ ...s, negative_prompt: v }))} />
                   )}
                   <div className="grid grid-cols-3 gap-2">
-                    <NumberInput label="Width" value={sample.width ?? 1024} onChange={v => setSample(s => ({ ...s, width: v }))} min={64} max={4096} />
-                    <NumberInput label="Height" value={sample.height ?? 1024} onChange={v => setSample(s => ({ ...s, height: v }))} min={64} max={4096} />
+                    {modality !== 'audio' && (
+                      <>
+                        <NumberInput label="Width" value={sample.width ?? 1024} onChange={v => setSample(s => ({ ...s, width: v }))} min={64} max={4096} />
+                        <NumberInput label="Height" value={sample.height ?? 1024} onChange={v => setSample(s => ({ ...s, height: v }))} min={64} max={4096} />
+                      </>
+                    )}
                     <NumberInput label="Steps" value={sample.num_inference_steps ?? 25} onChange={v => setSample(s => ({ ...s, num_inference_steps: v }))} min={1} max={200} />
                     <NumberInput label="Guidance" value={sample.guidance_scale ?? 4} onChange={v => setSample(s => ({ ...s, guidance_scale: v }))} min={1} max={30} />
                     <NumberInput label="Seed (-1 random)" value={sample.seed ?? -1} onChange={v => setSample(s => ({ ...s, seed: v }))} min={-1} max={4294967295} />
+                    {modality === 'audio' && sample.duration !== undefined && (
+                      <NumberInput label="Duration (s)" value={sample.duration} onChange={v => setSample(s => ({ ...s, duration: v }))} min={1} max={600} />
+                    )}
                     {modality === 'video' && (
                       <>
                         <NumberInput label="Frames" value={sample.num_frames ?? 33} onChange={v => setSample(s => ({ ...s, num_frames: v }))} min={1} max={1000} />

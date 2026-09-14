@@ -1420,6 +1420,14 @@ export default function SimpleJob({
                   // automaticallt add the controls for a new dataset
                   const controls = modelArch?.controls ?? [];
                   newDataset.controls = controls;
+                  // arch dataset defaults (datasets[x].*) apply to added datasets too, not just at arch switch
+                  for (const key in modelArch?.defaults ?? {}) {
+                    const marker = 'datasets[x].';
+                    const idx = key.indexOf(marker);
+                    if (idx !== -1) {
+                      (newDataset as any)[key.slice(idx + marker.length)] = modelArch!.defaults![key][0];
+                    }
+                  }
                   setJobConfig([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
@@ -1533,6 +1541,17 @@ export default function SimpleJob({
                   min={0}
                   required
                 />
+                {modelArch?.additionalSections?.includes('sample.duration') && (
+                  <NumberInput
+                    label="Duration (seconds)"
+                    value={jobConfig.config.process[0].sample.duration ?? 120}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.duration')}
+                    placeholder="eg. 120"
+                    className="pt-2"
+                    min={1}
+                    required
+                  />
+                )}
                 <Checkbox
                   label="Walk Seed"
                   className="pt-4 pl-2"

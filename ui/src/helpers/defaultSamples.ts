@@ -977,3 +977,22 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
   num_frames: 1,
   fps: 1,
 }
+
+// YuE2 takes its native prompt layout (style text, a [Lyrics] line, the lyrics):
+// derive it from the shared audio samples instead of duplicating the lyrics
+const tagValue = (prompt: string, tag: string) => {
+  const m = prompt.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return m ? m[1].trim() : '';
+};
+
+export const defaultYue2SampleConfig: SampleConfig = {
+  ...defaultAudioSampleConfig,
+  samples: defaultAudioSampleConfig.samples.map(s => ({
+    ...s,
+    prompt: `${tagValue(s.prompt, 'CAPTION')}\n[Lyrics]\n${tagValue(s.prompt, 'LYRICS')}\n`,
+  })),
+  guidance_scale: 1,
+  sample_steps: 32,
+  // max seconds per sample; the AR stops earlier when the song ends
+  duration: 120,
+};

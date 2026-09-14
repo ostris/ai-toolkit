@@ -29,6 +29,8 @@ VIDEO_FPS = 2
 
 # still-image files caption through the image pipeline (no audio, no frames)
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "webp"}
+# audio-only files caption through the audio pipeline (no frames)
+AUDIO_EXTENSIONS = {"mp3", "wav", "flac", "ogg", "m4a", "aac"}
 
 # fixed generation ceiling under compiled decode: a constant max_length keeps
 # the static kv cache (and so the compiled decode graph) at one shape for
@@ -660,9 +662,15 @@ class Qwen3OmniCaptioner(BaseCaptioner):
     def _is_image_file(file_path: str) -> bool:
         return os.path.splitext(file_path)[1].lower().lstrip(".") in IMAGE_EXTENSIONS
 
+    @staticmethod
+    def _is_audio_file(file_path: str) -> bool:
+        return os.path.splitext(file_path)[1].lower().lstrip(".") in AUDIO_EXTENSIONS
+
     def _build_messages(self, _file_path: str):
         if self._is_image_file(_file_path):
             media = {"type": "image", "image": _file_path}
+        elif self._is_audio_file(_file_path):
+            media = {"type": "audio", "audio": _file_path}
         else:
             media = {"type": "video", "video": _file_path}
         return [
@@ -695,6 +703,10 @@ class Qwen3OmniCaptioner(BaseCaptioner):
 
             image = Image.open(file_path).convert("RGB")
             item = {"file": file_path, "kind": "image", "image": image, "audio": None}
+        elif self._is_audio_file(file_path):
+            from transformers.audio_utils import load_audio
+
+            item = {"file": file_path, "kind": "audio", "audio": load_audio(file_path, sampling_rate=16000)}
         else:
             from transformers.video_utils import load_video
             from transformers.audio_utils import load_audio
@@ -738,6 +750,13 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                 padding=True,
                 size=self._size_kwargs(),
             )
+        if kind == "audio":
+            return self.processor(
+                text=[it["text"] for it in items],
+                audio=[it["audio"] for it in items],
+                return_tensors="pt",
+                padding=True,
+            )
         use_audio = kind == "video_audio"
         return self.processor(
             text=[it["text"] for it in items],
@@ -770,10 +789,14 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         # under static cache, generate hands the forward a prepared 4D mask;
         # the true 2D padding mask is needed for the prefill rope index
         self.model._pad_mask_2d = inputs.get("attention_mask", None)
+        gen_kwargs = self._gen_kwargs(inputs["input_ids"].shape[1])
+        if items[0]["kind"] == "audio":
+            # greedy lyric transcription loops on syllables; mild penalty (the model's own talker default)
+            gen_kwargs["repetition_penalty"] = 1.05
         generated_ids = self.model.generate(
             **inputs,
             use_audio_in_video=use_audio,
-            **self._gen_kwargs(inputs["input_ids"].shape[1]),
+            **gen_kwargs,
         )
         trimmed = generated_ids[:, inputs["input_ids"].shape[1] :]
         captions = self.processor.batch_decode(
@@ -876,7 +899,7 @@ class Qwen3OmniCaptioner(BaseCaptioner):
                 futures.append((path, executor.submit(self._prep_media, path)))
 
             # batches must be homogeneous: the processor call differs per kind
-            buckets = {"image": [], "video_audio": [], "video_silent": []}
+            buckets = {"image": [], "audio": [], "video_audio": [], "video_silent": []}
             while futures:
                 if self.is_ui_captioner:
                     self.maybe_stop()

@@ -17,7 +17,7 @@ export const defaultCaptionJobConfig: CaptionJobConfig = {
           quantize: true,
           qtype: 'convrot8',
           low_vram: false,
-          extensions: ['mp4', 'mov', 'webm', 'mkv', 'avi', 'jpg', 'jpeg', 'png', 'bmp', 'webp'],
+          extensions: ['mp4', 'mov', 'webm', 'mkv', 'avi', 'jpg', 'jpeg', 'png', 'bmp', 'webp', 'mp3', 'wav', 'flac', 'ogg'],
           path_to_caption: '',
           recaption: false,
           compile: true,

@@ -354,6 +354,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 logger=self.logger,
                 num_frames=sample_item.num_frames,
                 fps=sample_item.fps,
+                duration=sample_item.duration,
                 ctrl_img=sample_item.ctrl_img,
                 ctrl_idx=sample_item.ctrl_idx,
                 ctrl_img_1=sample_item.ctrl_img_1,

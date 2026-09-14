@@ -55,6 +55,7 @@ ARCH_REGISTRY: Dict[str, dict] = {
     "ltx2.3": {"modality": "video", "model": {"name_or_path": "Lightricks/LTX-2.3/ltx-2.3-22b-dev.safetensors", "quantize": True, "quantize_te": True}, "sample": {**VID, "num_inference_steps": 25, "guidance_scale": 3.0, "num_frames": 49, "fps": 24}},
     "ltx2.5": {"modality": "video", "model": {"name_or_path": "Lightricks/LTX-2.5", "quantize": True, "quantize_te": True}, "sample": {**VID, "num_inference_steps": 25, "guidance_scale": 3.0, "num_frames": 49, "fps": 24}},
     "ace_step_15": {"modality": "audio", "model": {"name_or_path": "ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors", "quantize": True, "quantize_te": True}, "sample": {"width": 512, "height": 512, "num_inference_steps": 20, "guidance_scale": 4.0}},
+    "yue2": {"modality": "audio", "model": {"name_or_path": "Comfy-Org/YuE2/checkpoints/yue2_3b_int8_convrot.safetensors", "quantize": True, "qtype": "convrot8"}, "sample": {"width": 512, "height": 512, "num_inference_steps": 32, "guidance_scale": 1.0, "duration": 120}},
 }
 
 OUTPUT_EXT = {"image": "png", "video": "mp4", "audio": "mp3"}

@@ -67,6 +67,17 @@ overall_soundscape and non_diegetic_music are always exactly N/A for a still ima
 
 Describe only what is actually visible. Be decisive. No preamble and no extra text - output only the three fields.`;
 
+// Captions a song as a YuE2 training caption: one line of comma-separated style
+// tags, then a [Lyrics] line and the verbatim lyrics with bracketed section
+// headers - the exact prefix layout the yue2 arch's parse_caption expects.
+const yue2CaptionPrompt = `Listen to this song and write a YuE2 training caption for it. Output exactly two parts and nothing else.
+
+Part 1, the first line only: comma-separated style tags describing the music. Cover, in this order where applicable: genre and sub-genre, mood, vocal type (male vocal, female vocal, duet, choir, rap, or instrumental), vocal delivery (breathy, belted, falsetto, spoken, whispered, harmonized), lead instruments and production (acoustic guitar, piano, synth pads, 808 bass, live drums, drum machine, strings, lo-fi, reverb-heavy), tempo feel (slow ballad, mid-tempo, upbeat, fast), and era or scene (90s alt rock, modern trap, bedroom pop). Use concrete lowercase tags, no sentences, no hedging, no artist or song names. Example: alternative rock, melancholic, male vocal, falsetto, electric guitar, piano, live drums, slow ballad, 2000s
+
+Part 2: on the next line write [Lyrics] and then the complete lyrics transcribed verbatim, one sung line per line. Split the song into sections with a bracketed header on its own line before each one, using these names: [Intro], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Bridge], [Instrumental], [Solo], [Outro]. A short descriptor may follow the name inside the brackets, e.g. [Intro choir] or [Chorus harmonized]. Leave one blank line between sections. Repeat a chorus each time it is sung, but write each repeated line once per time it is sung, never more. Wordless vocalizing (na, la, oh, ah, hums, vocal chops) is never transcribed syllable by syllable: describe it once in the section header instead, e.g. [Intro wordless vocals] or [Bridge oohs], and if you cannot make out real words in a passage, treat it as wordless. Do not add timestamps, speaker labels, quotation marks, translations, or commentary, and do not annotate ad-libs beyond the section header. If the song has no vocals at all, Part 2 is [Lyrics] followed by a single [Instrumental] line.
+
+Transcribe only what is actually sung. Be decisive. No preamble, no explanations, no markdown - output only the tag line and the lyrics block.`;
+
 // Editable ADDITIONAL INSTRUCTIONS block injected into the Ideogram system prompt.
 // Users can tweak this for dataset-specific guidance without altering the fixed
 // output contract, element/background rules, or bbox format.
@@ -127,7 +138,7 @@ export const captionerTypes: CaptionOption[] = [
         group: 'image/video/sound',
         defaults: {
             'config.process[0].caption.model_name_or_path': ['ai-toolkit/Qwen3-Omni-30B-A3B-Thinking', defaultNameOrPath],
-            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage], defaultExtensions],
+            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage, ...extensionsAudio], defaultExtensions],
             'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
             'config.process[0].caption.max_res': [512, undefined],
             'config.process[0].caption.max_new_tokens': [512, undefined],
@@ -143,6 +154,7 @@ export const captionerTypes: CaptionOption[] = [
             'General': defaultVideoCaptionPrompt,
             'MiniMax H4 T2V': minimaxT2VCaptionPrompt,
             'MiniMax H4 Image': minimaxImageCaptionPrompt,
+            'YuE2': yue2CaptionPrompt,
         },
         additionalSections: [
             'caption.caption_prompt',
