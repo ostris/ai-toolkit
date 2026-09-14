@@ -1392,6 +1392,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
       'config.process[0].sample': [defaultYue2SampleConfig, defaultSampleConfig],
       'config.process[0].datasets[x].cache_latents_to_disk': [true, true],
+      // blank captions break lyric following; the AR must always see the prefix
+      'config.process[0].datasets[x].caption_dropout_rate': [0, 0.05],
     },
     // native YuE2 prompt: style text, a [Lyrics] line, the lyrics
     hasMultiLinePrompts: true,
