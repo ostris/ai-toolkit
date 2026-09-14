@@ -354,10 +354,10 @@ Everything else should work the same including layer targeting.
 
 If you enjoy my projects or use them commercially, please consider sponsoring me. Every bit helps! 💖
 
-<a href="https://ostris.com/sponsors" target="_blank"><img src="https://ostris.com/wp-content/uploads/2025/05/support-banner2.png" alt="Support my work" style="max-width:100%;height:auto;"></a>
+<a href="https://github.com/ostris/ai-toolkit#sponsor" target="_blank"><img src="https://ostris.com/wp-content/uploads/2025/05/support-banner2.png" alt="Support my work" style="max-width:100%;height:auto;"></a>
 
 ### Current Sponsors
 
 All of these people / organizations are the ones who selflessly make this project possible. Thank you!!
 
-<a href="https://ostris.com/sponsors"><img src="https://ostris.com/sponsors.svg" alt="Sponsors" style="width:100%;height:auto;"></a>
+<a href="https://github.com/ostris/ai-toolkit#sponsor"><img src="https://github.com/ostris/ai-toolkit#sponsor.svg" alt="Sponsors" style="width:100%;height:auto;"></a>
