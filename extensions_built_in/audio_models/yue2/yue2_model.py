@@ -33,6 +33,7 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig
 from toolkit.dto import DTO
 from toolkit.models.v2.resolver import resolve_named_file
+from toolkit.paths import MODELS_PATH
 from toolkit.print import print_acc
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
@@ -43,6 +44,24 @@ from .src.tokenizer import HEAD_FILE, HEAD_REPO, NAR_LORA_FILE, SemanticTokenize
 from .src.vae import SAMPLE_RATE, YuE2VAE
 
 DEFAULT_CHECKPOINT = "Comfy-Org/YuE2/checkpoints/yue2_3b_bf16.safetensors"
+# community tokenizer files have no ComfyUI folder; they live under <MODELS_PATH>/ai_toolkit/
+AI_TOOLKIT_DIR = "ai_toolkit"
+
+
+def resolve_ai_toolkit_file(path: str, component: str) -> str:
+    """Local file, or 'org/repo/file' downloaded into <MODELS_PATH>/ai_toolkit/<file>."""
+    if os.path.exists(path):
+        return path
+    splits = path.split("/")
+    if len(splits) < 3:
+        raise ValueError(f"Invalid {component} path: {path}. Must be a local file or 'org/repo/filename'.")
+    local_dir = os.path.join(MODELS_PATH, AI_TOOLKIT_DIR)
+    candidate = os.path.join(local_dir, splits[-1])
+    if os.path.exists(candidate):
+        return candidate
+    import huggingface_hub
+
+    return huggingface_hub.hf_hub_download(repo_id="/".join(splits[:2]), filename="/".join(splits[2:]), local_dir=local_dir)
 
 scheduler_config = {
     "num_train_timesteps": 1000,
@@ -141,15 +160,24 @@ class YuE2AudioModel(BaseAudioModel):
         self.ar_max_tokens = int(kw.get("ar_max_tokens", 0))
         # optional separate learning rate for the AR expert's LoRA (Adam ignores loss scale)
         self.ar_lr_multiplier = float(kw.get("ar_lr_multiplier", 1.0))
+        # trust region: KL(base || lora) on the AR next-token distributions, base = LoRA switched off
+        self.ar_kl_weight = float(kw.get("ar_kl_weight", 0.0))
         self._loss_log_every = int(kw.get("loss_log_every", 25))
+        # extra per-readout AR diagnostics (targets, unique tokens, p(END), p(target))
+        self.debug = bool(kw.get("debug", False))
         self._loss_log_step = 0
         self.merge_nar_lora = bool(kw.get("merge_nar_lora", False))
         self.nar_lora_path = kw.get("nar_lora_path", f"{HEAD_REPO}/{NAR_LORA_FILE}")
         self.semantic_head_path = kw.get("semantic_head_path", f"{HEAD_REPO}/{HEAD_FILE}")
         self.sample_max_seconds = float(kw.get("sample_max_seconds", 120.0))
         self.sample_ar_temperature = float(kw.get("sample_ar_temperature", 1.0))
+        # reference sampler value; 1.0 lets a memorized song replay (the penalty knocks it off path)
+        self.sample_ar_repetition_penalty = float(kw.get("sample_ar_repetition_penalty", 1.2))
         self.semantic_tokenizer: Optional[SemanticTokenizer] = None
         self._pending_aux_loss = None
+        self._pending_ar_ce = None
+        self._pending_ar_kl = None
+        self.additional_loss_logs = {}
 
     @staticmethod
     def get_train_scheduler():
@@ -175,7 +203,7 @@ class YuE2AudioModel(BaseAudioModel):
 
         self.model = YuE2Model.load_from_state_dict(sd, dtype=dtype)
         if self.merge_nar_lora:
-            lora_path = resolve_named_file(self.nar_lora_path, component="yue2 nar lora")
+            lora_path = resolve_ai_toolkit_file(self.nar_lora_path, component="yue2 nar lora")
             self.print_and_status_update(f"Merging NAR adapter {os.path.basename(lora_path)}")
             merge_nar_lora(self.model, lora_path)
         vae_sd = {k[len("vae.") :]: v for k, v in sd.items() if k.startswith("vae.")}
@@ -196,10 +224,10 @@ class YuE2AudioModel(BaseAudioModel):
 
     def _get_semantic_tokenizer(self) -> SemanticTokenizer:
         if self.semantic_tokenizer is None:
-            head_path = resolve_named_file(self.semantic_head_path, component="yue2 semantic head")
+            head_path = resolve_ai_toolkit_file(self.semantic_head_path, component="yue2 semantic head")
             # log only: this can run mid-training and a status update would replace "Training" in the UI
             print_acc("Loading YuE2 semantic tokenizer (MERT-v2-FullSong + head)")
-            self.semantic_tokenizer = SemanticTokenizer(head_path)
+            self.semantic_tokenizer = SemanticTokenizer(head_path, debug=self.debug)
         return self.semantic_tokenizer
 
     def get_transformer_block_names(self) -> Optional[List[str]]:
@@ -262,17 +290,25 @@ class YuE2AudioModel(BaseAudioModel):
         start, end = getattr(batch, "yue2_window", (0, noise.shape[1]))
         return (noise - batch.latents)[:, start:end].detach()
 
-    def scale_loss(self, loss):
+    def get_additional_loss(self, pred: torch.Tensor, target: torch.Tensor):
+        """AR next-token CE from the last forward, added to the flow loss by the trainer and
+        logged as its own term (`loss/ar_ce`, unweighted)."""
         aux = self._pending_aux_loss
         self._pending_aux_loss = None
         if aux is None:
-            return loss
+            self.additional_loss_logs = {}
+            return None
+        ce = self._pending_ar_ce.detach().float().item()
+        self.additional_loss_logs = {"loss/ar_ce": ce}
+        kl = self._pending_ar_kl
+        if kl is not None:
+            self.additional_loss_logs["loss/ar_kl"] = kl.detach().float().item()
         self._loss_log_step += 1
-        if self._loss_log_every > 0 and self._loss_log_step % self._loss_log_every == 0:
-            # the trainer's bar shows the sum; the two terms move on different scales
+        if self.debug and self._loss_log_every > 0 and self._loss_log_step % self._loss_log_every == 0:
             info = getattr(self, "_pending_aux_info", "")
-            tqdm.write(f"yue2 step {self._loss_log_step}: flow {loss.detach().float().mean().item():.4f}  ar_ce {aux.detach().float().item() / max(self.ar_loss_weight, 1e-8):.4f}  {info}")
-        return loss + aux
+            kl_txt = f"  ar_kl {kl.detach().float().item():.4f}" if kl is not None else ""
+            tqdm.write(f"yue2 step {self._loss_log_step}: ar_ce {ce:.4f}{kl_txt}" + (f"  {info}" if info else ""))
+        return aux
 
     @staticmethod
     def _train_prefix(prefix_embeds: torch.Tensor, prefix_mask: torch.Tensor) -> torch.Tensor:
@@ -283,13 +319,34 @@ class YuE2AudioModel(BaseAudioModel):
 
     def _ar_info(self, logits: torch.Tensor, ids: torch.Tensor, prefix: torch.Tensor, total: int, whole_song: bool) -> str:
         """Readout diagnostics: what the AR loss was computed over."""
-        if self._loss_log_every <= 0 or (self._loss_log_step + 1) % self._loss_log_every != 0:
+        if not self.debug or self._loss_log_every <= 0 or (self._loss_log_step + 1) % self._loss_log_every != 0:
             return ""
         with torch.no_grad():
             p = logits.softmax(-1)
             p_target = p.gather(1, ids[:, None]).squeeze(1)
             return (f"[ar targets {ids.shape[0]} unique {ids.unique().numel()} (song {total}, whole {whole_song}) "
                     f"prefix {prefix.shape[0]} p(END|prefix) {p[0, MUSIC_END].item():.3f} p(target) median {p_target.median().item():.3f}]")
+
+    def _ar_kl(self, ar_embeds: torch.Tensor, logits: torch.Tensor):
+        """KL(base || lora) per position, mean. Base pass = same prefill with the LoRA inactive, no grad."""
+        net = getattr(self, "_network", None)
+        n = logits.shape[0]
+        was_active = getattr(net, "is_active", None)
+        if net is not None:
+            net.is_active = False
+        try:
+            with torch.no_grad():
+                _, base_hidden = self.model.ar.prefill(ar_embeds, return_hidden=True)
+                base_hidden = base_hidden[0, -n - 1 : -1]
+        finally:
+            if net is not None:
+                net.is_active = was_active
+        kl = logits.new_zeros(())
+        for s0 in range(0, n, 1024):  # chunked: two fp32 [n, vocab] log-softmaxes at once would be ~10 GB
+            with torch.no_grad():
+                base_logp = torch.log_softmax(self.model.ar.model.lm_head(base_hidden[s0 : s0 + 1024]).float(), -1)
+            kl = kl + torch.nn.functional.kl_div(torch.log_softmax(logits[s0 : s0 + 1024], -1), base_logp, log_target=True, reduction="sum")
+        return kl / n
 
     def _ar_inputs(self, prefix: torch.Tensor, tokens: torch.Tensor, end_token: bool = True):
         """One item: prefix (unpadded [L, H]) + codec tokens [+ MUSIC_END] -> embeds [1, L', H], ids [n]."""
@@ -356,7 +413,7 @@ class YuE2AudioModel(BaseAudioModel):
         prefix_embeds = text_embeddings.text_embeds.to(device, self.torch_dtype)
         prefix_mask = text_embeddings.attention_mask.to(device)
         train_ar = self.ar_loss_weight > 0 and torch.is_grad_enabled()
-        preds, lm_losses = [], []
+        preds, lm_losses, kl_losses = [], [], []
         for i in range(latent_model_input.shape[0]):
             song = tokens_all[i].to(device)
             total = song.shape[0]
@@ -372,6 +429,8 @@ class YuE2AudioModel(BaseAudioModel):
                 _, hidden = model.ar.prefill(ar_embeds, return_hidden=True)
                 logits = model.ar.model.lm_head(hidden[0, -ar_ids.shape[0] - 1 : -1]).float()
                 lm_losses.append(torch.nn.functional.cross_entropy(logits, ar_ids))
+                if self.ar_kl_weight > 0:
+                    kl_losses.append(self._ar_kl(ar_embeds, logits))
                 self._pending_aux_info = self._ar_info(logits, ar_ids, prefix, total, whole_song)
                 with torch.no_grad():
                     cache, _ = model.ar.prefill(embeds)
@@ -380,13 +439,19 @@ class YuE2AudioModel(BaseAudioModel):
                 if train_ar:
                     logits = model.ar.model.lm_head(hidden[0, -ids.shape[0] - 1 : -1]).float()
                     lm_losses.append(torch.nn.functional.cross_entropy(logits, ids))
+                    if self.ar_kl_weight > 0:
+                        kl_losses.append(self._ar_kl(embeds, logits))
                     self._pending_aux_info = self._ar_info(logits, ids, prefix, total, whole_song)
             # the flow loss must not train the AR through its KV cache: only next-token CE shapes the AR
             cache = [(k.detach(), v.detach()) for k, v in cache]
             pred = model.nar(latent_model_input[i : i + 1].to(device, self.torch_dtype), t[i : i + 1], cache, embeds.shape[1])
             preds.append(pred)
         if lm_losses:
-            self._pending_aux_loss = torch.stack(lm_losses).mean() * self.ar_loss_weight
+            self._pending_ar_ce = torch.stack(lm_losses).mean()
+            self._pending_ar_kl = torch.stack(kl_losses).mean() if kl_losses else None
+            self._pending_aux_loss = self._pending_ar_ce * self.ar_loss_weight
+            if self._pending_ar_kl is not None:
+                self._pending_aux_loss = self._pending_aux_loss + self._pending_ar_kl * self.ar_kl_weight
         return torch.cat(preds, 0)
 
     # ------------------------------------------------------------------
@@ -394,6 +459,7 @@ class YuE2AudioModel(BaseAudioModel):
     # ------------------------------------------------------------------
     def get_generation_pipeline(self):
         return self.pipeline
+
 
     def generate_single_audio(self, pipeline: YuE2Pipeline, gen_config: GenerateImageConfig, conditional_embeds: PromptEmbeds, unconditional_embeds, generator, extra):
         if self.model.device == torch.device("cpu"):
@@ -417,7 +483,8 @@ class YuE2AudioModel(BaseAudioModel):
 
         try:
             codec = pipeline.generate_codec_tokens(
-                prefix, max_tokens=max_tokens, seed=gen_config.seed, temperature=self.sample_ar_temperature, progress=token_progress,
+                prefix, max_tokens=max_tokens, seed=gen_config.seed, temperature=self.sample_ar_temperature,
+                repetition_penalty=self.sample_ar_repetition_penalty, progress=token_progress,
             )
         finally:
             token_bar.close()

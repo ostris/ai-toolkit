@@ -78,8 +78,9 @@ def _rebuild_rotary(model: nn.Module) -> int:
 class SemanticTokenizer(nn.Module):
     """Waveform -> per-frame codec ids (0..32767) at 25 Hz."""
 
-    def __init__(self, head_path: str, mert_repo: str = MERT_REPO):
+    def __init__(self, head_path: str, mert_repo: str = MERT_REPO, debug: bool = False):
         super().__init__()
+        self.debug = debug
         from transformers import AutoFeatureExtractor, AutoModel
 
         self.processor = AutoFeatureExtractor.from_pretrained(mert_repo, trust_remote_code=True)
@@ -149,6 +150,6 @@ class SemanticTokenizer(nn.Module):
             mono = torchaudio.functional.resample(mono, sample_rate, MERT_SAMPLE_RATE)
         feats = self.mert_features(mono.to(self.device))
         out = self.tokens_from_features(feats)
-        if out.unique().numel() < 8:
+        if self.debug and out.unique().numel() < 8:
             print(f"YuE2 tokenizer: degenerate token stream (unique {out.unique().numel()}); MERT features nan {torch.isnan(feats).sum().item()}")
         return out
