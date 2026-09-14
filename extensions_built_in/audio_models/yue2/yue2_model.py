@@ -79,6 +79,18 @@ _SECTION = re.compile(r"^\s*\[(Tags|Lyrics|Duration)\]\s*$", re.IGNORECASE | re.
 _SONG_SECTION = re.compile(r"^\s*\[[^\]]+\]\s*$")
 
 
+def _normalize_section(line: str) -> str:
+    """YuE2 section tags are Title case ([Verse 1], [Pre-Chorus]); uppercase the first letter and the
+    letter after each hyphen of a bracketed section line, leaving the rest (e.g. descriptors) alone."""
+    if not _SONG_SECTION.match(line):
+        return line
+    lead, body, trail = line[: line.index("[") + 1], line[line.index("[") + 1 : line.rindex("]")], line[line.rindex("]") :]
+    body = " ".join(w.capitalize() if w.isupper() and len(w) > 1 else w for w in body.split(" "))  # [BRIDGE] -> [Bridge]
+    body = body[:1].upper() + body[1:]
+    body = re.sub(r"-([a-z])", lambda m: "-" + m.group(1).upper(), body)
+    return lead + body + trail
+
+
 def _number(value: str):
     try:
         return float(value) if value.strip() else None
@@ -96,7 +108,8 @@ def parse_caption(text: str) -> dict:
     if not isinstance(text, str):
         text = ""
     if "<CAPTION>" in text or "<LYRICS>" in text:
-        return {"style": _tag(text, "CAPTION"), "lyrics": _tag(text, "LYRICS"), "duration": _number(_tag(text, "DURATION"))}
+        lyrics = "\n".join(_normalize_section(l) for l in _tag(text, "LYRICS").splitlines())
+        return {"style": _tag(text, "CAPTION"), "lyrics": lyrics, "duration": _number(_tag(text, "DURATION"))}
     sections = {"tags": []}
     current = "tags"
     for line in text.splitlines():
@@ -109,7 +122,7 @@ def parse_caption(text: str) -> dict:
         if current == "tags" and "lyrics" not in sections and _SONG_SECTION.match(line):
             current = "lyrics"
             sections["lyrics"] = []
-        sections.setdefault(current, []).append(line)
+        sections.setdefault(current, []).append(_normalize_section(line) if current == "lyrics" else line)
     style = "\n".join(sections["tags"]).strip()
     lyrics = "\n".join(sections.get("lyrics", [])).strip()
     duration = _number("\n".join(sections.get("duration", [])))
