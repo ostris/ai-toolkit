@@ -1301,6 +1301,10 @@ class GenerateImageConfig:
             cap.release()
             if ok:
                 img = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        elif ext in ['.mp3', '.wav', '.flac', '.ogg']:
+            # waveform cover rendered at thumb size so the UI never has to read the tags
+            from toolkit.audio.album_artwork import create_artwork, load_waveform
+            img = create_artwork(load_waveform(media_path), size=300)
         if img is None:
             return False
         img = img.convert('RGB')

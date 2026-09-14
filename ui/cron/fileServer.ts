@@ -92,6 +92,9 @@ async function getRoots(forceFresh = false): Promise<Roots> {
 const THUMB_SIZE = 300;
 const IMAGE_THUMB_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
 const VIDEO_THUMB_EXTS = new Set(['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv']);
+// audio thumbs: the embedded cover (the sampler's waveform art) when the file
+// has one, else a waveform rendered by ffmpeg in the same amber-on-dark look
+const AUDIO_THUMB_EXTS = new Set(['.mp3', '.wav', '.flac', '.ogg']);
 
 // sharp is not a direct dependency; Next.js vendors it (for next/image), so
 // resolve it out of next's node_modules tree. If that ever fails, image
@@ -142,11 +145,35 @@ async function withThumbGenSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(ffmpegExe, ['-y', '-loglevel', 'error', ...args], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: ffmpegEnv,
+    });
+    let stderr = '';
+    child.stderr!.on('data', chunk => (stderr += chunk.toString()));
+    const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      if (err.code === 'ENOENT') ffmpegMissing = true;
+      reject(err);
+    });
+    child.on('exit', code => {
+      clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error(`ffmpeg exited with ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
+const SQUARE_THUMB_VF = `crop='min(iw,ih)':'min(iw,ih)',scale=${THUMB_SIZE}:${THUMB_SIZE}`;
+
 async function generateThumb(sourcePath: string, thumbPath: string): Promise<boolean> {
   const ext = path.extname(sourcePath).toLowerCase();
   const isImage = IMAGE_THUMB_EXTS.has(ext);
   const isVideo = VIDEO_THUMB_EXTS.has(ext);
-  if ((isImage && !sharp) || (isVideo && ffmpegMissing) || (!isImage && !isVideo)) return false;
+  const isAudio = AUDIO_THUMB_EXTS.has(ext);
+  if ((isImage && !sharp) || ((isVideo || isAudio) && ffmpegMissing) || (!isImage && !isVideo && !isAudio)) return false;
   await fs.promises.mkdir(path.dirname(thumbPath), { recursive: true });
   // Write to a per-process tmp name, then atomically rename into place (same
   // as the Python generator) so a concurrent request never reads a partial
@@ -159,34 +186,23 @@ async function generateThumb(sourcePath: string, thumbPath: string): Promise<boo
         .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' })
         .jpeg({ quality: 90 })
         .toFile(tmpPath);
+    } else if (isVideo) {
+      await runFfmpeg(['-i', sourcePath, '-frames:v', '1', '-vf', SQUARE_THUMB_VF, '-q:v', '2', tmpPath]);
     } else {
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn(
-          ffmpegExe,
-          [
-            '-y',
-            '-loglevel', 'error',
-            '-i', sourcePath,
-            '-frames:v', '1',
-            '-vf', `crop='min(iw,ih)':'min(iw,ih)',scale=${THUMB_SIZE}:${THUMB_SIZE}`,
-            '-q:v', '2',
-            tmpPath,
-          ],
-          { stdio: ['ignore', 'ignore', 'pipe'], env: ffmpegEnv },
-        );
-        let stderr = '';
-        child.stderr!.on('data', chunk => (stderr += chunk.toString()));
-        const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
-        child.on('error', (err: NodeJS.ErrnoException) => {
-          clearTimeout(timer);
-          if (err.code === 'ENOENT') ffmpegMissing = true;
-          reject(err);
-        });
-        child.on('exit', code => {
-          clearTimeout(timer);
-          code === 0 ? resolve() : reject(new Error(`ffmpeg exited with ${code}: ${stderr.trim()}`));
-        });
-      });
+      // embedded cover first (ffmpeg exposes an attached picture as a video stream)
+      let done = false;
+      if (ext === '.mp3') {
+        try {
+          await runFfmpeg(['-i', sourcePath, '-map', '0:v:0', '-frames:v', '1', '-vf', SQUARE_THUMB_VF, '-q:v', '2', tmpPath]);
+          done = true;
+        } catch {
+          // no cover: fall through to the rendered waveform
+        }
+      }
+      if (!done) {
+        const wave = `color=c=0x1a1a1a:s=${THUMB_SIZE}x${THUMB_SIZE}[bg];[0:a]showwavespic=s=${THUMB_SIZE}x${THUMB_SIZE}:colors=0xfbbf24@0.9[w];[bg][w]overlay=format=auto`;
+        await runFfmpeg(['-i', sourcePath, '-filter_complex', wave, '-frames:v', '1', '-q:v', '2', tmpPath]);
+      }
     }
     await fs.promises.rename(tmpPath, thumbPath);
     return true;
@@ -241,11 +257,17 @@ const contentTypeMap: { [key: string]: string } = {
   '.ogg': 'audio/ogg',
 };
 
-async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, prefix: string): Promise<void> {
+// Returns false only for /api/audio/art/ when no thumb exists and none can be
+// generated; the caller then proxies to the Next.js route, which extracts the
+// cover from the file's tags.
+async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, prefix: string): Promise<boolean> {
   try {
     // /api/img/ serves media inline with ETag revalidation; /api/files/ is a
     // forced download. Both mirror their Next.js route's exact semantics.
-    const isImg = prefix === '/api/img/';
+    // /api/audio/art/ is the audio file's thumb (embedded cover / waveform),
+    // served inline like an image.
+    const isArt = prefix === '/api/audio/art/';
+    const isImg = prefix === '/api/img/' || isArt;
     const urlPath = (req.url || '').split('?')[0];
     const rest = urlPath.slice(prefix.length);
     // Decode per URL segment so both forms resolve to the same file:
@@ -280,14 +302,15 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       console.warn(`Access denied: ${resolvedFilePath} not in ${allowedDirs.join(', ')}`);
       res.writeHead(403);
       res.end('Access denied');
-      return;
+      return true;
     }
 
     // ?thumb=1 serves the 300x300 jpg from the sibling .thumbs folder
     // (<name>.<ext>.jpg), generating and saving it on the fly when missing.
     // Falls through to the full file only if generation isn't possible
-    // (unsupported format, no ffmpeg, corrupt file).
-    if (isImg && new URL(req.url || '', 'http://localhost').searchParams.has('thumb')) {
+    // (unsupported format, no ffmpeg, corrupt file). Album art is always the
+    // thumb.
+    if (isArt || (isImg && new URL(req.url || '', 'http://localhost').searchParams.has('thumb'))) {
       const thumbPath = path.join(path.dirname(resolvedFilePath), '.thumbs', path.basename(resolvedFilePath) + '.jpg');
       let thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
       if (!(thumbStat && thumbStat.isFile())) {
@@ -298,6 +321,8 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       }
       if (thumbStat && thumbStat.isFile()) {
         resolvedFilePath = thumbPath;
+      } else if (isArt) {
+        return false;
       }
     }
 
@@ -307,12 +332,12 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
     } catch {
       res.writeHead(404);
       res.end('File not found');
-      return;
+      return true;
     }
     if (!stat.isFile()) {
       res.writeHead(400);
       res.end('Not a file');
-      return;
+      return true;
     }
 
     const filename = path.basename(resolvedFilePath);
@@ -332,7 +357,7 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       if (req.headers['if-none-match'] === etag) {
         res.writeHead(304, { ETag: etag, 'Cache-Control': headers['Cache-Control'] });
         res.end();
-        return;
+        return true;
       }
     } else {
       headers['Cache-Control'] = 'public, max-age=86400';
@@ -354,7 +379,7 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       if (isNaN(start) || isNaN(end) || start > end || start >= stat.size) {
         res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
         res.end();
-        return;
+        return true;
       }
       status = 206;
       headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
@@ -364,12 +389,12 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
     res.writeHead(status, headers);
     if (req.method === 'HEAD') {
       res.end();
-      return;
+      return true;
     }
     if (res.destroyed) {
       // Client disconnected while we were stat-ing; piping into a destroyed
       // stream throws.
-      return;
+      return true;
     }
 
     const fileStream = fs.createReadStream(resolvedFilePath, {
@@ -382,10 +407,12 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       // is gone.
       if (err) res.destroy();
     });
+    return true;
   } catch (error) {
     console.error('Error serving file:', error);
     if (!res.headersSent) res.writeHead(500);
     res.end();
+    return true;
   }
 }
 
@@ -478,9 +505,11 @@ function startServer(publicPort: number, upstreamPort: number): void {
   const server = http.createServer((req, res) => {
     const urlPath = (req.url || '').split('?')[0];
     if (req.method === 'GET' || req.method === 'HEAD') {
-      const prefix = ['/api/files/', '/api/img/'].find(p => urlPath.startsWith(p));
+      const prefix = ['/api/files/', '/api/img/', '/api/audio/art/'].find(p => urlPath.startsWith(p));
       if (prefix) {
-        serveFile(req, res, prefix);
+        serveFile(req, res, prefix).then(handled => {
+          if (!handled) proxy(req, res, upstreamPort);
+        });
         return;
       }
     }
