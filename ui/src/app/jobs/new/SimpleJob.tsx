@@ -1524,18 +1524,6 @@ export default function SimpleJob({
                 </div>
               )}
 
-              {modelArch?.additionalSections?.includes('sample.duration') && (
-                <div>
-                  <NumberInput
-                    label="Duration (seconds)"
-                    value={jobConfig.config.process[0].sample.duration ?? 120}
-                    onChange={value => setJobConfig(value, 'config.process[0].sample.duration')}
-                    placeholder="eg. 120"
-                    min={1}
-                    required
-                  />
-                </div>
-              )}
               <div>
                 <NumberInput
                   label="Seed"
@@ -1545,6 +1533,17 @@ export default function SimpleJob({
                   min={0}
                   required
                 />
+                {modelArch?.additionalSections?.includes('sample.duration') && (
+                  <NumberInput
+                    label="Duration (seconds)"
+                    value={jobConfig.config.process[0].sample.duration ?? 120}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.duration')}
+                    placeholder="eg. 120"
+                    className="pt-2"
+                    min={1}
+                    required
+                  />
+                )}
                 <Checkbox
                   label="Walk Seed"
                   className="pt-4 pl-2"
