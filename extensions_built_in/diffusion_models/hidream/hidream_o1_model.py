@@ -14,6 +14,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from safetensors.torch import load_file, save_file
+from toolkit.util.streamed_safetensors import save_file_streamed
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
 
@@ -502,7 +503,8 @@ class HidreamO1Model(BaseModel):
             if not output_path.endswith(".safetensors"):
                 output_path += ".safetensors"
             meta = get_meta_for_safetensors(meta, name=self.arch)
-            save_file(save_dict, output_path, metadata=meta)
+            # sequential writer: mmap save_file fails with EINVAL on ntfs3 for large files
+            save_file_streamed(save_dict, output_path, metadata=meta)
         else:
             transformer.save_pretrained(
                 save_directory=output_path,

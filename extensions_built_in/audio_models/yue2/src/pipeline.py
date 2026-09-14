@@ -11,11 +11,13 @@ from typing import Callable, List, Optional, Tuple
 import torch
 
 from .model import (
+    ABC_END,
     CODEC_OFFSET,
     CODEC_SIZE,
     CONTEXT,
-    MUSIC_END,
+    EOD,
     KVCache,
+    MUSIC_END,
     YuE2Model,
     rope_cos_sin,
 )
@@ -40,14 +42,22 @@ def sample_logits(
     penalty_window: int,
     min_tokens: int,
     generator: torch.Generator,
+    phase: str = "semantic",
+    legacy_off: bool = False,
 ) -> int:
-    scores = logits.float().clone()
+    """ComfyUI's ``distribution`` for one row: ``abc`` allows the text vocabulary + ABC_END,
+    ``semantic`` the codec ids + MUSIC_END. ``legacy_off`` = cot "off" (bf16 scores, keep top 3)."""
+    scores = logits.clone() if legacy_off else logits.float().clone()
+    end = ABC_END if phase == "abc" else MUSIC_END
     allowed = torch.full_like(scores, -torch.inf)
-    allowed[CODEC_OFFSET : CODEC_OFFSET + CODEC_SIZE] = 0
-    allowed[MUSIC_END] = 0
+    if phase == "abc":
+        allowed[:EOD] = 0
+    else:
+        allowed[CODEC_OFFSET : CODEC_OFFSET + CODEC_SIZE] = 0
+    allowed[end] = 0
     scores += allowed
     if step < min_tokens:
-        scores[MUSIC_END] = -torch.inf
+        scores[end] = -torch.inf
     if repetition_penalty != 1.0 and history:
         recent = torch.tensor(history[-penalty_window:], dtype=torch.long, device=scores.device)
         counts = torch.zeros_like(scores).scatter_add_(0, recent, torch.ones_like(recent, dtype=scores.dtype))
@@ -62,8 +72,7 @@ def sample_logits(
         values, indices = scores.sort(descending=True)
         probs = values.softmax(-1)
         removed = probs.cumsum(-1) - probs > top_p
-        # released "off" mode keeps the top 3 candidates regardless of mass
-        removed[:3] = False
+        removed[: 3 if legacy_off else 1] = False
         values.masked_fill_(removed, -torch.inf)
         scores = values.scatter(-1, indices, values)
     probs = scores.softmax(-1)
@@ -89,6 +98,10 @@ class ARDecodeGraph:
         self.token = torch.zeros((1, 1), device=device, dtype=torch.long)
         self.pos = torch.zeros((1, 1), device=device, dtype=torch.long)
         self.index = torch.arange(capacity, device=device)
+        # the graph covers the layer stack only; embedding lookup and lm_head run outside it
+        # (the int8 repack's embedding/lm_head kernels invalidate stream capture)
+        self.x_in = torch.zeros((1, 1, cfg.hidden_size), device=device, dtype=dtype)
+        self.h_out = torch.zeros((1, cfg.hidden_size), device=device, dtype=dtype)
         self.logits = torch.empty((1, cfg.vocab_size), device=device, dtype=dtype)
         self.graph = None
 
@@ -98,9 +111,9 @@ class ARDecodeGraph:
             self.v[i][:, :, :length] = v
         self.pos.fill_(length)
 
-    def _step(self):
+    def _layers(self):
         ar = self.ar
-        x = ar.model.embed_tokens(self.token)
+        x = self.x_in
         cos, sin = rope_cos_sin(self.pos, self.head_dim, ar.cfg.rope_theta)
         mask = (self.index <= self.pos)[None, None]  # [1, 1, 1, capacity]
         scale = self.head_dim ** -0.5
@@ -115,25 +128,31 @@ class ARDecodeGraph:
             out = torch.matmul(scores, self.v[i]).reshape(1, 1, -1)
             x = x + layer.self_attn.o_proj(out)
             x = x + layer.mlp(layer.post_attention_layernorm(x))
-        self.logits.copy_(ar.model.lm_head(ar.model.norm(x[:, -1])))
+        self.h_out.copy_(ar.model.norm(x[:, -1]))
+
+    def _step(self):
+        ar = self.ar
+        self.x_in.copy_(ar.model.embed_tokens(self.token).to(self.x_in.dtype))
+        if self.graph is not None:
+            self.graph.replay()
+        else:
+            self._layers()
+        self.logits.copy_(ar.model.lm_head(self.h_out))
 
     def capture(self):
         stream = torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(stream):
             for _ in range(2):
-                self._step()
+                self._layers()
         torch.cuda.current_stream().wait_stream(stream)
         self.graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(self.graph):
-            self._step()
+            self._layers()
 
     def step(self, token: int):
         self.token.fill_(token)
-        if self.graph is not None:
-            self.graph.replay()
-        else:
-            self._step()
+        self._step()
         self.pos.add_(1)
         return self.logits[0]
 
@@ -146,19 +165,22 @@ class YuE2Pipeline:
         self.use_cuda_graphs = True
 
     @torch.no_grad()
-    def generate_codec_tokens(
+    def generate_tokens(
         self,
         prefix_embeds: torch.Tensor,  # [1, L, H]
+        phase: str,
         max_tokens: int,
         seed: int,
-        temperature: float = 1.0,
-        top_p: float = 0.95,
-        top_k: int = 100,
-        repetition_penalty: float = 1.2,
-        penalty_window: int = 50,
-        min_tokens: int = 200,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        repetition_penalty: float,
+        penalty_window: int,
+        min_tokens: int,
         progress: Optional[Callable[[int, int], None]] = None,
+        legacy_off: bool = False,
     ) -> List[int]:
+        """Sample AR tokens after ``prefix_embeds`` until the phase's end token (raw vocab ids)."""
         ar = self.model.ar
         device = prefix_embeds.device
         prefix_len = prefix_embeds.shape[1]
@@ -185,11 +207,13 @@ class YuE2Pipeline:
             logits = ar.prefill_into_cache(prefix_embeds.to(ar.dtype), cache)[0]
         history: List[int] = []
         min_tokens = min(min_tokens, max_tokens)
+        end = ABC_END if phase == "abc" else MUSIC_END
         for step in range(max_tokens):
             token = sample_logits(
-                logits, history, step, temperature, top_p, top_k, repetition_penalty, penalty_window, min_tokens, generator
+                logits, history, step, temperature, top_p, top_k, repetition_penalty, penalty_window, min_tokens, generator,
+                phase=phase, legacy_off=legacy_off,
             )
-            if token == MUSIC_END:
+            if token == end:
                 break
             history.append(token)
             if progress is not None:
@@ -203,7 +227,46 @@ class YuE2Pipeline:
         if graph is None:
             del cache
         del graph
-        return [t - CODEC_OFFSET for t in history]
+        return history
+
+    def generate_codec_tokens(
+        self,
+        prefix_embeds: torch.Tensor,
+        max_tokens: int,
+        seed: int,
+        temperature: float = 1.0,
+        top_p: float = 0.95,
+        top_k: int = 100,
+        repetition_penalty: float = 1.2,
+        penalty_window: int = 50,
+        min_tokens: int = 200,
+        progress: Optional[Callable[[int, int], None]] = None,
+        legacy_off: bool = False,
+    ) -> List[int]:
+        """Music phase (ComfyUI defaults). Returns codec ids without the vocab offset."""
+        ids = self.generate_tokens(
+            prefix_embeds, "semantic", max_tokens, seed, temperature, top_p, top_k, repetition_penalty, penalty_window,
+            min_tokens, progress, legacy_off=legacy_off,
+        )
+        return [t - CODEC_OFFSET for t in ids]
+
+    def generate_abc_tokens(
+        self,
+        prefix_embeds: torch.Tensor,
+        seed: int,
+        max_tokens: int = 8192,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 30,
+        repetition_penalty: float = 1.005,
+        penalty_window: int = 100,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> List[int]:
+        """ABC phase (ComfyUI "Generate ABC" defaults): text ids of the sheet, without ABC_END."""
+        return self.generate_tokens(
+            prefix_embeds, "abc", max_tokens, seed, temperature, top_p, top_k, repetition_penalty, penalty_window,
+            min(32, max_tokens), progress,
+        )
 
     @torch.no_grad()
     def synthesize(

@@ -193,7 +193,7 @@ MODEL_TESTS = {
     },
     "yue2": {
         # untagged test prompt = style only; keep the AR budget short for the smoke run
-        "model": {"name_or_path": "Comfy-Org/YuE2/checkpoints/yue2_3b_bf16.safetensors", "quantize": True, "model_kwargs": {"sample_max_seconds": 15}},
+        "model": {"name_or_path": "Comfy-Org/YuE2/checkpoints/yue2_3b_int8_convrot.safetensors", "quantize": True, "qtype": "convrot8", "model_kwargs": {"sample_max_seconds": 15, "cot": "off"}},
         "sample": {"width": 512, "height": 512, "num_inference_steps": 16, "guidance_scale": 1.0, "seed": 42},
     },
     "f-lite": {

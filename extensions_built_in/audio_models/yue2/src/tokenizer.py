@@ -38,11 +38,26 @@ class YuE2TextTokenizer:
     def decode(self, ids: List[int]) -> str:
         return self.tokenizer.decode(ids, skip_special_tokens=True)
 
+    def prefix_head_ids(self, style: str, lyrics: str, cot: str = "off") -> List[int]:
+        """Prompt up to and including ABC_START (ComfyUI's ``prefix``); the ABC block and
+        ``[ABC_END, MUSIC_START]`` follow (see ``abc_tail_ids``)."""
+        prompt = f"{INSTRUCTIONS[cot]}\n[Tags]\n{style}\n[Lyrics]\n{lyrics}\n"
+        return [EOD] + self.encode(prompt) + [ABC_START]
+
+    @staticmethod
+    def abc_tail_ids(abc_ids: List[int]) -> List[int]:
+        return list(abc_ids) + [ABC_END, MUSIC_START]
+
+    def encode_abc(self, abc: str) -> List[int]:
+        ids = self.encode(abc)
+        if any(not 0 <= t < EOD for t in ids):
+            raise ValueError("ABC ids must stay inside the ordinary text vocabulary")
+        return ids
+
     def prefix_ids(self, style: str, lyrics: str, cot: str = "off", abc: str = "") -> List[int]:
         """Everything the AR expert sees before the first codec token."""
-        prompt = f"{INSTRUCTIONS[cot]}\n[Tags]\n{style}\n[Lyrics]\n{lyrics}\n"
-        abc_ids = [] if cot == "off" else self.encode(abc)
-        return [EOD] + self.encode(prompt) + [ABC_START] + abc_ids + [ABC_END, MUSIC_START]
+        abc_ids = [] if cot == "off" else self.encode_abc(abc)
+        return self.prefix_head_ids(style, lyrics, cot) + self.abc_tail_ids(abc_ids)
 
 
 class TokenizerHead(nn.Module):
@@ -73,6 +88,66 @@ def _rebuild_rotary(model: nn.Module) -> int:
                     setattr(m, attr, val)
             n += 1
     return n
+
+
+SHEETSAGE_REPO = "m-a-p/SheetSage2"
+SHEETSAGE_FILE = "Comfy-Org/YuE2/audio_encoders/sheetsage2_bf16.safetensors"
+# tied to token_embedding.weight (loaded); everything else in the Comfy file maps 1:1 onto upstream
+NONPERSISTENT_OK = {"decoder.embed_tokens.weight"}
+SHEETSAGE_SAMPLE_RATE = 24000
+
+
+class SheetSage2Transcriber:
+    """Audio -> ABC lead sheet with the released SheetSage2 (transformers remote code), the same
+    transcriber ComfyUI ships for cover mode. ``full`` keeps chords, ``melody`` drops them."""
+
+    def __init__(self, weights_path: str, repo: str = SHEETSAGE_REPO):
+        """``weights_path``: the Comfy repack ``audio_encoders/sheetsage2_bf16.safetensors`` (merged
+        weights); ``repo`` supplies config + code (transformers remote code) only."""
+        from .shims import install_shims
+
+        install_shims()  # mir_eval.chord / pretty_midi stand-ins unless the real packages exist
+        import sys
+
+        from safetensors.torch import load_file
+        from transformers import AutoConfig
+        from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+        from .sheetsage_decoder import ScoreDecoder
+
+        cfg = AutoConfig.from_pretrained(repo, trust_remote_code=True)
+        cfg.weights_format = "merged"  # the Comfy file carries the LoRA already folded into the encoder
+        cls = get_class_from_dynamic_module(cfg.auto_map["AutoModel"], repo)
+        sys.modules[cls.__module__].BartDecoder = ScoreDecoder  # upstream targets transformers 4.45's BartDecoder
+        cls.post_init = lambda self: None  # transformers-5 tied-weight bookkeeping rejects upstream's list; weights load explicitly
+        model = cls(cfg)
+        sd = {k: v.to(torch.float32) for k, v in load_file(weights_path).items()}
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        missing = [k for k in missing if k not in NONPERSISTENT_OK]
+        if missing or unexpected:
+            raise ValueError(f"SheetSage2 weights do not match: missing {missing[:5]} unexpected {unexpected[:5]}")
+        model.output_projection.weight = model.token_embedding.weight  # keep the tie after loading
+        self.model = model.eval()
+        self.model.requires_grad_(False)
+        _rebuild_rotary(self.model)
+
+    def to(self, device):
+        self.model.to(device)
+        return self
+
+    @property
+    def device(self):
+        return next(self.model.parameters()).device
+
+    @torch.no_grad()
+    def transcribe(self, waveform: torch.Tensor, sample_rate: int, cot: str = "full") -> str:
+        """waveform [C, samples] -> ABC text (``cot`` "full" or "melody")."""
+        mono = waveform.float().mean(0) if waveform.dim() == 2 else waveform.float()
+        result = self.model.transcribe(mono.cpu(), sampling_rate=sample_rate, melody_only=cot == "melody")
+        abc = result.get("abc") or ""
+        if not abc.strip():
+            raise RuntimeError(f"SheetSage2 produced no ABC: {result.get('abc_error') or 'unknown reason'}")
+        return abc
 
 
 class SemanticTokenizer(nn.Module):

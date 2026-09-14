@@ -192,7 +192,8 @@ class YuE2AR(YuE2Expert):
         self.model.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False)
 
     def embed(self, ids: torch.Tensor):
-        return self.model.embed_tokens(ids.to(self.model.embed_tokens.weight.device))
+        # never touch embed_tokens.weight: the int8 checkpoint's table dequantizes the whole vocab on that property
+        return self.model.embed_tokens(ids.to(self.device))
 
     def prefill(self, inputs_embeds: torch.Tensor, return_hidden: bool = False):
         """Causal pass over [B, L, H]. Returns per-layer post-rope (k, v) as
@@ -355,17 +356,49 @@ class YuE2Model(nn.Module, OstrisModelMixin):
 
     @classmethod
     def load_from_state_dict(cls, sd: dict, dtype=torch.bfloat16):
-        """``sd`` is the Comfy-Org all-in-one checkpoint (raw keys)."""
+        """``sd`` is a Comfy-Org all-in-one checkpoint (raw keys): bf16, or the int8 convrot repack whose
+        ``comfy_quant`` markers attach the shipped quantization directly (no requantization)."""
+        from toolkit.util.comfy_quant_import import Int8Embedding, import_comfy_quantized_layers
+        from toolkit.util.ostris_quant import OstrisLinear
+
         model = cls()
         nar_sd = {k[len("model.diffusion_model.") :]: v for k, v in sd.items() if k.startswith("model.diffusion_model.")}
         ar_sd = {k[len("text_encoders.") :]: v for k, v in sd.items() if k.startswith("text_encoders.") and k != "text_encoders.yue2_tokenizer_json"}
+        prequantized = any(k.endswith(".comfy_quant") for k in sd)
         for name, module, part in (("NAR", model.nar, nar_sd), ("AR", model.ar, ar_sd)):
-            missing, unexpected = module.load_state_dict({k: v.to(dtype) for k, v in part.items()}, strict=False)
+            allowed_missing = set()
+            if prequantized:
+                quantized_paths = {k[: -len(".comfy_quant")] for k in part if k.endswith(".comfy_quant")}
+                part, n = import_comfy_quantized_layers(module, part, orig_dtype=dtype)
+                for mod_name, m in module.named_modules():
+                    if isinstance(m, OstrisLinear):
+                        allowed_missing.add(f"{mod_name}.weight")
+                        if m.bias is not None:
+                            allowed_missing.add(f"{mod_name}.bias")
+                            m.bias.data = m.bias.data.to(dtype)
+                    elif isinstance(m, (Int8Embedding, nn.Embedding)) and mod_name in quantized_paths:
+                        allowed_missing.add(f"{mod_name}.weight")
+            part = {k: (v.to(dtype) if v.is_floating_point() else v) for k, v in part.items()}
+            missing, unexpected = module.load_state_dict(part, strict=False)
+            missing = [k for k in missing if k not in allowed_missing]
             if missing:
                 raise ValueError(f"YuE2 {name} missing keys: {missing[:5]} (+{max(0, len(missing) - 5)})")
             if unexpected:
                 print(f"    YuE2 {name} unexpected: {len(unexpected)} (first 3: {unexpected[:3]})")
-        return model.to(dtype)
+        if not prequantized:
+            return model.to(dtype)
+        # cast the remaining float tensors (norms, embeddings, buffers) without touching the quantized layers
+        for m in model.modules():
+            if isinstance(m, (OstrisLinear, Int8Embedding)):
+                continue
+            for pname, prm in list(m.named_parameters(recurse=False)):
+                if prm.is_floating_point():
+                    prm.data = prm.data.to(dtype)
+            for bname, buf in list(m.named_buffers(recurse=False)):
+                if buf is not None and buf.is_floating_point():
+                    setattr(m, bname, buf.to(dtype))
+        model.aitk_is_quantized = True  # aitk_post_load keeps the shipped convrot8 layers when convrot8 is requested
+        return model
 
 
 @torch.no_grad()
@@ -376,6 +409,8 @@ def merge_nar_lora(model: YuE2Model, ckpt_path: str, scale: float = 1.0):
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     except Exception:
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if getattr(model, "aitk_is_quantized", False):
+        raise ValueError("merge_nar_lora needs the bf16 checkpoint; the int8 convrot repack cannot take merged weights")
     tensors = iter(ck["lora"])
     cfg = model.cfg
     inner = cfg.num_attention_heads * cfg.head_dim

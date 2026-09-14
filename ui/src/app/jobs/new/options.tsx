@@ -1385,7 +1385,7 @@ export const modelArchs: ModelArch[] = [
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': [
-        'Comfy-Org/YuE2/checkpoints/yue2_3b_bf16.safetensors',
+        'Comfy-Org/YuE2/checkpoints/yue2_3b_int8_convrot.safetensors',
         defaultNameOrPath,
       ],
       'config.process[0].model.quantize': [true, false],
@@ -1394,12 +1394,13 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.unload_text_encoder': [false, false],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['sigmoid', 'sigmoid'],
-      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      // the int8 repack ships convrot8 layers; requesting convrot8 keeps them as-is (no requantization)
+      'config.process[0].model.qtype': ['convrot8', 'qfloat8'],
       'config.process[0].sample': [defaultYue2SampleConfig, defaultSampleConfig],
       'config.process[0].datasets[x].cache_latents_to_disk': [true, true],
       // blank captions break lyric following; the AR must always see the prefix
       'config.process[0].datasets[x].caption_dropout_rate': [0, 0.05],
-      'config.process[0].model.model_kwargs': [{ sample_ar_repetition_penalty: 1.2, ar_kl_weight: 0.2 }, {}],
+      'config.process[0].model.model_kwargs': [{ cot: 'full', abc_dropout: 0.5, sample_ar_repetition_penalty: 1.2, ar_kl_weight: 0.2 }, {}],
     },
     // native YuE2 prompt: style text, a [Lyrics] line, the lyrics
     hasMultiLinePrompts: true,
@@ -1448,13 +1449,22 @@ export const modelArchs: ModelArch[] = [
           close.
         </p>
         <p>
+          Training matches Comfy's Generate ABC path (<code>cot: full</code> in model kwargs): at cache time every song is
+          transcribed to an ABC lead sheet with SheetSage2 (the Comfy-Org/YuE2 <code>audio_encoders</code> weights, no
+          extra packages), the sheet is stored with the latents, and the AR learns
+          lyrics to sheet and sheet to tokens. <code>abc_dropout</code> (default 0.5) is the fraction of training steps fed
+          without the sheet as an off-mode prompt, so the same LoRA also works when Comfy's ABC input is empty. <code>cot: melody</code> uses sheets without chords; <code>cot: off</code> skips the sheet, which is what
+          Comfy runs when its ABC input is left empty. Changing the mode requires re-caching the dataset.
+        </p>
+        <p>
           Prompt format: a style line, then <code>[Lyrics]</code>, then the lyrics with bracketed section headers such
           as <code>[Verse 1]</code> and <code>[Chorus]</code>. The Qwen3-Omni captioner has a YuE2 preset that writes
           captions in this layout. Sample length is set by the Duration field in the sample section.
         </p>
       </div>
     ),
-    disableSections: ['network.conv'],
+    // no separate text encoder: the prompt side is the AR expert, covered by the transformer quantization
+    disableSections: ['network.conv', 'model.quantize_te'],
     additionalSections: ['model.low_vram', 'sample.duration'],
   },
   {
