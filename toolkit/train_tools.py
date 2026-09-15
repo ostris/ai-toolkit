@@ -561,7 +561,7 @@ def encode_prompts_flux(
     )
     text_input_ids = text_inputs.input_ids
 
-    prompt_embeds = text_encoder[1](text_input_ids.to(device), output_hidden_states=False)[0]
+    prompt_embeds = text_encoder[1](text_input_ids.to(text_encoder[1].device), output_hidden_states=False)[0]
 
     dtype = text_encoder[1].dtype
     prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
