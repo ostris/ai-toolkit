@@ -2,7 +2,7 @@ torchao==0.10.0
 safetensors
 git+https://github.com/huggingface/diffusers.git@c943837899b16cbae2f619b8dd4f7bb6f07dd81a
 #pip install git+https://github.com/huggingface/diffusers.git@refs/pull/13432/head
-transformers==5.5.3
+transformers>=5.6,<6
 lycoris-lora==1.8.3
 flatten_json
 pyyaml
