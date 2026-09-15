@@ -395,6 +395,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         self.dataset_config.bucket_tolerance = sd.get_bucket_divisibility()
         self.is_video = dataset_config.num_frames > 1 or dataset_config.auto_frame_count
         self.is_audio_model = hasattr(sd, 'is_audio_model') and sd.is_audio_model if sd is not None else False
+        # text-generating multimodal models take audio, image and video files in one dataset
+        self.is_multimodal_llm = getattr(sd, 'is_multimodal_llm', False) if sd is not None else False
         super().__init__()
         folder_path = dataset_config.folder_path
         self.dataset_path = dataset_config.dataset_path
@@ -430,6 +432,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             if self.is_audio_model:
                 # only look for audio files
                 extensions = audio_extensions
+            elif self.is_multimodal_llm:
+                extensions = audio_extensions + image_extensions + (video_extensions if self.is_video else [])
             elif self.is_video:
                 # look for videos and images. Video models can train on both;
                 # images are bucketed separately as single-frame items
@@ -532,7 +536,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 file_item = FileItemDTO(
                     sd=self.sd,
                     path=file,
-                    is_audio_model=self.is_audio_model,
+                    is_audio_model=self.is_audio_model or (self.is_multimodal_llm and file.lower().endswith(tuple(audio_extensions))),
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
@@ -544,7 +548,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
                     temporal_compression=temporal_compression,
-                    sample_rate=self.sd.sample_rate if self.is_audio_model and self.sd is not None else 48000,
+                    sample_rate=self.sd.sample_rate if (self.is_audio_model or self.is_multimodal_llm) and self.sd is not None else 48000,
                 )
                 self.file_list.append(file_item)
             except Exception as e:

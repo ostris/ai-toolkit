@@ -985,6 +985,16 @@ const tagValue = (prompt: string, tag: string) => {
   return m ? m[1].trim() : '';
 };
 
+// text-generating models: the prompt is the instruction, ctrl_img the media; output is a .txt
+export const defaultQwen25OmniSampleConfig: SampleConfig = {
+  ...defaultSampleConfig,
+  width: 512,
+  height: 512,
+  guidance_scale: 1,
+  sample_steps: 1,
+  samples: [{ prompt: 'Describe this in detail.' }, { prompt: 'Describe this in detail.' }],
+};
+
 export const defaultYue2SampleConfig: SampleConfig = {
   ...defaultAudioSampleConfig,
   samples: defaultAudioSampleConfig.samples.map(s => ({

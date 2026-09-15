@@ -3,10 +3,30 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@headlessui/react';
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, OctagonX, Play, Plus, Square, Sparkles, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  OctagonX,
+  Play,
+  Plus,
+  Square,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
-import { Checkbox, CreatableSelectInput, NumberInput, SelectInput, SliderInput, TextAreaInput, TextInput } from '@/components/formInputs';
+import {
+  Checkbox,
+  CreatableSelectInput,
+  NumberInput,
+  SelectInput,
+  SliderInput,
+  TextAreaInput,
+  TextInput,
+} from '@/components/formInputs';
 import { apiClient } from '@/utils/api';
 import { startJob, stopJob } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
@@ -19,7 +39,6 @@ import { isMac } from '@/helpers/basic';
 import { modelArchs, getGenerateDefaults, GenerateDefaults } from '@/app/jobs/new/options';
 import GenerateFooter from '@/components/generate/GenerateFooter';
 import LoraBrowserModal, { LoraPick } from '@/components/generate/LoraBrowserModal';
-
 
 interface EngineStatus {
   running: boolean;
@@ -90,7 +109,11 @@ function Card({
 }) {
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800">
-      <button type="button" onClick={onToggle} className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-gray-200 font-semibold">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-gray-200 font-semibold"
+      >
         <span className="flex items-baseline gap-2 min-w-0">
           <span>{title}</span>
           {subtitle && <span className="text-[11px] font-normal text-gray-500 truncate">{subtitle}</span>}
@@ -124,7 +147,11 @@ function GeneratePageInner() {
     return () => clearInterval(t);
   }, []);
   const engineJobId = preferredJob || engineStatus?.engine?.jobId || null;
-  const proxy = useCallback((path: string) => `/api/inference/${path}${engineJobId ? `${path.includes('?') ? '&' : '?'}job=${engineJobId}` : ''}`, [engineJobId]);
+  const proxy = useCallback(
+    (path: string) =>
+      `/api/inference/${path}${engineJobId ? `${path.includes('?') ? '&' : '?'}job=${engineJobId}` : ''}`,
+    [engineJobId],
+  );
 
   usePollLoop(
     () =>
@@ -139,7 +166,10 @@ function GeneratePageInner() {
               setStartingJobId(null);
             } else if (!mine) {
               // no longer queued/running: the launch failed (or was stopped)
-              const job = await apiClient.get('/api/jobs', { params: { id: startingJobId } }).then(r => r.data).catch(() => null);
+              const job = await apiClient
+                .get('/api/jobs', { params: { id: startingJobId } })
+                .then(r => r.data)
+                .catch(() => null);
               if (!job || ['error', 'stopped', 'completed'].includes(job.status)) {
                 setStartingJobId(null);
                 alert(`The engine did not start${job?.info ? `: ${job.info}` : ''}. Check the job log in the Queue.`);
@@ -172,7 +202,9 @@ function GeneratePageInner() {
     try {
       const gpu = isMac() ? 'mps' : gpuId;
       const name = `inference_engine_gpu${gpu}`;
-      const existing = await apiClient.get('/api/jobs', { params: { job_type: 'inference' } }).then(r => r.data.jobs || []);
+      const existing = await apiClient
+        .get('/api/jobs', { params: { job_type: 'inference' } })
+        .then(r => r.data.jobs || []);
       const match = existing.find((j: any) => j.name === name);
       const res = await apiClient.post('/api/jobs', {
         id: match ? match.id : null,
@@ -206,7 +238,10 @@ function GeneratePageInner() {
       let alive = true;
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 750));
-        const st = await apiClient.get(`/api/inference/status?job=${id}`).then(r => r.data).catch(() => null);
+        const st = await apiClient
+          .get(`/api/inference/status?job=${id}`)
+          .then(r => r.data)
+          .catch(() => null);
         alive = !!st?.engines?.some((e: any) => e.jobId === id && (e.ready || e.status === 'stopping'));
         if (!alive) break;
       }
@@ -222,7 +257,8 @@ function GeneratePageInner() {
 
   // a row that is stopped but whose process is still alive shows as 'stopping' from the status route
   const isStopping = !!stoppingJobId || engineStatus?.engine?.status === 'stopping';
-  const isStarting = !isStopping && (engineBusy || !!startingJobId || (!!engineStatus?.engine && !engineStatus.running));
+  const isStarting =
+    !isStopping && (engineBusy || !!startingJobId || (!!engineStatus?.engine && !engineStatus.running));
   const stoppingForMs = stoppingSince ? now - stoppingSince : isStopping ? 999_999 : 0;
   // cancel a start that is not getting anywhere: a queued job (no process)
   // is just marked stopped; a launched one gets the normal stop
@@ -259,12 +295,18 @@ function GeneratePageInner() {
   };
 
   // ---- models: the same arch list the training UI uses (jobs/new/options.tsx) ----
-  const archs: GenerateDefaults[] = useMemo(() => modelArchs.map(getGenerateDefaults), []);
+  // text-generating archs have no Generate page path yet
+  const archs: GenerateDefaults[] = useMemo(
+    () => modelArchs.filter(a => a.group !== 'llm').map(getGenerateDefaults),
+    [],
+  );
   const ready = !!engineStatus?.running;
 
   const [arch, setArch] = useState<string>(persisted.arch || 'zimage');
   const [model, setModel] = useState<{ [key: string]: any }>(persisted.model || {});
-  const [sample, setSample] = useState<{ [key: string]: any }>(persisted.sample || { prompt: '', negative_prompt: '', seed: -1 });
+  const [sample, setSample] = useState<{ [key: string]: any }>(
+    persisted.sample || { prompt: '', negative_prompt: '', seed: -1 },
+  );
   const entry = useMemo(() => archs.find(a => a.arch === arch) || null, [archs, arch]);
 
   const applyArch = (name: string) => {
@@ -272,7 +314,14 @@ function GeneratePageInner() {
     const e = archs.find(a => a.arch === name);
     if (!e) return;
     setModel({ ...e.model });
-    setSample(s => ({ ...s, ...e.sample, prompt: s.prompt, negative_prompt: s.negative_prompt, seed: s.seed ?? -1, ctrl_img: undefined }));
+    setSample(s => ({
+      ...s,
+      ...e.sample,
+      prompt: s.prompt,
+      negative_prompt: s.negative_prompt,
+      seed: s.seed ?? -1,
+      ctrl_img: undefined,
+    }));
   };
   useEffect(() => {
     if (archs.length && !Object.keys(model).length) applyArch(archs.some(a => a.arch === arch) ? arch : archs[0].arch);
@@ -652,7 +701,9 @@ function GeneratePageInner() {
         : engineStatus?.engine
           ? `Engine ${engineStatus.engine.status}`
           : 'Engine off';
-  const vram = health?.vram ? `${(health.vram.used / 1e9).toFixed(1)} / ${(health.vram.total / 1e9).toFixed(0)} GB` : null;
+  const vram = health?.vram
+    ? `${(health.vram.used / 1e9).toFixed(1)} / ${(health.vram.total / 1e9).toFixed(0)} GB`
+    : null;
   const pool = health?.pool;
 
   return (
@@ -666,11 +717,18 @@ function GeneratePageInner() {
         <div className="flex items-center gap-2 text-xs sm:text-sm">
           {isStopping ? (
             <>
-              <Button disabled className="px-2 py-1 rounded-md bg-red-900 text-white/70 flex items-center gap-1 cursor-wait">
+              <Button
+                disabled
+                className="px-2 py-1 rounded-md bg-red-900 text-white/70 flex items-center gap-1 cursor-wait"
+              >
                 <Loader2 className="w-4 h-4 animate-spin" /> Stopping engine…
               </Button>
               {stoppingForMs > 8000 && (
-                <Button onClick={forceStop} className="px-2 py-1 rounded-md bg-red-700 hover:bg-red-600 text-white flex items-center gap-1" title="Kill the engine process">
+                <Button
+                  onClick={forceStop}
+                  className="px-2 py-1 rounded-md bg-red-700 hover:bg-red-600 text-white flex items-center gap-1"
+                  title="Kill the engine process"
+                >
                   <OctagonX className="w-4 h-4" /> Force stop
                 </Button>
               )}
@@ -680,7 +738,11 @@ function GeneratePageInner() {
               <span className="text-green-400">Engine running</span>
               {health?.active?.arch && <span className="text-gray-400 hidden sm:inline">· {health.active.arch}</span>}
               {vram && <span className="text-gray-400 hidden md:inline">· VRAM {vram}</span>}
-              <Button onClick={stopEngine} disabled={engineBusy} className="ml-2 px-2 py-1 rounded-md bg-red-700 hover:bg-red-600 disabled:opacity-60 text-white flex items-center gap-1">
+              <Button
+                onClick={stopEngine}
+                disabled={engineBusy}
+                className="ml-2 px-2 py-1 rounded-md bg-red-700 hover:bg-red-600 disabled:opacity-60 text-white flex items-center gap-1"
+              >
                 {engineBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />} Stop
               </Button>
             </>
@@ -702,15 +764,28 @@ function GeneratePageInner() {
               </p>
               {isStarting ? (
                 <div className="flex flex-col gap-2">
-                  <Button disabled className="w-full px-3 py-2 rounded-md bg-blue-900 text-white/70 flex items-center justify-center gap-2 cursor-wait">
+                  <Button
+                    disabled
+                    className="w-full px-3 py-2 rounded-md bg-blue-900 text-white/70 flex items-center justify-center gap-2 cursor-wait"
+                  >
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {engineStatus?.engine?.status === 'running' ? 'Engine loading…' : engineStatus?.engine ? `Engine ${engineStatus.engine.status}…` : 'Starting engine…'}
+                    {engineStatus?.engine?.status === 'running'
+                      ? 'Engine loading…'
+                      : engineStatus?.engine
+                        ? `Engine ${engineStatus.engine.status}…`
+                        : 'Starting engine…'}
                   </Button>
                   {engineStatus?.engine?.status === 'queued' && (
-                    <div className="text-[11px] text-gray-500">Waiting for the GPU queue to pick the job up. If the queue is stopped, start it from the Queue page or cancel here.</div>
+                    <div className="text-[11px] text-gray-500">
+                      Waiting for the GPU queue to pick the job up. If the queue is stopped, start it from the Queue
+                      page or cancel here.
+                    </div>
                   )}
                   {startingSince !== null && now - startingSince > 5000 && (
-                    <Button onClick={cancelStart} className="w-full px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm">
+                    <Button
+                      onClick={cancelStart}
+                      className="w-full px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm"
+                    >
                       Cancel
                     </Button>
                   )}
@@ -718,7 +793,11 @@ function GeneratePageInner() {
               ) : (
                 <div className="flex flex-col gap-3">
                   {!isMac() && (
-                    <select value={gpuId} onChange={e => setGpuId(e.target.value)} className="w-full bg-gray-800 text-gray-200 rounded-md px-3 py-2 border border-gray-700">
+                    <select
+                      value={gpuId}
+                      onChange={e => setGpuId(e.target.value)}
+                      className="w-full bg-gray-800 text-gray-200 rounded-md px-3 py-2 border border-gray-700"
+                    >
                       {gpuList.map(g => (
                         <option key={g.index} value={`${g.index}`}>
                           GPU #{g.index} {g.name}
@@ -726,7 +805,10 @@ function GeneratePageInner() {
                       ))}
                     </select>
                   )}
-                  <Button onClick={startEngine} className="w-full px-3 py-2 rounded-md bg-blue-700 hover:bg-blue-600 text-white flex items-center justify-center gap-2">
+                  <Button
+                    onClick={startEngine}
+                    className="w-full px-3 py-2 rounded-md bg-blue-700 hover:bg-blue-600 text-white flex items-center justify-center gap-2"
+                  >
                     <Play className="w-4 h-4" /> Start engine
                   </Button>
                 </div>
@@ -756,7 +838,10 @@ function GeneratePageInner() {
                 ) : null}
                 <div className="flex-1" />
                 {running && (
-                  <Button onClick={cancel} className="px-2 py-0.5 rounded bg-gray-800/80 hover:bg-gray-700 text-gray-200 text-xs">
+                  <Button
+                    onClick={cancel}
+                    className="px-2 py-0.5 rounded bg-gray-800/80 hover:bg-gray-700 text-gray-200 text-xs"
+                  >
                     Cancel
                   </Button>
                 )}
@@ -766,7 +851,10 @@ function GeneratePageInner() {
                       Engine busy: {health.current.arch}
                       {health.current.total_steps ? ` ${health.current.step}/${health.current.total_steps}` : ''}
                     </span>
-                    <Button onClick={cancelBusy} className="px-2 py-0.5 rounded bg-gray-800/80 hover:bg-gray-700 text-gray-200 text-xs">
+                    <Button
+                      onClick={cancelBusy}
+                      className="px-2 py-0.5 rounded bg-gray-800/80 hover:bg-gray-700 text-gray-200 text-xs"
+                    >
                       Cancel
                     </Button>
                   </>
@@ -774,10 +862,17 @@ function GeneratePageInner() {
               </div>
               {progress?.total ? (
                 <div className="absolute top-0 left-0 right-0 h-0.5 bg-gray-800 z-10">
-                  <div className="h-0.5 bg-blue-500 transition-all" style={{ width: `${Math.min(100, (progress.step / progress.total) * 100)}%` }} />
+                  <div
+                    className="h-0.5 bg-blue-500 transition-all"
+                    style={{ width: `${Math.min(100, (progress.step / progress.total) * 100)}%` }}
+                  />
                 </div>
               ) : null}
-              {error && <div className="absolute bottom-3 left-3 right-3 z-10 text-rose-300 text-sm bg-rose-950/70 rounded px-3 py-2 whitespace-pre-wrap">{error}</div>}
+              {error && (
+                <div className="absolute bottom-3 left-3 right-3 z-10 text-rose-300 text-sm bg-rose-950/70 rounded px-3 py-2 whitespace-pre-wrap">
+                  {error}
+                </div>
+              )}
 
               {/* live latent preview: shown while generating (or when nothing is selected) */}
               <div className={`absolute inset-3 flex items-center justify-center ${showPreview ? '' : 'hidden'}`}>
@@ -791,7 +886,14 @@ function GeneratePageInner() {
               {!showPreview && selected && (
                 <div className="absolute inset-3 flex items-center justify-center">
                   {selected.kind === 'video' ? (
-                    <video key={selected.path} src={resultUrl(selected)} controls autoPlay loop className="max-w-full max-h-full rounded" />
+                    <video
+                      key={selected.path}
+                      src={resultUrl(selected)}
+                      controls
+                      autoPlay
+                      loop
+                      className="max-w-full max-h-full rounded"
+                    />
                   ) : selected.kind === 'audio' ? (
                     <div className="w-full max-w-xl bg-gray-900 rounded-xl p-6 text-center">
                       <div className="text-gray-300 text-sm mb-4 truncate" title={selected.prompt}>
@@ -800,9 +902,19 @@ function GeneratePageInner() {
                       <audio key={selected.path} src={resultUrl(selected)} controls autoPlay className="w-full" />
                     </div>
                   ) : (
-                    <a href={resultUrl(selected)} target="_blank" rel="noreferrer" className="w-full h-full flex items-center justify-center">
+                    <a
+                      href={resultUrl(selected)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full h-full flex items-center justify-center"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img key={selected.path} src={resultUrl(selected)} alt={selected.prompt} className="max-w-full max-h-full rounded object-contain" />
+                      <img
+                        key={selected.path}
+                        src={resultUrl(selected)}
+                        alt={selected.prompt}
+                        className="max-w-full max-h-full rounded object-contain"
+                      />
                     </a>
                   )}
                 </div>
@@ -901,20 +1013,40 @@ function GeneratePageInner() {
             >
               {sidebarOpen ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
             </button>
-            <div className={`h-full flex flex-col border-l border-gray-800 bg-gray-900/60 ${sidebarOpen ? '' : 'hidden'}`}>
+            <div
+              className={`h-full flex flex-col border-l border-gray-800 bg-gray-900/60 ${sidebarOpen ? '' : 'hidden'}`}
+            >
               <div className="compact-form flex-1 min-h-0 overflow-y-auto p-2 space-y-2">
-
-                <Card title="Model" subtitle={entry?.label || arch} open={cardOpen('model')} onToggle={() => toggleCard('model')}>
-                  <SelectInput label="Architecture" value={arch} onChange={v => applyArch(v as string)} options={archOptions} disabled={!ready} />
+                <Card
+                  title="Model"
+                  subtitle={entry?.label || arch}
+                  open={cardOpen('model')}
+                  onToggle={() => toggleCard('model')}
+                >
+                  <SelectInput
+                    label="Architecture"
+                    value={arch}
+                    onChange={v => applyArch(v as string)}
+                    options={archOptions}
+                    disabled={!ready}
+                  />
                   <CreatableSelectInput
                     label="Name or Path"
                     value={model.name_or_path || ''}
                     onChange={(v: string | null) => setModel(m => ({ ...m, name_or_path: v || '' }))}
-                    options={entry?.model?.name_or_path ? [{ value: entry.model.name_or_path, label: entry.model.name_or_path }] : []}
+                    options={
+                      entry?.model?.name_or_path
+                        ? [{ value: entry.model.name_or_path, label: entry.model.name_or_path }]
+                        : []
+                    }
                     placeholder="hub repo, local folder, or .safetensors"
                   />
                   {'extras_name_or_path' in (entry?.model || {}) && (
-                    <TextInput label="Extras Name or Path" value={model.extras_name_or_path || ''} onChange={v => setModel(m => ({ ...m, extras_name_or_path: v }))} />
+                    <TextInput
+                      label="Extras Name or Path"
+                      value={model.extras_name_or_path || ''}
+                      onChange={v => setModel(m => ({ ...m, extras_name_or_path: v }))}
+                    />
                   )}
                   <div className="grid grid-cols-2 gap-2">
                     <SelectInput
@@ -931,8 +1063,16 @@ function GeneratePageInner() {
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2 mt-2">
-                    <Checkbox label="Low VRAM" checked={!!model.low_vram} onChange={v => setModel(m => ({ ...m, low_vram: v }))} />
-                    <Checkbox label="Layer offloading" checked={!!model.layer_offloading} onChange={v => setModel(m => ({ ...m, layer_offloading: v }))} />
+                    <Checkbox
+                      label="Low VRAM"
+                      checked={!!model.low_vram}
+                      onChange={v => setModel(m => ({ ...m, low_vram: v }))}
+                    />
+                    <Checkbox
+                      label="Layer offloading"
+                      checked={!!model.layer_offloading}
+                      onChange={v => setModel(m => ({ ...m, layer_offloading: v }))}
+                    />
                   </div>
                   {model.layer_offloading && (
                     <div className="mt-2 space-y-1">
@@ -955,11 +1095,19 @@ function GeneratePageInner() {
                     </div>
                   )}
                 </Card>
-    
-                <Card title="LoRAs" subtitle={loras.length ? `${activeLoras.length}/${loras.length} active` : 'none'} open={cardOpen('loras')} onToggle={() => toggleCard('loras')}>
+
+                <Card
+                  title="LoRAs"
+                  subtitle={loras.length ? `${activeLoras.length}/${loras.length} active` : 'none'}
+                  open={cardOpen('loras')}
+                  onToggle={() => toggleCard('loras')}
+                >
                   <div className="space-y-2">
                     {loras.map((l, i) => (
-                      <div key={l.path} className={`bg-gray-950/60 border border-gray-800 rounded-md px-2 py-1.5 ${l.disabled ? 'opacity-50' : ''}`}>
+                      <div
+                        key={l.path}
+                        className={`bg-gray-950/60 border border-gray-800 rounded-md px-2 py-1.5 ${l.disabled ? 'opacity-50' : ''}`}
+                      >
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -977,7 +1125,10 @@ function GeneratePageInner() {
                               className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${l.disabled ? '' : 'translate-x-3'}`}
                             />
                           </button>
-                          <span className={`text-xs truncate flex-1 ${l.disabled ? 'text-gray-500 line-through' : 'text-gray-200'}`} title={l.path}>
+                          <span
+                            className={`text-xs truncate flex-1 ${l.disabled ? 'text-gray-500 line-through' : 'text-gray-200'}`}
+                            title={l.path}
+                          >
                             {l.name}
                           </span>
                           <input
@@ -1022,13 +1173,15 @@ function GeneratePageInner() {
                         description: (
                           <>
                             <p>
-                              <strong>Off</strong> (default): each LoRA is applied dynamically as an extra term on the layers it targets. Strength
-                              changes take effect on the next generation and adding or removing a LoRA never reloads the model.
+                              <strong>Off</strong> (default): each LoRA is applied dynamically as an extra term on the
+                              layers it targets. Strength changes take effect on the next generation and adding or
+                              removing a LoRA never reloads the model.
                             </p>
                             <p className="mt-2">
-                              <strong>On</strong>: the LoRA deltas are added into the model weights. Quantized weights are dequantized, merged, and
-                              re-quantized with stochastic rounding so small deltas are not rounded away. Merged weights cannot be un-merged, so
-                              changing the LoRA set or strengths reloads the affected components. Slightly faster per step than the dynamic path.
+                              <strong>On</strong>: the LoRA deltas are added into the model weights. Quantized weights
+                              are dequantized, merged, and re-quantized with stochastic rounding so small deltas are not
+                              rounded away. Merged weights cannot be un-merged, so changing the LoRA set or strengths
+                              reloads the affected components. Slightly faster per step than the dynamic path.
                             </p>
                           </>
                         ),
@@ -1041,40 +1194,125 @@ function GeneratePageInner() {
                     // tagged prompt archs (audio): one field per tag, stored as the tagged prompt string
                     Object.entries(entry.sampleTags).map(([tagKey, tag]) => {
                       const tags = tagsToObj(sample.prompt || '');
-                      const setTag = (v: any) => setSample(s => ({ ...s, prompt: objToTags({ ...tagsToObj(s.prompt || ''), [tagKey]: v }) }));
+                      const setTag = (v: any) =>
+                        setSample(s => ({ ...s, prompt: objToTags({ ...tagsToObj(s.prompt || ''), [tagKey]: v }) }));
                       const value = tags[tagKey] ?? '';
-                      if (tag.type === 'multiline') return <TextAreaInput key={tagKey} label={tag.title} value={value} onChange={setTag} placeholder={`Enter ${tag.title.toLowerCase()}`} />;
-                      if (tag.type === 'number') return <NumberInput key={tagKey} label={tag.title} value={value} onChange={setTag} placeholder={`Enter ${tag.title.toLowerCase()}`} />;
-                      return <TextInput key={tagKey} label={tag.title} value={value} onChange={setTag} placeholder={`Enter ${tag.title.toLowerCase()}`} />;
+                      if (tag.type === 'multiline')
+                        return (
+                          <TextAreaInput
+                            key={tagKey}
+                            label={tag.title}
+                            value={value}
+                            onChange={setTag}
+                            placeholder={`Enter ${tag.title.toLowerCase()}`}
+                          />
+                        );
+                      if (tag.type === 'number')
+                        return (
+                          <NumberInput
+                            key={tagKey}
+                            label={tag.title}
+                            value={value}
+                            onChange={setTag}
+                            placeholder={`Enter ${tag.title.toLowerCase()}`}
+                          />
+                        );
+                      return (
+                        <TextInput
+                          key={tagKey}
+                          label={tag.title}
+                          value={value}
+                          onChange={setTag}
+                          placeholder={`Enter ${tag.title.toLowerCase()}`}
+                        />
+                      );
                     })
                   ) : (
-                    <TextAreaInput label="Prompt" value={sample.prompt || ''} onChange={v => setSample(s => ({ ...s, prompt: v }))} placeholder={modality === 'audio' ? 'song description, lyrics, bpm…' : 'describe what to generate'} />
+                    <TextAreaInput
+                      label="Prompt"
+                      value={sample.prompt || ''}
+                      onChange={v => setSample(s => ({ ...s, prompt: v }))}
+                      placeholder={
+                        modality === 'audio' ? 'song description, lyrics, bpm…' : 'describe what to generate'
+                      }
+                    />
                   )}
                   {(sample.guidance_scale ?? 4) > 1 && modality !== 'audio' && (
-                    <TextAreaInput label="Negative prompt" value={sample.negative_prompt || ''} onChange={v => setSample(s => ({ ...s, negative_prompt: v }))} />
+                    <TextAreaInput
+                      label="Negative prompt"
+                      value={sample.negative_prompt || ''}
+                      onChange={v => setSample(s => ({ ...s, negative_prompt: v }))}
+                    />
                   )}
                   <div className="grid grid-cols-3 gap-2">
                     {modality !== 'audio' && (
                       <>
-                        <NumberInput label="Width" value={sample.width ?? 1024} onChange={v => setSample(s => ({ ...s, width: v }))} min={64} max={4096} />
-                        <NumberInput label="Height" value={sample.height ?? 1024} onChange={v => setSample(s => ({ ...s, height: v }))} min={64} max={4096} />
+                        <NumberInput
+                          label="Width"
+                          value={sample.width ?? 1024}
+                          onChange={v => setSample(s => ({ ...s, width: v }))}
+                          min={64}
+                          max={4096}
+                        />
+                        <NumberInput
+                          label="Height"
+                          value={sample.height ?? 1024}
+                          onChange={v => setSample(s => ({ ...s, height: v }))}
+                          min={64}
+                          max={4096}
+                        />
                       </>
                     )}
-                    <NumberInput label="Steps" value={sample.num_inference_steps ?? 25} onChange={v => setSample(s => ({ ...s, num_inference_steps: v }))} min={1} max={200} />
-                    <NumberInput label="Guidance" value={sample.guidance_scale ?? 4} onChange={v => setSample(s => ({ ...s, guidance_scale: v }))} min={1} max={30} />
-                    <NumberInput label="Seed (-1 random)" value={sample.seed ?? -1} onChange={v => setSample(s => ({ ...s, seed: v }))} min={-1} max={4294967295} />
+                    <NumberInput
+                      label="Steps"
+                      value={sample.num_inference_steps ?? 25}
+                      onChange={v => setSample(s => ({ ...s, num_inference_steps: v }))}
+                      min={1}
+                      max={200}
+                    />
+                    <NumberInput
+                      label="Guidance"
+                      value={sample.guidance_scale ?? 4}
+                      onChange={v => setSample(s => ({ ...s, guidance_scale: v }))}
+                      min={1}
+                      max={30}
+                    />
+                    <NumberInput
+                      label="Seed (-1 random)"
+                      value={sample.seed ?? -1}
+                      onChange={v => setSample(s => ({ ...s, seed: v }))}
+                      min={-1}
+                      max={4294967295}
+                    />
                     {modality === 'audio' && sample.duration !== undefined && (
-                      <NumberInput label="Duration (s)" value={sample.duration} onChange={v => setSample(s => ({ ...s, duration: v }))} min={1} max={600} />
+                      <NumberInput
+                        label="Duration (s)"
+                        value={sample.duration}
+                        onChange={v => setSample(s => ({ ...s, duration: v }))}
+                        min={1}
+                        max={600}
+                      />
                     )}
                     {modality === 'video' && (
                       <>
-                        <NumberInput label="Frames" value={sample.num_frames ?? 33} onChange={v => setSample(s => ({ ...s, num_frames: v }))} min={1} max={1000} />
-                        <NumberInput label="FPS" value={sample.fps ?? 16} onChange={v => setSample(s => ({ ...s, fps: v }))} min={1} max={60} />
+                        <NumberInput
+                          label="Frames"
+                          value={sample.num_frames ?? 33}
+                          onChange={v => setSample(s => ({ ...s, num_frames: v }))}
+                          min={1}
+                          max={1000}
+                        />
+                        <NumberInput
+                          label="FPS"
+                          value={sample.fps ?? 16}
+                          onChange={v => setSample(s => ({ ...s, fps: v }))}
+                          min={1}
+                          max={60}
+                        />
                       </>
                     )}
                   </div>
                 </Card>
-    
               </div>
               {/* always-visible action bar */}
               <div className="shrink-0 p-2 border-t border-gray-800 bg-gray-900 flex gap-2">
@@ -1096,7 +1334,12 @@ function GeneratePageInner() {
           </div>
         </div>
       </MainContent>
-      <GenerateFooter jobId={engineJobId} status={footerStatus} busy={running || isStarting} progress={running ? progress : null} />
+      <GenerateFooter
+        jobId={engineJobId}
+        status={footerStatus}
+        busy={running || isStarting}
+        progress={running ? progress : null}
+      />
       <LoraBrowserModal isOpen={loraModalOpen} onClose={() => setLoraModalOpen(false)} onPick={addLora} />
     </>
   );

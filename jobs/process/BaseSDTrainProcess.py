@@ -747,7 +747,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.accelerator.even_batches=False
         
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
-        self.sd.vae = self.accelerator.prepare(self.sd.vae)
+        if self.sd.vae is not None:
+            self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
             self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
@@ -1099,7 +1100,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_reg = any(batch.get_is_reg_list())
                 if batch.tensor is not None:
                     imgs = batch.tensor
-                    imgs = imgs.to(self.device_torch, dtype=dtype)
+                    # waveforms stay fp32 into the audio encoder
+                    imgs = imgs.to(self.device_torch, dtype=torch.float32 if getattr(self.sd, 'is_audio_model', False) else dtype)
                     # dont adjust for regs.
                     if self.train_config.img_multiplier is not None and not is_reg:
                         # do it ad contrast
@@ -1792,7 +1794,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         noise_scheduler = self.sd.noise_scheduler
 
         if self.train_config.xformers:
-            vae.enable_xformers_memory_efficient_attention()
+            if vae is not None:
+                vae.enable_xformers_memory_efficient_attention()
             unet.enable_xformers_memory_efficient_attention()
             if isinstance(text_encoder, list):
                 for te in text_encoder:
@@ -1868,15 +1871,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for te in text_encoder:
                 te.requires_grad_(False)
                 te.eval()
-        else:
+        elif text_encoder is not None:
             text_encoder.requires_grad_(False)
             text_encoder.eval()
         unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
-        vae = vae.to(torch.device('cpu'), dtype=dtype)
-        vae.requires_grad_(False)
-        vae.eval()
+        if vae is not None:
+            vae = vae.to(torch.device('cpu'), dtype=dtype)
+            vae.requires_grad_(False)
+            vae.eval()
         if self.train_config.learnable_snr_gos:
             self.snr_gos = LearnableSNRGamma(
                 self.sd.noise_scheduler, device=self.device_torch

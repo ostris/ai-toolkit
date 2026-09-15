@@ -1325,7 +1325,11 @@ class GenerateImageConfig:
         # make parent dirs
         os.makedirs(self.output_folder, exist_ok=True)
         self.set_gen_time()
-        if isinstance(image, list):
+        if isinstance(image, str):
+            # text-generating models: the sample is the text itself
+            with open(self.get_prompt_path(count, max_count), 'w', encoding='utf-8') as f:
+                f.write(image)
+        elif isinstance(image, list):
             # video
             if self.num_frames == 1:
                 raise ValueError(f"Expected 1 img but got a list {len(image)}")
@@ -1481,7 +1485,7 @@ class GenerateImageConfig:
         pass
     
     def log_image(self, image, count: int = 0, max_count=0):
-        if self.logger is None:
+        if self.logger is None or isinstance(image, str):
             return
 
         self.logger.log_image(image, count, self.prompt)

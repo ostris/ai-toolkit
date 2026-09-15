@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
+import { isVideo, isAudio, isText, encodeFilePathForUrl } from '@/utils/basic';
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -39,6 +39,28 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
   const isItAudio = isAudio(imageUrl);
   const isItVideo = isVideo(imageUrl);
+  const isItText = isText(imageUrl);
+  const [text, setText] = useState<string | null>(null);
+
+  // text samples: fetch the file body and render it in the card
+  useEffect(() => {
+    if (!isItText || !isVisible) return;
+    const controller = new AbortController();
+    fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}`, { signal: controller.signal })
+      .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(t => {
+        setText(t);
+        setLoaded(true);
+      })
+      .catch(err => {
+        if (err?.name !== 'AbortError') console.error('Sample text fetch failed:', err);
+      });
+    return () => {
+      controller.abort();
+      setText(null);
+      setLoaded(false);
+    };
+  }, [isItText, isVisible, imageUrl]);
 
   // Observe both enter and exit
   useEffect(() => {
@@ -69,7 +91,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   // the element unmounts). A short debounce skips requests entirely during fast
   // scrolls where the card is only briefly visible.
   useEffect(() => {
-    if (isItAudio) return;
+    if (isItAudio || isItText) return;
     if (!isVisible) return;
 
     const controller = new AbortController();
@@ -114,7 +136,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       setLoaded(false);
       setVideoFallback(false);
     };
-  }, [isVisible, isItAudio, isItVideo, imageUrl]);
+  }, [isVisible, isItAudio, isItText, isItVideo, imageUrl]);
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -127,14 +149,23 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
         onClick={onClick}
       >
         <div
-          className={`absolute rounded-t-lg shadow-md bg-gray-900 overflow-hidden transition-all duration-200 ${
+          className={`absolute rounded-t-lg shadow-md bg-gray-900 overflow-hidden transition-all duration-200 [container-type:inline-size] ${
             selected ? 'inset-2' : 'inset-0'
-          } ${
-            isVisible && !isItAudio && !loaded ? 'animate-pulse' : ''
-          }`}
+          } ${isVisible && !isItAudio && !loaded ? 'animate-pulse' : ''}`}
         >
           {isVisible ? (
-            isItAudio ? (
+            isItText ? (
+              // font size scales with the card and the text length: a square of side W holds
+              // ~W^2 / (0.6 f^2) characters at size f, so f ~ 120/sqrt(n) cqw fills the box
+              <div
+                className="w-full h-full overflow-hidden p-[3cqw] leading-snug text-gray-200 whitespace-pre-wrap break-words text-left bg-gray-900"
+                style={{
+                  fontSize: `clamp(2.5cqw, ${(120 / Math.sqrt(Math.max((text ?? '').length, 1))).toFixed(2)}cqw, 12cqw)`,
+                }}
+              >
+                {text ?? ''}
+              </div>
+            ) : isItAudio ? (
               <div className="w-full h-full flex items-center justify-center bg-gray-900">
                 <img
                   src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}

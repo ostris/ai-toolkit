@@ -14,7 +14,7 @@ VID = {"width": 832, "height": 480, "num_inference_steps": 20, "guidance_scale":
 
 GENERIC = {"modality": "image", "model": {}, "sample": dict(IMG)}
 
-# modality: image | video | audio
+# modality: image | video | audio | text
 # needs_control_image: the arch requires ctrl_img (edit / i2v models)
 # size_locked: only the default resolution is valid
 ARCH_REGISTRY: Dict[str, dict] = {
@@ -55,6 +55,7 @@ ARCH_REGISTRY: Dict[str, dict] = {
     "ltx2.3": {"modality": "video", "model": {"name_or_path": "Lightricks/LTX-2.3/ltx-2.3-22b-dev.safetensors", "quantize": True, "quantize_te": True}, "sample": {**VID, "num_inference_steps": 25, "guidance_scale": 3.0, "num_frames": 49, "fps": 24}},
     "ltx2.5": {"modality": "video", "model": {"name_or_path": "Lightricks/LTX-2.5", "quantize": True, "quantize_te": True}, "sample": {**VID, "num_inference_steps": 25, "guidance_scale": 3.0, "num_frames": 49, "fps": 24}},
     "ace_step_15": {"modality": "audio", "model": {"name_or_path": "ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors", "quantize": True, "quantize_te": True}, "sample": {"width": 512, "height": 512, "num_inference_steps": 20, "guidance_scale": 4.0}},
+    "qwen25_omni": {"modality": "text", "model": {"name_or_path": "ostris/qwen2_5_omni/text_encoders/qwen2_5_omni_7b_convrot8.safetensors", "quantize": True, "qtype": "convrot8"}, "sample": {"width": 512, "height": 512, "num_inference_steps": 1, "guidance_scale": 1.0}},
     "yue2": {"modality": "audio", "model": {"name_or_path": "Comfy-Org/YuE2/checkpoints/yue2_3b_int8_convrot.safetensors", "quantize": True, "qtype": "convrot8"}, "sample": {"width": 512, "height": 512, "num_inference_steps": 32, "guidance_scale": 1.0, "duration": 120}},
 }
 
