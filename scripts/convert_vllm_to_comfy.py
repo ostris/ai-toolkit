@@ -120,8 +120,16 @@ class Qwen3OmniHandler(ArchHandler):
         return key[len("thinker.") :]
 
 
+class Qwen25OmniHandler(Qwen3OmniHandler):
+    """Qwen2.5-Omni: same layout as Qwen3-Omni (thinker = text model + visual +
+    audio_tower + lm_head; talker / token2wav dropped). The thinker also
+    carries the speaker dict; only thinker.* tensors are kept."""
+
+
 ARCH_HANDLERS = {
     "Qwen3OmniMoeForConditionalGeneration": Qwen3OmniHandler,
+    "Qwen2_5OmniForConditionalGeneration": Qwen25OmniHandler,
+    "Qwen2_5OmniModel": Qwen25OmniHandler,
 }
 
 

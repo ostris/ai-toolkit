@@ -322,6 +322,7 @@ export interface CaptionProcessConfig {
     max_res?: number;
     max_new_tokens?: number;
     fixed_caption?: string;
+    caption_format?: string;
     caption_extension?: string;
     thinking?: boolean;
     batch_size?: number;

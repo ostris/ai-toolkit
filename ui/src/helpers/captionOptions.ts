@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music' | 'video' | 'image/video/sound';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
 
 export interface CaptionOption {
     name: string;
@@ -92,6 +92,8 @@ export const captionerTypes: CaptionOption[] = [
             'config.process[0].caption.model_name_or_path': ['ACE-Step/acestep-transcriber', defaultNameOrPath],
             'config.process[0].caption.model_name_or_path2': ['ACE-Step/acestep-captioner', undefined],
             'config.process[0].caption.extensions': [extensionsAudio, defaultExtensions],
+            'config.process[0].caption.caption_format': ['ace_step', undefined],
+            'config.process[0].caption.compile': [true, false],
         },
         name_or_path_options: [
             { value: 'ACE-Step/acestep-transcriber', label: 'ACE-Step/acestep-transcriber' },
@@ -102,6 +104,7 @@ export const captionerTypes: CaptionOption[] = [
         additionalSections: [
             'caption.model_name_or_path2',
             'caption.fixed_caption',
+            'caption.caption_format',
         ],
     },
     {
@@ -228,6 +231,12 @@ export const quantizationOptions: SelectOption[] = [
     { value: 'uint4', label: '4 bit' },
     { value: 'uint3', label: '3 bit' },
     { value: 'uint2', label: '2 bit' },
+];
+
+// AceStepCaptioner output layouts (caption.caption_format)
+export const captionFormatOptions: SelectOption[] = [
+    { value: 'ace_step', label: 'ACE-Step (caption, lyrics, bpm, key, time signature, duration)' },
+    { value: 'yue2', label: 'YuE2 (description, then [Lyrics] block)' },
 ];
 
 export const batchSizeOptions: SelectOption[] = [

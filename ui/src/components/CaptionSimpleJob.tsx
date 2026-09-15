@@ -12,6 +12,7 @@ import { CaptionJobConfig } from '@/types';
 import { handleCaptionerTypeChange } from '@/helpers/captionJobConfig';
 import {
   batchSizeOptions,
+  captionFormatOptions,
   captionerTypes,
   defaultQtype,
   groupedCaptionerTypes,
@@ -90,6 +91,16 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
             }}
             placeholder=""
             options={selectedCaptionOption?.name_or_path2_options || []}
+          />
+        </div>
+      )}
+      {additionalSections.includes('caption.caption_format') && (
+        <div className="mt-4">
+          <SelectInput
+            label="Caption Format"
+            value={jobConfig.config.process[0].caption.caption_format || 'ace_step'}
+            onChange={value => setJobConfig(value, 'config.process[0].caption.caption_format')}
+            options={captionFormatOptions}
           />
         </div>
       )}
