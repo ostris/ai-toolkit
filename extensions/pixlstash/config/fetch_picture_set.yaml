@@ -1,0 +1,51 @@
+---
+# PixlStash Dataset Fetch — fetch by picture set
+#
+# This job downloads all images belonging to a picture set in PixlStash and
+# writes them as jpg + txt caption pairs into the AI-Toolkit datasets folder.
+# Once complete the dataset appears automatically in the AI-Toolkit UI.
+#
+# Run with:
+#   python run.py config/pixlstash/fetch_picture_set.yaml
+
+job: extension
+config:
+  name: "pixlstash_fetch"
+  process:
+    - type: "pixlstash_fetch"
+
+      # ---- PixlStash connection ------------------------------------------
+      # URL of your running PixlStash instance
+      pixlstash_url: "http://localhost:9537"
+
+      # Personal API token — create one in PixlStash → Settings → API Tokens
+      pixlstash_token: "paste-your-api-token-here"
+
+      # ---- What to fetch ------------------------------------------------
+      # "picture_set" fetches all pictures that are members of a picture set
+      source_type: "picture_set"
+
+      # Integer ID of the picture set (visible in the PixlStash URL when browsing)
+      source_id: 7
+
+      # ---- Caption options ----------------------------------------------
+      # "description" — Florence-2 natural-language caption (best for FLUX / SD3)
+      # "tags"        — WD14 comma-separated tags (best for SDXL / SD1.5)
+      # "both"        — description first, then tags appended
+      caption_mode: "tags"
+
+      # Optional trigger word prepended to every caption.
+      # Leave blank or remove if you don't want one.
+#      trigger_word: "mystyle"
+
+      # ---- Output -------------------------------------------------------
+      # Subfolder name inside the AI-Toolkit datasets root.
+      # Defaults to the picture set name from PixlStash if not set.
+#      dataset_name: "my_style_lora"
+
+      # Absolute path to the datasets root.
+      # Defaults to <ai-toolkit root>/datasets — the same folder the UI watches.
+#      datasets_root: "/absolute/path/to/datasets"
+
+      # Set to true to re-download images that already exist on disk.
+      overwrite: false
