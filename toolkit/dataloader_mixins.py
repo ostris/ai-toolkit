@@ -807,16 +807,27 @@ class ImageProcessingDTOMixin:
                     if waveform is not None and waveform.numel() > 0:
                         target_samples = round(target_duration * sample_rate)
                         if target_samples > 0 and waveform.shape[-1] != target_samples:
-                            # Time-stretch/shrink to match the video clip duration implied by dataset FPS.
+                            src_len = waveform.shape[-1]
                             if trim_tail_audio:
                                 # never stretch/contract in trim mode. The waveform can only be
                                 # short here (audio/video ended a hair before the target) —
                                 # pad the tail with silence, or cut any rounding overshoot
-                                pad = target_samples - waveform.shape[-1]
+                                pad = target_samples - src_len
                                 if pad > 0:
                                     waveform = F.pad(waveform, (0, pad))
                                 else:
                                     waveform = waveform[..., :target_samples]
+                            elif abs(src_len - target_samples) <= max(1, int(round(0.01 * target_samples))):
+                                # Both stretch paths audibly degrade audio (the phase
+                                # vocoder smears phase, linear interpolation shifts
+                                # pitch and aliases). Within 1% of target, trim/pad
+                                # instead: a <=1% tempo offset is inaudible next to
+                                # either artifact, and clips pre-trimmed to the model's
+                                # frame grid land here and stay bit-exact.
+                                if src_len > target_samples:
+                                    waveform = waveform[..., :target_samples]
+                                else:
+                                    waveform = F.pad(waveform, (0, target_samples - src_len))
                             elif self.dataset_config.audio_preserve_pitch:
                                 waveform = time_stretch_preserve_pitch(waveform, sample_rate, target_samples)  # waveform is [C, L]
                             else:

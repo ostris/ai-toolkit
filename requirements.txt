@@ -1,2 +1,7 @@
 -r requirements_base.txt
 scipy==1.12.0
+git+https://github.com/jaretburkett/easy_dwpose.git
+imageio-ffmpeg
+# Oxen.ai experiment tracking (toolkit/oxen_experiment.py, toolkit/oxen_logger.py)
+oxenai
+pandas
