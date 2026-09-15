@@ -791,8 +791,8 @@ class Qwen3OmniCaptioner(BaseCaptioner):
         self.model._pad_mask_2d = inputs.get("attention_mask", None)
         gen_kwargs = self._gen_kwargs(inputs["input_ids"].shape[1])
         if items[0]["kind"] == "audio":
-            # greedy lyric transcription loops on syllables; mild penalty (the model's own talker default)
-            gen_kwargs["repetition_penalty"] = 1.05
+            # greedy lyric transcription loops on musical phrases; stronger penalty to mitigate
+            gen_kwargs["repetition_penalty"] = 1.20
         generated_ids = self.model.generate(
             **inputs,
             use_audio_in_video=use_audio,
