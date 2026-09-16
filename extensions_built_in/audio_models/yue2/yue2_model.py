@@ -265,6 +265,13 @@ class YuE2AudioModel(BaseAudioModel):
             self.transcriber = SheetSage2Transcriber(resolve_named_file(self.sheetsage_path, component="sheetsage2"))
         return self.transcriber
 
+    def pop_encode_warnings(self) -> List[str]:
+        """Repair notes from the last encode_audio call; the latent cacher prints them with the file path."""
+        if self.transcriber is None:
+            return []
+        warnings, self.transcriber.warnings = self.transcriber.warnings, []
+        return warnings
+
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["model.layers"]
 

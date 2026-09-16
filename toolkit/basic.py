@@ -4,6 +4,11 @@ import os
 import torch
 
 
+class UnusableFileError(Exception):
+    """A model raises this from encode when a dataset file cannot be used (e.g. no sheet could be transcribed);
+    the latent cacher drops the file instead of failing the job."""
+
+
 def value_map(inputs, min_in, max_in, min_out, max_out):
     return (inputs - min_in) * (max_out - min_out) / (max_in - min_in) + min_out
 

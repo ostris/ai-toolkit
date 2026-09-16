@@ -41,6 +41,22 @@ class _Attention(nn.Module):
         b, _, l, _ = out.shape
         return self.out_proj(out.transpose(1, 2).reshape(b, l, -1)), (k, v)
 
+    # static-cache path: explicit casts to the projection dtype (no-ops under autocast with fp32 weights)
+    def kv(self, src):
+        src = src.to(self.k_proj.weight.dtype)
+        return self._split(self.k_proj(src)), self._split(self.v_proj(src))
+
+    def attend(self, x, k, v, mask):
+        q = self._split(self.q_proj(x.to(self.q_proj.weight.dtype))).to(k.dtype)
+        if mask is not None and q.shape[2] == 1:
+            # single-query + mask sends SDPA to the mem-efficient kernel, which tiles over every cached key (~0.3 ms); by hand it is ~20 us
+            scores = torch.matmul(q.float(), k.float().transpose(-1, -2)) * (self.head_dim**-0.5)
+            out = torch.matmul(scores.masked_fill(~mask, float("-inf")).softmax(-1).to(v.dtype), v)
+        else:
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        b, _, l, _ = out.shape
+        return self.out_proj(out.transpose(1, 2).reshape(b, l, -1).to(self.out_proj.weight.dtype))
+
 
 class _Layer(nn.Module):
     def __init__(self, dim: int, heads: int, ffn: int):
@@ -63,6 +79,37 @@ class _Layer(nn.Module):
         x = self.final_layer_norm(x + self.fc2(F.gelu(self.fc1(x))))
         return x, self_kv + cross_kv
 
+    def step_static(self, x, cache, i, write_idx, mask):
+        k, v = self.self_attn.kv(x)
+        cache.k[i].index_copy_(2, write_idx, k.to(cache.k.dtype))
+        cache.v[i].index_copy_(2, write_idx, v.to(cache.v.dtype))
+        x = self.self_attn_layer_norm(x + self.self_attn.attend(x, cache.k[i], cache.v[i], mask))
+        x = self.encoder_attn_layer_norm(x + self.encoder_attn.attend(x, cache.ck[i], cache.cv[i], None))
+        return self.final_layer_norm(x + self.fc2(F.gelu(self.fc1(x.to(self.fc1.weight.dtype)))))
+
+
+class StaticCache:
+    """Preallocated batch-1 KV buffers so a decode step has no growing tensors and can be CUDA-graph replayed.
+    ``pos`` (device tensor) is the number of cached tokens; the captured step reads and bumps it in place."""
+
+    def __init__(self, decoder: "ScoreDecoder", max_len: int, memory_len: int, device, dtype):
+        attn = decoder.layers[0].self_attn
+        n, h, d = len(decoder.layers), attn.heads, attn.head_dim
+        self.max_len = max_len
+        self.k = torch.zeros(n, 1, h, max_len, d, device=device, dtype=dtype)
+        self.v = torch.zeros_like(self.k)
+        self.ck = torch.zeros(n, 1, h, memory_len, d, device=device, dtype=dtype)
+        self.cv = torch.zeros_like(self.ck)
+        self.pos = torch.zeros(1, dtype=torch.long, device=device)
+        self.arange = torch.arange(max_len, device=device)
+
+    def fill_cross(self, decoder: "ScoreDecoder", memory):
+        for i, layer in enumerate(decoder.layers):
+            k, v = layer.encoder_attn.kv(memory)
+            self.ck[i].copy_(k)
+            self.cv[i].copy_(v)
+        self.pos.zero_()
+
 
 class ScoreDecoder(nn.Module):
     """Drop-in for the BartDecoder the upstream model builds: ``ScoreDecoder(bart_config, embed_tokens=...)``."""
@@ -78,6 +125,26 @@ class ScoreDecoder(nn.Module):
 
     def gradient_checkpointing_disable(self):
         pass
+
+    def prefill_static(self, input_ids, cache: StaticCache):
+        """[1, P] into an empty cache; returns hidden [1, P, dim]."""
+        p = input_ids.shape[1]
+        idx = torch.arange(p, device=input_ids.device)
+        x = self.layernorm_embedding(self.embed_tokens(input_ids) + self.embed_positions(idx + POSITION_OFFSET)[None])
+        mask = (cache.arange[None, :] <= idx[:, None])[None, None]
+        for i, layer in enumerate(self.layers):
+            x = layer.step_static(x, cache, i, idx, mask)
+        cache.pos.fill_(p)
+        return x
+
+    def step_static(self, input_ids, cache: StaticCache):
+        """[1, 1] at position ``cache.pos``; graph-capturable (no host reads)."""
+        x = self.layernorm_embedding(self.embed_tokens(input_ids) + self.embed_positions(cache.pos + POSITION_OFFSET)[None])
+        mask = (cache.arange <= cache.pos)[None, None, None, :]
+        for i, layer in enumerate(self.layers):
+            x = layer.step_static(x, cache, i, cache.pos, mask)
+        cache.pos += 1
+        return x
 
     def forward(self, input_ids, attention_mask=None, encoder_hidden_states=None, encoder_attention_mask=None,
                 past_key_values=None, use_cache=False, output_hidden_states=False, return_dict=True, **_):

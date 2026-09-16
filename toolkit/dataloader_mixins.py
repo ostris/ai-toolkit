@@ -19,7 +19,7 @@ from tqdm import tqdm
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, SiglipImageProcessor
 
 from toolkit.audio.preserve_pitch import time_stretch_preserve_pitch
-from toolkit.basic import flush, value_map
+from toolkit.basic import UnusableFileError, flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
 from toolkit.config_modules import ControlTypes
 from toolkit.control_generator import ControlGenerator
@@ -2005,7 +2005,16 @@ class LatentCachingMixin:
                     if needs_encode and not did_move:
                         self.sd.set_device_state_preset('cache_latents')
                         did_move = True
-                    self._cache_one_latent(file_item, latent_path, cached_state_dict, needs_encode, to_disk, to_memory)
+                    try:
+                        self._cache_one_latent(file_item, latent_path, cached_state_dict, needs_encode, to_disk, to_memory)
+                    except UnusableFileError as e:
+                        pbar.write(f"Skipping unusable file {file_item.path}: {e}")
+                        failed_items.append(file_item)
+                        pbar.update(1)
+                        continue
+                    # models may report per-file repairs (e.g. a patched sheet); print them on their own line with the path
+                    for warning in getattr(self.sd, 'pop_encode_warnings', lambda: [])():
+                        pbar.write(f"{file_item.path}: {warning}")
                     file_item.is_latent_cached = True
                     i += 1
                     pbar.update(1)
@@ -2014,7 +2023,7 @@ class LatentCachingMixin:
                 pbar.close()
 
             if failed_items:
-                print_acc(f"Removed {len(failed_items)} files from the dataset that failed to load")
+                print_acc(f"Removed {len(failed_items)} files from the dataset that failed to load or were unusable")
                 self._remove_file_items(failed_items)
 
             # restore device state
@@ -2116,6 +2125,8 @@ class LatentCachingMixin:
                         for k, v in latent.extras.items():
                             if torch.is_tensor(v):
                                 state_dict[f'{DISK_PREFIX}{k}'] = v.clone().detach().cpu()
+            except UnusableFileError:
+                raise
             except Exception as e:
                 print_acc(f"Error processing image: {file_item.path}")
                 print_acc(f"Error: {str(e)}")

@@ -15,6 +15,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from toolkit.basic import UnusableFileError
+
 from .model import ABC_END, ABC_START, CODEC_SIZE, EOD, INSTRUCTIONS, MUSIC_START
 
 MERT_REPO = "m-a-p/MERT-v2-FullSong"
@@ -107,6 +109,7 @@ class SheetSage2Transcriber:
         from .shims import install_shims
 
         install_shims()  # mir_eval.chord / pretty_midi stand-ins unless the real packages exist
+        import importlib
         import sys
 
         from safetensors.torch import load_file
@@ -114,11 +117,16 @@ class SheetSage2Transcriber:
         from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
         from .sheetsage_decoder import ScoreDecoder
+        from .sheetsage_generate import FastConstrainedGenerate
 
         cfg = AutoConfig.from_pretrained(repo, trust_remote_code=True)
         cfg.weights_format = "merged"  # the Comfy file carries the LoRA already folded into the encoder
         cls = get_class_from_dynamic_module(cfg.auto_map["AutoModel"], repo)
         sys.modules[cls.__module__].BartDecoder = ScoreDecoder  # upstream targets transformers 4.45's BartDecoder
+        pipeline = importlib.import_module(cls.__module__.rsplit(".", 1)[0] + ".pipeline_sheetsage2")
+        if not isinstance(pipeline.constrained_prompt_generate, FastConstrainedGenerate):
+            # per-window decode loop: static cache + CUDA graph instead of upstream's per-token Python loop
+            pipeline.constrained_prompt_generate = FastConstrainedGenerate(pipeline.constrained_prompt_generate)
         cls.post_init = lambda self: None  # transformers-5 tied-weight bookkeeping rejects upstream's list; weights load explicitly
         model = cls(cfg)
         sd = {k: v.to(torch.float32) for k, v in load_file(weights_path).items()}
@@ -130,6 +138,7 @@ class SheetSage2Transcriber:
         self.model = model.eval()
         self.model.requires_grad_(False)
         _rebuild_rotary(self.model)
+        self.warnings: List[str] = []  # repair notes for the caller to print with the track path
 
     def to(self, device):
         self.model.to(device)
@@ -142,11 +151,19 @@ class SheetSage2Transcriber:
     @torch.no_grad()
     def transcribe(self, waveform: torch.Tensor, sample_rate: int, cot: str = "full") -> str:
         """waveform [C, samples] -> ABC text (``cot`` "full" or "melody")."""
+        from .sheetsage_repair import AbcRepairError, repair_abc
+
         mono = waveform.float().mean(0) if waveform.dim() == 2 else waveform.float()
         result = self.model.transcribe(mono.cpu(), sampling_rate=sample_rate, melody_only=cot == "melody")
         abc = result.get("abc") or ""
         if not abc.strip():
-            raise RuntimeError(f"SheetSage2 produced no ABC: {result.get('abc_error') or 'unknown reason'}")
+            # strict export rejected the sheet: rebuild it with the bad rows repaired, else the cacher drops the track
+            error = result.get("abc_error") or "unknown reason"
+            try:
+                abc, summary = repair_abc(self.model, result, melody_only=cot == "melody")
+            except AbcRepairError as exc:
+                raise UnusableFileError(f"SheetSage2 produced no ABC: {error}; repair failed: {exc}") from exc
+            self.warnings.append(f"SheetSage2 ABC repaired ({error}): {summary}")
         return abc
 
 
