@@ -121,6 +121,11 @@ class SingleMMDiTConfig:
     txtheads: int = 20
     txtkvheads: int = 20
 
+    @property
+    def patch_size(self) -> int:
+        # trainer probes config.patch_size for the dynamic-shift token count
+        return self.patch
+
 
 class SimpleModulation(torch.nn.Module):
     def __init__(self, dim: int):
