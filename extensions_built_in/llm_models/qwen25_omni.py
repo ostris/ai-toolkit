@@ -36,7 +36,7 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.dto import DTO
 from toolkit.models.base_model import BaseModel
-from toolkit.models.v2.resolver import resolve_named_file
+from toolkit.models.v2.resolver import resolve_component_file
 from toolkit.print import print_acc
 
 from .src.thinker import attach_fast_paths, load_thinker_single_file, prepare_thinker
@@ -45,7 +45,7 @@ BASE_REPO = "Qwen/Qwen2.5-Omni-7B"
 # thinker hidden size -> config/processor repo; single-file checkpoints carry no config
 BASE_REPO_BY_HIDDEN = {3584: "Qwen/Qwen2.5-Omni-7B", 2048: "Qwen/Qwen2.5-Omni-3B"}
 # single-file convrot8 thinker written by scripts/convert_vllm_to_comfy.py
-DEFAULT_CHECKPOINT = "ostris/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors"
+DEFAULT_CHECKPOINT = "ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors"
 DEFAULT_INSTRUCTION = "Describe this in detail."
 SAMPLE_RATE = 16000
 
@@ -124,7 +124,10 @@ class Qwen25OmniLLM(BaseModel):
             raise NotImplementedError("Layer offloading is not implemented for qwen25_omni")
 
         if name_or_path.endswith(".safetensors"):
-            ckpt = resolve_named_file(name_or_path, component="qwen2.5-omni thinker")
+            # thinker checkpoints live in the comfy text_encoders/ folder
+            ckpt = resolve_component_file(
+                name_or_path, folder="text_encoders", component="qwen2.5-omni thinker"
+            )
             self.print_and_status_update(f"Loading Qwen2.5-Omni thinker from {os.path.basename(ckpt)}")
             cfg_src = self._config_source(ckpt)
             config = AutoConfig.from_pretrained(cfg_src)

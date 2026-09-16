@@ -1,4 +1,4 @@
-import { GroupedSelectOption, SelectOption } from "@/types";
+import { CloudLora, GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music' | 'video' | 'image/video/sound';
 type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
@@ -9,6 +9,12 @@ export interface CaptionOption {
     group: CaptionGroup;
     hasMultiLinePrompts?: boolean;
     minNewTokens?: number;
+    // captioner can run LoRAs on its model (applied as sidechains, never merged)
+    supportsLoras?: boolean;
+    // LoRAs published for this model, offered in the LoRA browser alongside
+    // local files. Paths are 'org/repo/path_to/file.safetensors'; the captioner
+    // searches the models folder for the file before downloading it to loras/.
+    cloudLoras?: CloudLora[];
     defaults?: { [key: string]: any };
     additionalSections?: AdditionalSections[];
     name_or_path_options?: SelectOption[];
@@ -166,6 +172,45 @@ export const captionerTypes: CaptionOption[] = [
             'caption.batch_size',
             'caption.layer_offloading',
             'caption.thinking',
+        ],
+    },
+    {
+        name: 'Qwen25OmniCaptioner',
+        label: 'Qwen2.5-Omni',
+        group: 'image/video/sound',
+        supportsLoras: true,
+        cloudLoras: [
+            {
+                path: 'ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_lora_caption_this_song.safetensors',
+                name: 'Caption This Song',
+            },
+        ],
+        defaults: {
+            'config.process[0].caption.loras': [[], undefined],
+            'config.process[0].caption.model_name_or_path': ['ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors', defaultNameOrPath],
+            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage, ...extensionsAudio], defaultExtensions],
+            'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
+            'config.process[0].caption.max_res': [512, undefined],
+            'config.process[0].caption.max_new_tokens': [512, undefined],
+            'config.process[0].caption.batch_size': [1, undefined],
+            'config.process[0].caption.compile': [true, false],
+        },
+        name_or_path_options: [
+            { value: 'ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors', label: 'ai-toolkit/Qwen2.5-Omni-7B (convrot8)' },
+            { value: 'Qwen/Qwen2.5-Omni-7B', label: 'Qwen/Qwen2.5-Omni-7B' },
+            { value: 'Qwen/Qwen2.5-Omni-3B', label: 'Qwen/Qwen2.5-Omni-3B' },
+        ],
+        captionPrompts: {
+            'General': defaultVideoCaptionPrompt,
+            'MiniMax H4 T2V': minimaxT2VCaptionPrompt,
+            'MiniMax H4 Image': minimaxImageCaptionPrompt,
+            'YuE2': yue2CaptionPrompt,
+        },
+        additionalSections: [
+            'caption.caption_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
+            'caption.batch_size',
         ],
     },
     {

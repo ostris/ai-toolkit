@@ -148,7 +148,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   useEffect(() => {
     if (!isAutoCaptioning) return;
     const interval = setInterval(() => setPollTick(t => t + 1), 5000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      // the job writes every caption before it reports completion, so the last
+      // ones land between the final tick and polling stopping here; without one
+      // more refresh they stay stale until the card is remounted
+      setPollTick(t => t + 1);
+    };
   }, [isAutoCaptioning]);
 
   const saveCaption = () => {

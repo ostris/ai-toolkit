@@ -147,6 +147,7 @@ class LoRAEntry:
 class InferenceLoRA:
     def __init__(self, path: str, strength: float = 1.0, name: Optional[str] = None):
         self.path = path
+        self.local_path: Optional[str] = None  # set by load(): path resolved on disk
         self.strength = float(strength)
         self.name = name or os.path.splitext(os.path.basename(path))[0]
         self.entries: List[LoRAEntry] = []
@@ -154,10 +155,15 @@ class InferenceLoRA:
         self._hooks: List = []
 
     # ---- loading / key resolution ----
-    def load(self, holder) -> "InferenceLoRA":
-        if not os.path.isfile(self.path):
-            raise FileNotFoundError(f"LoRA not found: {self.path}")
-        sd = load_file(self.path)
+    def load(self, holder, status_fn=None) -> "InferenceLoRA":
+        from toolkit.models.v2.resolver import resolve_lora_file
+
+        # a spec path may be a hub reference (org/repo/file.safetensors); it is
+        # searched for under the models folder before anything is downloaded.
+        # self.path stays as given: it is the spec identity the engine keys its
+        # loaded stack on.
+        self.local_path = resolve_lora_file(self.path, status_fn=status_fn)
+        sd = load_file(self.local_path)
         convert = getattr(holder, "convert_lora_weights_before_load", None)
         if callable(convert):
             try:
@@ -395,7 +401,9 @@ class LoRAStack:
 
     def load(self, specs: List[dict], status_fn=None):
         for spec in specs:
-            lora = InferenceLoRA(spec["path"], spec.get("strength", 1.0), spec.get("name")).load(self.holder)
+            lora = InferenceLoRA(spec["path"], spec.get("strength", 1.0), spec.get("name")).load(
+                self.holder, status_fn=status_fn
+            )
             if status_fn:
                 status_fn(
                     f"LoRA {lora.name}: {len(lora.entries)} modules"

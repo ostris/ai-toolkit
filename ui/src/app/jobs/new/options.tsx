@@ -1387,7 +1387,7 @@ export const modelArchs: ModelArch[] = [
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': [
-        'ostris/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors',
+        'ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors',
         defaultNameOrPath,
       ],
       'config.process[0].model.quantize': [true, false],

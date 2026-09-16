@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Plus, X } from 'lucide-react';
+import LoraBrowserModal, { LoraPick } from '@/components/generate/LoraBrowserModal';
 import {
   Checkbox,
   CreatableSelectInput,
@@ -8,7 +10,7 @@ import {
   TextAreaInput,
   TextInput,
 } from '@/components/formInputs';
-import { CaptionJobConfig } from '@/types';
+import { CaptionJobConfig, CaptionLora } from '@/types';
 import { handleCaptionerTypeChange } from '@/helpers/captionJobConfig';
 import {
   batchSizeOptions,
@@ -37,6 +39,13 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
   const promptPresetNames = Object.keys(captionPrompts);
   const minNewTokens = selectedCaptionOption?.minNewTokens ?? 0;
   const newTokensOptions = maxNewTokensOptions.filter(option => parseInt(option.value) >= minNewTokens);
+  const [loraModalOpen, setLoraModalOpen] = useState(false);
+  const loras: CaptionLora[] = jobConfig.config.process[0].caption.loras || [];
+  const setLoras = (next: CaptionLora[]) => setJobConfig(next, 'config.process[0].caption.loras');
+  const addLora = (pick: LoraPick) => {
+    if (loras.some(l => l.path === pick.path)) return;
+    setLoras([...loras, { path: pick.path, name: pick.name, strength: 1.0 }]);
+  };
 
   return (
     <div className="text-sm text-gray-400">
@@ -117,6 +126,60 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               setJobConfig(value, 'config.process[0].caption.fixed_caption');
             }}
             placeholder="Enter fixed caption (if you want the same caption for all audio files)"
+          />
+        </div>
+      )}
+      {selectedCaptionOption?.supportsLoras && (
+        <div className="mt-4">
+          <div className="text-xs text-gray-300 mb-1">LoRAs</div>
+          <div className="space-y-2">
+            {loras.map((l, i) => (
+              <div key={l.path} className="bg-gray-950/60 border border-gray-800 rounded-md px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs truncate flex-1 text-gray-200" title={l.path}>
+                    {l.name}
+                  </span>
+                  <input
+                    type="number"
+                    step={0.05}
+                    min={-2}
+                    max={3}
+                    value={l.strength}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      const next = [...loras];
+                      next[i] = { ...l, strength: isNaN(v) ? 0 : v };
+                      setLoras(next);
+                    }}
+                    className="w-16 text-xs px-1.5 py-0.5 bg-gray-950 border border-gray-700 rounded text-gray-100 text-right"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setLoras(loras.filter(x => x.path !== l.path))}
+                    className="text-gray-500 hover:text-red-400"
+                    title="Remove"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setLoraModalOpen(true)}
+              className="w-full px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs flex items-center justify-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add LoRA
+            </button>
+          </div>
+          <div className="text-[11px] text-gray-500 mt-1">
+            Applied as sidechains at caption time; the model weights are never merged.
+          </div>
+          <LoraBrowserModal
+            isOpen={loraModalOpen}
+            onClose={() => setLoraModalOpen(false)}
+            onPick={addLora}
+            cloudLoras={selectedCaptionOption?.cloudLoras}
           />
         </div>
       )}
