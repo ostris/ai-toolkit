@@ -425,6 +425,14 @@ class AceStepCaptioner(BaseCaptioner):
             )
         return item
 
+    @staticmethod
+    def _place_inputs(model, inputs):
+        """Move a processor batch onto the model; the thinker also reads its
+        2D pad mask from the model. Called again before every decode pass."""
+        inputs = inputs.to(model.device).to(model.dtype)
+        model._pad_mask_2d = inputs.get("attention_mask", None)
+        return inputs
+
     def _generate(
         self,
         model,
@@ -434,17 +442,17 @@ class AceStepCaptioner(BaseCaptioner):
         retries: tuple = (),
         break_loops: bool = False,
         file_path: str = "",
+        max_new_tokens: int = MAX_NEW_TOKENS,
     ) -> str:
-        inputs = inputs.to(model.device).to(model.dtype)
+        inputs = self._place_inputs(model, inputs)
         # a generate that dies between static-cache creation and its first
         # forward leaves a half-built cache that breaks every later call
         stale_cache = getattr(model, "_cache", None)
         if stale_cache is not None and not stale_cache.is_initialized:
             del model._cache
-        model._pad_mask_2d = inputs.get("attention_mask", None)
         input_len = inputs["input_ids"].shape[1]
         # greedy decode loops on repeated phrases without a penalty
-        gen_kwargs = {"max_new_tokens": MAX_NEW_TOKENS, "repetition_penalty": repetition_penalty}
+        gen_kwargs = {"max_new_tokens": max_new_tokens, "repetition_penalty": repetition_penalty}
         if model.generation_config.cache_implementation == "static":
             if input_len + 16 < STATIC_MAX_LENGTH:
                 from transformers.generation import MaxLengthCriteria, StoppingCriteriaList
@@ -453,7 +461,7 @@ class AceStepCaptioner(BaseCaptioner):
                     "repetition_penalty": repetition_penalty,
                     "max_length": STATIC_MAX_LENGTH,
                     "stopping_criteria": StoppingCriteriaList(
-                        [MaxLengthCriteria(max_length=min(input_len + MAX_NEW_TOKENS, STATIC_MAX_LENGTH))]
+                        [MaxLengthCriteria(max_length=min(input_len + max_new_tokens, STATIC_MAX_LENGTH))]
                     ),
                 }
             else:
@@ -473,7 +481,7 @@ class AceStepCaptioner(BaseCaptioner):
             kwargs = dict(gen_kwargs)
             if breaker is not None:
                 kwargs["logits_processor"] = LogitsProcessorList([breaker])
-            model._pad_mask_2d = inputs.get("attention_mask", None)
+            self._place_inputs(model, inputs)
             generated = model.generate(**inputs, **kwargs)
             return strip_eos(generated[0, input_len:]), breaker
 
@@ -533,25 +541,29 @@ class AceStepCaptioner(BaseCaptioner):
             file_path=file_path,
         )
 
-    def get_audio_caption(self, inputs) -> str:
+    def get_audio_caption(self, inputs, file_path: str = "") -> str:
         if self.caption_config.low_vram and self.model.device != torch.device("cpu"):
             self.model.to("cpu")
         if self.model2.device == torch.device("cpu"):
             self.model2.to(self.device_torch)
         return self._generate(self.model2, self.processor2, inputs, CAPTIONER_REPETITION_PENALTY)
 
+    def _transcribe_item(self, item: dict) -> str:
+        """Raw transcriber text for a prepped item: '# Languages ... # Lyrics ...'."""
+        return self.get_audio_lyrics(item["lyrics_inputs"], item["file"])
+
     def _caption_item(self, item: dict) -> str:
         if self.caption_config.caption_format == "yue2":
-            lyrics = clean_lyrics(self.get_audio_lyrics(item["lyrics_inputs"], item["file"]))
+            lyrics = clean_lyrics(self._transcribe_item(item))
             if self.caption_config.fixed_caption is not None:
                 caption = self.caption_config.fixed_caption
             else:
-                caption = self.get_audio_caption(item["caption_inputs"])
+                caption = self.get_audio_caption(item["caption_inputs"], item["file"])
             caption = " ".join(caption.split())
             return f"{caption}\n[Lyrics]\n{lyrics}"
 
         analysis = item["analysis"]
-        lyrics = self.get_audio_lyrics(item["lyrics_inputs"], item["file"])
+        lyrics = self._transcribe_item(item)
 
         language = "en"
         if "# Languages" in lyrics and "# Lyrics" in lyrics:
@@ -563,7 +575,7 @@ class AceStepCaptioner(BaseCaptioner):
         if self.caption_config.fixed_caption is not None:
             caption = self.caption_config.fixed_caption
         else:
-            caption = self.get_audio_caption(item["caption_inputs"])
+            caption = self.get_audio_caption(item["caption_inputs"], item["file"])
 
         output = f"<CAPTION>\n{caption}\n</CAPTION>\n"
         output += f"<LYRICS>\n{lyrics}\n</LYRICS>\n"

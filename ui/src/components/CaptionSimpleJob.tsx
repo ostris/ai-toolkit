@@ -283,6 +283,13 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
                 onChange={value => setJobConfig(value, 'config.process[0].caption.extract_vocals_before_transcribe')}
               />
             )}
+            {additionalSections.includes('caption.keep_timestamps') && (
+              <Checkbox
+                label="Keep Lyric Timestamps"
+                checked={jobConfig.config.process[0].caption.keep_timestamps || false}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.keep_timestamps')}
+              />
+            )}
             {additionalSections.includes('caption.thinking') && (
               <Checkbox
                 label="Thinking"

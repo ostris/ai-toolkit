@@ -339,6 +339,7 @@ export interface CaptionProcessConfig {
     fixed_caption?: string;
     caption_format?: string;
     extract_vocals_before_transcribe?: boolean;
+    keep_timestamps?: boolean;
     caption_extension?: string;
     thinking?: boolean;
     batch_size?: number;
