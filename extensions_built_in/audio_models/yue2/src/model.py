@@ -405,10 +405,25 @@ class YuE2Model(nn.Module, OstrisModelMixin):
 def merge_nar_lora(model: YuE2Model, ckpt_path: str, scale: float = 1.0):
     """Fold the community NAR adapter (unmerged q/k/v + gate/up LoRA pairs,
     plus full vae2llm/llm2vae weights) into the merged-projection base."""
-    try:
-        ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-    except Exception:
-        ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if ckpt_path.endswith(".safetensors"):
+        # v9+ safetensors use flat named keys; the fold below consumes a positional
+        # list (per layer q,k,v,o then gate,up,down, each lora_A then lora_B) + io dict
+        from safetensors.torch import load_file
+
+        sd = load_file(ckpt_path)
+        n_layers = len({k.split(".")[1] for k in sd if k.startswith("layers.")})
+        ck = {"lora": [], "io": {}}
+        for i in range(n_layers):
+            for mod, names in (("nar_self_attn", ("q_proj", "k_proj", "v_proj", "o_proj")), ("nar_mlp", ("gate_proj", "up_proj", "down_proj"))):
+                for proj in names:
+                    ck["lora"] += [sd[f"layers.{i}.{mod}.{proj}.lora_A"], sd[f"layers.{i}.{mod}.{proj}.lora_B"]]
+        for name in ("vae2llm", "llm2vae"):
+            ck["io"][name] = {p: sd[f"{name}.{p}"] for p in ("weight", "bias") if f"{name}.{p}" in sd}
+    else:
+        try:
+            ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        except Exception:
+            ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if getattr(model, "aitk_is_quantized", False):
         raise ValueError("merge_nar_lora needs the bf16 checkpoint; the int8 convrot repack cannot take merged weights")
     tensors = iter(ck["lora"])

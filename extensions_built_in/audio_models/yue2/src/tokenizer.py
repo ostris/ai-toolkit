@@ -23,8 +23,8 @@ MERT_REPO = "m-a-p/MERT-v2-FullSong"
 MERT_SAMPLE_RATE = 24000
 MERT_LAYER = 20
 HEAD_REPO = "Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4"
-HEAD_FILE = "tokenizer_head_joint_v4.pt"
-NAR_LORA_FILE = "nar_lora_joint_v4.pt"
+HEAD_FILE = "tokenizer_head_joint_v9.safetensors"
+NAR_LORA_FILE = "nar_lora_joint_v9.safetensors"
 HEAD_WINDOW = 512
 
 
@@ -180,8 +180,14 @@ class SemanticTokenizer(nn.Module):
         self.mert.requires_grad_(False)
         _rebuild_rotary(self.mert)
         self.head = TokenizerHead()
-        ck = torch.load(head_path, map_location="cpu", weights_only=False)
-        self.head.load_state_dict(ck["model"])
+        if head_path.endswith(".safetensors"):
+            from safetensors.torch import load_file
+
+            ck = load_file(head_path)
+        else:
+            # the .pt release keeps the state dict under ck["model"] (plus a "cfg" dict)
+            ck = torch.load(head_path, map_location="cpu", weights_only=False)["model"]
+        self.head.load_state_dict(ck)
         self.head.eval().requires_grad_(False)
 
     @property
