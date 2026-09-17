@@ -172,7 +172,7 @@ def predict_velocity(
     the velocity ``noise - clean`` reshaped back to ``(B, C, h, w)``. No time
     flip / negation: Krea's convention matches toolkit's.
     """
-    patch = model.config.patch
+    patch = model.config.patch_size
     b, c, h, w = latents.shape
 
     if ref_kv_cache is not None and not isolate_refs:
