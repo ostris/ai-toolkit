@@ -276,6 +276,13 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               checked={jobConfig.config.process[0].caption.compile || false}
               onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
             />
+            {additionalSections.includes('caption.extract_vocals_before_transcribe') && (
+              <Checkbox
+                label="Extract Vocals Before Transcribing"
+                checked={jobConfig.config.process[0].caption.extract_vocals_before_transcribe || false}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.extract_vocals_before_transcribe')}
+              />
+            )}
             {additionalSections.includes('caption.thinking') && (
               <Checkbox
                 label="Thinking"

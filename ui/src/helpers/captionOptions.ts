@@ -1,7 +1,7 @@
 import { CloudLora, GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music' | 'video' | 'image/video/sound';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.extract_vocals_before_transcribe' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
 
 export interface CaptionOption {
     name: string;
@@ -111,6 +111,7 @@ export const captionerTypes: CaptionOption[] = [
             'caption.model_name_or_path2',
             'caption.fixed_caption',
             'caption.caption_format',
+            'caption.extract_vocals_before_transcribe',
         ],
     },
     {
