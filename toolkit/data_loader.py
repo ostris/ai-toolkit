@@ -504,24 +504,9 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         
         self.size_database["__version__"] = dataloader_version
 
-        # set latent space version
-        latent_space_version = "sd1"
-        if self.sd is not None and self.sd.model_config.latent_space_version is not None:
-            latent_space_version = self.sd.model_config.latent_space_version
-        elif self.sd is not None and self.sd.latent_space_version is not None:
-            latent_space_version = self.sd.latent_space_version
-        elif self.sd.is_xl:
-            latent_space_version = 'sdxl'
-        elif self.sd.is_v3:
-            latent_space_version = 'sd3'
-        elif self.sd.is_auraflow:
-            latent_space_version = 'sdxl'
-        elif self.sd.is_flux:
-            latent_space_version = 'flux1'
-        elif self.sd.model_config.is_pixart_sigma:
-            latent_space_version = 'sdxl'
-        else:
-            latent_space_version = self.sd.model_config.arch if self.sd is not None else "sd1"
+        # cache keys come from the model so a model can invalidate them on its own kwargs
+        latent_space_version = self.sd.get_latent_space_version() if self.sd is not None else "sd1"
+        text_embedding_space_version = self.sd.get_text_embedding_space_version() if self.sd is not None else "sd1"
             
         temporal_compression = 8
         if self.sd is not None:
@@ -544,7 +529,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
                     encode_first_frame_in_text_embeddings=getattr(self.sd, 'encode_first_frame_in_text_embeddings', False) if self.sd else False,
                     dopsd_self_ref=getattr(self.sd, 'dopsd_self_ref', False) if self.sd else False,
-                    text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
+                    text_embedding_space_version=text_embedding_space_version,
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
                     temporal_compression=temporal_compression,
