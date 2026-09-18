@@ -13,6 +13,18 @@ class AceStepCaptionerExtension(Extension):
         return AceStepCaptioner
 
 
+class MossMusicCaptionerExtension(Extension):
+    uid = "MossMusicCaptioner"
+    name = "MOSS-Music Captioner"
+
+    @classmethod
+    def get_process(cls):
+        # import your process class here so it is only loaded when needed and return it
+        from .MossMusicCaptioner import MossMusicCaptioner
+
+        return MossMusicCaptioner
+
+
 class Qwen3VLCaptionerExtension(Extension):
     uid = "Qwen3VLCaptioner"
     name = "Qwen 3VL Captioner"
@@ -63,6 +75,7 @@ class Ideogram4CaptionerExtension(Extension):
 
 AI_TOOLKIT_EXTENSIONS = [
     AceStepCaptionerExtension,
+    MossMusicCaptionerExtension,
     Qwen3VLCaptionerExtension,
     Qwen3OmniCaptionerExtension,
     Qwen25OmniCaptionerExtension,

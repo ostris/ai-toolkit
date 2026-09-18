@@ -1,7 +1,7 @@
 import { CloudLora, GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music' | 'video' | 'image/video/sound';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.extract_vocals_before_transcribe' | 'caption.keep_timestamps' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
 
 export interface CaptionOption {
     name: string;
@@ -84,6 +84,13 @@ Part 2: on the next line write [Lyrics] and then the complete lyrics transcribed
 
 Transcribe only what is actually sung. Be decisive. No preamble, no explanations, no markdown - output only the tag line and the lyrics block.`;
 
+// MOSS-Music description prompts. The lyric transcription prompt is fixed in the
+// captioner (it asks for timestamps as loop anchors and strips them afterwards).
+// Framing the description as a generator prompt is what keeps the model to one
+// plain paragraph instead of a sectioned essay with timings and chord names.
+const mossMusicCaptionPrompt = "Write a prompt that a text-to-music generator could use to recreate this track. One paragraph, under 80 words: genre, mood, instrumentation, tempo feel, production style, vocal style. No timestamps, section timings, chord names, or lyric quotes.";
+const mossMusicTagsPrompt = "Describe this music as a single line of comma-separated style tags: genre, mood, vocal type and delivery, lead instruments, production style, tempo feel, era. Lowercase tags only, no sentences.";
+
 // Editable ADDITIONAL INSTRUCTIONS block injected into the Ideogram system prompt.
 // Users can tweak this for dataset-specific guidance without altering the fixed
 // output contract, element/background rules, or bbox format.
@@ -111,6 +118,33 @@ export const captionerTypes: CaptionOption[] = [
             'caption.model_name_or_path2',
             'caption.fixed_caption',
             'caption.caption_format',
+            'caption.extract_vocals_before_transcribe',
+        ],
+    },
+    {
+        name: 'MossMusicCaptioner',
+        label: 'MOSS-Music',
+        group: 'music',
+        defaults: {
+            'config.process[0].caption.model_name_or_path': ['OpenMOSS-Team/MOSS-Music-8B-Instruct', defaultNameOrPath],
+            'config.process[0].caption.extensions': [extensionsAudio, defaultExtensions],
+            'config.process[0].caption.caption_format': ['ace_step', undefined],
+            'config.process[0].caption.caption_prompt': [mossMusicCaptionPrompt, undefined],
+            'config.process[0].caption.keep_timestamps': [false, undefined],
+            'config.process[0].caption.compile': [true, false],
+        },
+        name_or_path_options: [
+            { value: 'OpenMOSS-Team/MOSS-Music-8B-Instruct', label: 'OpenMOSS-Team/MOSS-Music-8B-Instruct' },
+        ],
+        captionPrompts: {
+            'Description (ACE-Step)': mossMusicCaptionPrompt,
+            'Style tags (YuE2)': mossMusicTagsPrompt,
+        },
+        additionalSections: [
+            'caption.fixed_caption',
+            'caption.caption_format',
+            'caption.keep_timestamps',
+            'caption.caption_prompt',
         ],
     },
     {

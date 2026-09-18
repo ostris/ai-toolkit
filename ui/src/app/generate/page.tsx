@@ -823,7 +823,7 @@ function GeneratePageInner() {
               {/* status strip over the stage */}
               <div className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 flex items-center gap-2 text-xs text-gray-300 bg-gradient-to-b from-gray-950/80 to-transparent">
                 {running && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />}
-                <span className="truncate">
+                <span className="truncate" title={running ? statusLine : undefined}>
                   {running
                     ? statusLine
                     : selected

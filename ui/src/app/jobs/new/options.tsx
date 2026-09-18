@@ -49,12 +49,23 @@ type AdditionalSections =
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio' | 'llm';
 
 export interface CustomModelSelectOption {
+  type?: 'select';
   label: string;
   options: SelectOption[];
   getValue: (config: JobConfig) => string | undefined;
   onChange: (value: string, config: JobConfig, setJobConfig: (value: any, key: string) => void) => void;
   doc?: ConfigDoc;
 }
+
+export interface CustomModelCheckboxOption {
+  type: 'checkbox';
+  label: string;
+  getValue: (config: JobConfig) => boolean;
+  onChange: (value: boolean, config: JobConfig, setJobConfig: (value: any, key: string) => void) => void;
+  doc?: ConfigDoc;
+}
+
+export type CustomModelOption = CustomModelSelectOption | CustomModelCheckboxOption;
 
 export type SampleTag = {
   title: string;
@@ -110,7 +121,7 @@ export interface ModelArch {
   sampleTags?: SampleTags;
   gateUrl?: string;
   modelNotes?: React.ReactNode;
-  customModelSelectOptions?: CustomModelSelectOption[];
+  customModelSelectOptions?: CustomModelOption[];
 }
 
 const defaultNameOrPath = '';

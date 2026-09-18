@@ -16,6 +16,14 @@ flow loss on the real latents. With ``model_kwargs.ar_loss_weight`` > 0 the same
 also trains the AR expert with next-token cross entropy over the codec tokens, so one LoRA
 network on both experts learns composition and rendering together.
 
+With ``model_kwargs.do_separation`` MelBandRoformer (toolkit/audio/melbandroformer) splits every song into
+vocals and instrumental at cache time; their codec tokens (and sheets) ride the latent cache next to the
+mix, and the prompt cache holds three prefixes: the full prompt, lyrics only and tags only. Every step
+still trains the NAR flow loss on the mix window; the AR next-token loss becomes a weighted mean of three
+terms, (full prompt, mix), (lyrics only, vocals) and (tags only, instrumental), each from the song start,
+with ``separation_vocals_weight`` (0.5) and ``separation_music_weight`` (1.0) against the mix's 1. Both
+cache versions get a ``_sep`` suffix so existing caches are rebuilt.
+
 Prompt modes follow ComfyUI (``model_kwargs.cot``): "full" (default, Generate ABC path: the AR
 writes a chord-annotated ABC sheet, then the codec tokens), "melody" (sheet without chords) or
 "off" (no sheet; what Comfy runs when the ABC input is empty). For full/melody the training sheet
@@ -33,6 +41,7 @@ from safetensors.torch import load_file
 from tqdm import tqdm
 
 from extensions_built_in.audio_models.base_audio_model import BaseAudioModel
+from toolkit.audio.melbandroformer import load_melbandroformer, separate as separate_vocals
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig
 from toolkit.dto import DTO
@@ -49,6 +58,18 @@ from .src.vae import SAMPLE_RATE, YuE2VAE
 
 COT_CODES = {"off": 0, "melody": 1, "full": 2}
 COT_NAMES = {v: k for k, v in COT_CODES.items()}
+
+# do_separation trains the AR on three (prompt, stem) pairs; prompt-mask segment ids follow this order (1, 2, 3)
+SEP_VARIANTS = ("full", "vocals", "music")
+
+
+def _variant_prompt(parsed: dict, variant: str):
+    """(style, lyrics) the AR sees per stem: the vocal stem gets just the lyrics, the music stem just the tags."""
+    if variant == "vocals":
+        return "", parsed["lyrics"]
+    if variant == "music":
+        return parsed["style"], ""
+    return parsed["style"], parsed["lyrics"]
 
 DEFAULT_CHECKPOINT = "Comfy-Org/YuE2/checkpoints/yue2_3b_int8_convrot.safetensors"
 # community tokenizer files have no ComfyUI folder; they live under <MODELS_PATH>/ai_toolkit/
@@ -195,17 +216,26 @@ class YuE2AudioModel(BaseAudioModel):
         self.abc_dropout = float(kw.get("abc_dropout", 0.5))
         self.sheetsage_path = kw.get("sheetsage_path", SHEETSAGE_FILE)
         self.transcriber: Optional[SheetSage2Transcriber] = None
+        # do_separation: MelBandRoformer stems at cache time; the AR loss covers mix + vocals + instrumental every step
+        self.do_separation = bool(kw.get("do_separation", False))
+        # stem term weights in the AR loss (the mix term is 1); the vocal stem alone pulls samples toward lyrics-only output
+        self.separation_weights = {
+            "vocals": float(kw.get("separation_vocals_weight", 0.5)),
+            "music": float(kw.get("separation_music_weight", 1.0)),
+        }
+        self.separator = None
         # encoders are only needed while caching; once training steps run without encode calls they are released
         self._train_calls = 0
         self._last_encode_call = 0
         self.sample_max_seconds = float(kw.get("sample_max_seconds", 120.0))
         self.sample_ar_temperature = float(kw.get("sample_ar_temperature", 1.0))
         # reference sampler value; 1.0 lets a memorized song replay (the penalty knocks it off path)
-        self.sample_ar_repetition_penalty = float(kw.get("sample_ar_repetition_penalty", 1.2))
+        self.sample_ar_repetition_penalty = float(kw.get("sample_ar_repetition_penalty", 1.1))
         self.semantic_tokenizer: Optional[SemanticTokenizer] = None
         self._pending_aux_loss = None
         self._pending_ar_ce = None
         self._pending_ar_kl = None
+        self._pending_stem_ce = {}
         self.additional_loss_logs = {}
 
     @staticmethod
@@ -265,6 +295,22 @@ class YuE2AudioModel(BaseAudioModel):
             self.transcriber = SheetSage2Transcriber(resolve_named_file(self.sheetsage_path, component="sheetsage2"))
         return self.transcriber
 
+    def _get_separator(self):
+        if self.separator is None:
+            print_acc("Loading MelBandRoformer (vocals / instrumental separation)")
+            self.separator = load_melbandroformer(device=self.device_torch)
+        return self.separator
+
+    def get_latent_space_version(self):
+        version = super().get_latent_space_version()
+        # stem tokens/sheets only ride the latent cache in separation mode
+        return f"{version}_sep" if self.do_separation else version
+
+    def get_text_embedding_space_version(self):
+        version = super().get_text_embedding_space_version()
+        # separation mode caches three prefixes per prompt
+        return f"{version}_sep" if self.do_separation else version
+
     def pop_encode_warnings(self) -> List[str]:
         """Repair notes from the last encode_audio call; the latent cacher prints them with the file path."""
         if self.transcriber is None:
@@ -289,17 +335,37 @@ class YuE2AudioModel(BaseAudioModel):
         embeds, masks = [], []
         for p in prompts:
             parsed = parse_caption(p)
-            e = self.text_encoder(parsed["style"], parsed["lyrics"])  # [1, L, H]
+            if self.do_separation:
+                # full, lyrics-only and tags-only prefixes back to back; the mask holds the segment id (1, 2, 3), 0 = pad
+                segments = [self.text_encoder(*_variant_prompt(parsed, v)) for v in SEP_VARIANTS]
+                e = torch.cat(segments, 1)  # [1, L1+L2+L3, H]
+                m = torch.cat([torch.full((1, seg.shape[1]), k + 1, dtype=torch.long, device=e.device) for k, seg in enumerate(segments)], 1)
+            else:
+                e = self.text_encoder(parsed["style"], parsed["lyrics"])  # [1, L, H]
+                m = torch.ones(1, e.shape[1], dtype=torch.long, device=e.device)
             embeds.append(e)
-            masks.append(torch.ones(1, e.shape[1], dtype=torch.long, device=e.device))
+            masks.append(m)
         max_len = max(e.shape[1] for e in embeds)
         embeds = [torch.nn.functional.pad(e, (0, 0, 0, max_len - e.shape[1])) for e in embeds]
         masks = [torch.nn.functional.pad(m, (0, max_len - m.shape[1])) for m in masks]
         return PromptEmbeds(torch.cat(embeds, 0), attention_mask=torch.cat(masks, 0))
 
+    def _transcribe_sheets(self, wavs: List[torch.Tensor]) -> torch.Tensor:
+        """SheetSage2 sheets for [C, samples] waveforms -> text ids [B, N], -1 padded."""
+        transcriber = self._get_transcriber()
+        if transcriber.device != self.device_torch:
+            transcriber.to(self.device_torch)
+        sheets = [self.tokenizer.encode_abc(transcriber.transcribe(wav, SAMPLE_RATE, cot=self.cot)) for wav in wavs]
+        width = max(len(x) for x in sheets)
+        abc = torch.full((len(sheets), width), -1, dtype=torch.int32)
+        for i, ids in enumerate(sheets):
+            abc[i, : len(ids)] = torch.tensor(ids, dtype=torch.int32)
+        return abc
+
     def encode_audio(self, audio_tensor: torch.Tensor, device=None, dtype=None):
         """[B, 2, samples] at 48 kHz -> DTO [B, T, 64] with codec ``tokens`` [B, T] and, unless cot is
-        "off", the SheetSage2 sheet as ``abc_ids`` [B, N] (text ids, -1 padded)."""
+        "off", the SheetSage2 sheet as ``abc_ids`` [B, N] (text ids, -1 padded). With do_separation the
+        MelBandRoformer stems add ``tokens_vocals`` / ``tokens_music`` and their ``abc_ids_*`` sheets."""
         if device is None:
             device = self.vae_device_torch
         self._last_encode_call = self._train_calls
@@ -315,17 +381,18 @@ class YuE2AudioModel(BaseAudioModel):
         latents = latents[:, :n].to(dtype=self.torch_dtype if dtype is None else dtype)
         extras = {"tokens": tokens[:, :n].to(latents.device, torch.int32)}
         if self.cot != "off":
-            transcriber = self._get_transcriber()
-            if transcriber.device != self.device_torch:
-                transcriber.to(self.device_torch)
-            sheets = [self.tokenizer.encode_abc(transcriber.transcribe(wav, SAMPLE_RATE, cot=self.cot)) for wav in audio_tensor]
-            width = max(len(x) for x in sheets)
-            abc = torch.full((len(sheets), width), -1, dtype=torch.int32)
-            for i, ids in enumerate(sheets):
-                abc[i, : len(ids)] = torch.tensor(ids, dtype=torch.int32)
-            extras["abc_ids"] = abc.to(latents.device)
+            extras["abc_ids"] = self._transcribe_sheets(list(audio_tensor)).to(latents.device)
             # which sheet flavor the cache holds; training refuses a mismatch instead of silently using it
-            extras["abc_mode"] = torch.full((len(sheets),), COT_CODES[self.cot], dtype=torch.int32, device=latents.device)
+            extras["abc_mode"] = torch.full((audio_tensor.shape[0],), COT_CODES[self.cot], dtype=torch.int32, device=latents.device)
+        if self.do_separation:
+            separator = self._get_separator()
+            stems = [separate_vocals(separator, wav.float(), SAMPLE_RATE) for wav in audio_tensor]  # (vocals, instrumental)
+            for idx, name in ((0, "vocals"), (1, "music")):
+                wavs = [stem[idx] for stem in stems]
+                stem_tokens = torch.stack([tokenizer.tokenize(wav, SAMPLE_RATE) for wav in wavs])
+                extras[f"tokens_{name}"] = stem_tokens[:, :n].to(latents.device, torch.int32)
+                if self.cot != "off":
+                    extras[f"abc_ids_{name}"] = self._transcribe_sheets(wavs).to(latents.device)
         return DTO(latents, **extras)
 
     # ------------------------------------------------------------------
@@ -357,6 +424,8 @@ class YuE2AudioModel(BaseAudioModel):
             return None
         ce = self._pending_ar_ce.detach().float().item()
         self.additional_loss_logs = {"loss/ar_ce": ce}
+        for variant, stem_ce in self._pending_stem_ce.items():
+            self.additional_loss_logs[f"loss/ar_ce_{variant}"] = stem_ce.detach().float().item()
         kl = self._pending_ar_kl
         if kl is not None:
             self.additional_loss_logs["loss/ar_kl"] = kl.detach().float().item()
@@ -368,11 +437,62 @@ class YuE2AudioModel(BaseAudioModel):
         return aux
 
     @staticmethod
-    def _train_prefix(prefix_embeds: torch.Tensor, prefix_mask: torch.Tensor) -> torch.Tensor:
-        """Unpadded prefix embeds for one item."""
-        # the mask may arrive cast to bf16; count entries, never sum them
-        length = int((prefix_mask > 0.5).sum().item())
-        return prefix_embeds[:length]
+    def _prefix_segment(prefix_embeds: torch.Tensor, prefix_mask: torch.Tensor, segment: int = 1) -> torch.Tensor:
+        """Unpadded prefix embeds for one item. The mask holds segment ids: all 1 normally; with do_separation
+        1 = full prompt, 2 = lyrics only, 3 = tags only (SEP_VARIANTS order); 0 = padding."""
+        # the mask may arrive cast to bf16; compare rounded values, never sum them
+        return prefix_embeds[prefix_mask.float().round() == segment]
+
+    def _check_abc_cache(self, latents: DTO):
+        if self.cot == "off":
+            return
+        mode = latents.get("abc_mode")
+        cached = None if mode is None else int(mode.reshape(-1)[0].item())
+        if latents.get("abc_ids") is None or cached != COT_CODES[self.cot]:
+            raise ValueError(
+                f"YuE2 cot={self.cot!r} needs a matching ABC sheet in the latent cache "
+                f"(cache has {'none' if cached is None else COT_NAMES.get(cached, cached)!r}): "
+                "delete the dataset's _latent_cache folder so it is rebuilt"
+            )
+
+    def _note_train_call(self):
+        self._train_calls += 1
+        if self._train_calls - self._last_encode_call > 2 and (
+            self.semantic_tokenizer is not None or self.transcriber is not None or self.separator is not None
+        ):
+            # latents are cached: MERT + SheetSage2 (~4 GB) and the separator are dead weight for the rest of training
+            self.semantic_tokenizer = None
+            self.transcriber = None
+            self.separator = None
+            flush()
+
+    def _item_prefix_and_abc(self, prefix: torch.Tensor, abc_all: Optional[torch.Tensor], i: int, caption: Optional[str], variant: str = "full"):
+        """(prefix, sheet ids) for one item; the sheet is empty when cot is off. With probability ``abc_dropout``
+        at train time the sheet is dropped and the item trains exactly as an off-mode prompt (off instruction,
+        empty ABC block) rebuilt from the caption."""
+        device = self.device_torch
+        if self.cot == "off" or abc_all is None:
+            return prefix, torch.zeros(0, dtype=torch.long, device=device)
+        if torch.is_grad_enabled() and caption is not None and random.random() < self.abc_dropout:
+            style, lyrics = _variant_prompt(parse_caption(caption), variant)
+            ids = torch.tensor([self.tokenizer.prefix_head_ids(style, lyrics, cot="off")], device=device)
+            return self.model.ar.embed(ids)[0].to(self.torch_dtype), torch.zeros(0, dtype=torch.long, device=device)
+        row = abc_all[i].to(device)
+        return prefix, row[row >= 0].long()
+
+    def _stem_ar_loss(self, latents: DTO, i: int, variant: str, segment: int, prefix_embeds: torch.Tensor, prefix_mask: torch.Tensor, caption: Optional[str]):
+        """do_separation: next-token CE (and KL) of one stem from the song start, prompted by its own prefix segment."""
+        song = latents.get(f"tokens_{variant}")
+        if song is None:
+            raise ValueError("YuE2 do_separation needs stem tokens in the latent cache: delete the dataset's _latent_cache folder so it is rebuilt")
+        song = song[i].to(self.device_torch)
+        total = song.shape[0]
+        prefix = self._prefix_segment(prefix_embeds, prefix_mask, segment)
+        prefix, abc = self._item_prefix_and_abc(prefix, latents.get(f"abc_ids_{variant}"), i, caption, variant)
+        limit = total if self.ar_max_tokens <= 0 else min(total, self.ar_max_tokens)
+        embeds, ids = self._ar_inputs(prefix, abc, song[:limit], end_token=limit == total)
+        ce, kl, _ = self._ar_losses(embeds, ids, prefix, total, limit == total)
+        return ce, kl
 
     def _ar_losses(self, ar_embeds: torch.Tensor, ids: torch.Tensor, prefix: torch.Tensor, total: int, whole_song: bool):
         """Next-token CE over ``ids`` (and KL(base || lora) when ``ar_kl_weight`` > 0), computed in
@@ -503,15 +623,7 @@ class YuE2AudioModel(BaseAudioModel):
         if batch is None or not isinstance(batch.latents, DTO) or batch.latents.get("tokens") is None:
             raise ValueError("YuE2 training needs codec tokens in the latent cache; enable latent caching")
         abc_all = batch.latents.get("abc_ids")
-        if self.cot != "off":
-            mode = batch.latents.get("abc_mode")
-            cached = None if mode is None else int(mode.reshape(-1)[0].item())
-            if abc_all is None or cached != COT_CODES[self.cot]:
-                raise ValueError(
-                    f"YuE2 cot={self.cot!r} needs a matching ABC sheet in the latent cache "
-                    f"(cache has {'none' if cached is None else COT_NAMES.get(cached, cached)!r}): "
-                    "delete the dataset's _latent_cache folder so it is rebuilt"
-                )
+        self._check_abc_cache(batch.latents)
         start, end = getattr(batch, "yue2_window", (0, latent_model_input.shape[1]))
         tokens_all = batch.latents.tokens
         model = self.model
@@ -523,29 +635,15 @@ class YuE2AudioModel(BaseAudioModel):
         prefix_mask = text_embeddings.attention_mask.to(device)
         train_ar = self.ar_loss_weight > 0 and torch.is_grad_enabled()
         if torch.is_grad_enabled():
-            self._train_calls += 1
-            if self._train_calls - self._last_encode_call > 2 and (self.semantic_tokenizer is not None or self.transcriber is not None):
-                # latents are cached: MERT + SheetSage2 (~4 GB) are dead weight for the rest of training
-                self.semantic_tokenizer = None
-                self.transcriber = None
-                flush()
+            self._note_train_call()
         captions = batch.get_caption_list() if hasattr(batch, "get_caption_list") else None
         preds, lm_losses, kl_losses = [], [], []
+        stem_losses = {v: [] for v in SEP_VARIANTS[1:]}
         for i in range(latent_model_input.shape[0]):
             song = tokens_all[i].to(device)
             total = song.shape[0]
-            prefix = self._train_prefix(prefix_embeds[i], prefix_mask[i])
-            if self.cot == "off" or abc_all is None:
-                abc = torch.zeros(0, dtype=torch.long, device=device)
-            elif torch.is_grad_enabled() and captions is not None and random.random() < self.abc_dropout:
-                # sheet dropped: the item trains exactly as an off-mode prompt (off instruction, empty ABC block)
-                parsed = parse_caption(captions[i])
-                ids = torch.tensor([self.tokenizer.prefix_head_ids(parsed["style"], parsed["lyrics"], cot="off")], device=device)
-                prefix = model.ar.embed(ids)[0].to(self.torch_dtype)
-                abc = torch.zeros(0, dtype=torch.long, device=device)
-            else:
-                row = abc_all[i].to(device)
-                abc = row[row >= 0].long()
+            prefix = self._prefix_segment(prefix_embeds[i], prefix_mask[i])
+            prefix, abc = self._item_prefix_and_abc(prefix, abc_all, i, None if captions is None else captions[i])
             # NAR conditioning follows the released chunk protocol: prefix + abc + window + MUSIC_END
             embeds, ids = self._ar_inputs(prefix, abc, song[start:end])
             whole_song = start == 0 and end == total
@@ -571,14 +669,27 @@ class YuE2AudioModel(BaseAudioModel):
                     cache, _ = model.ar.prefill(embeds)
             else:
                 cache, _ = model.ar.prefill(embeds)
+            if train_ar and self.do_separation:
+                for segment, variant in enumerate(SEP_VARIANTS[1:], start=2):
+                    ce, kl = self._stem_ar_loss(batch.latents, i, variant, segment, prefix_embeds[i], prefix_mask[i], None if captions is None else captions[i])
+                    stem_losses[variant].append(ce)
+                    if kl is not None:
+                        kl_losses.append(kl)
             # the flow loss must not train the AR through its KV cache: only next-token CE shapes the AR
             cache = [(k.detach(), v.detach()) for k, v in cache]
             pred = model.nar(latent_model_input[i : i + 1].to(device, self.torch_dtype), t[i : i + 1], cache, embeds.shape[1])
             preds.append(pred)
         if lm_losses:
             self._pending_ar_ce = torch.stack(lm_losses).mean()
+            ar_ce = self._pending_ar_ce
+            self._pending_stem_ce = {}
+            if self.do_separation:
+                # weighted mean over the three (prompt, target) pairs, mix weight 1; logs keep the unweighted terms
+                self._pending_stem_ce = {v: torch.stack(terms).mean() for v, terms in stem_losses.items()}
+                weights = self.separation_weights
+                ar_ce = (ar_ce + sum(weights[v] * ce for v, ce in self._pending_stem_ce.items())) / (1.0 + sum(weights.values()))
             self._pending_ar_kl = torch.stack(kl_losses).mean() if kl_losses else None
-            self._pending_aux_loss = self._pending_ar_ce * self.ar_loss_weight
+            self._pending_aux_loss = ar_ce * self.ar_loss_weight
             if self._pending_ar_kl is not None:
                 self._pending_aux_loss = self._pending_aux_loss + self._pending_ar_kl * self.ar_kl_weight
         return torch.cat(preds, 0)
@@ -599,8 +710,8 @@ class YuE2AudioModel(BaseAudioModel):
         # sample-config duration field first, then a [Duration] prompt line, then the model default
         max_seconds = getattr(gen_config, "duration", None) or parsed["duration"] or self.sample_max_seconds
         max_tokens = max(1, int(round(max_seconds * FRAMES_PER_SECOND)))
-        length = int((conditional_embeds.attention_mask[0] > 0.5).sum().item())
-        head = conditional_embeds.text_embeds[:1, :length].to(self.device_torch, self.torch_dtype)
+        head = self._prefix_segment(conditional_embeds.text_embeds[0], conditional_embeds.attention_mask[0])[None]
+        head = head.to(self.device_torch, self.torch_dtype)
 
         # stage 1 (cot full/melody): the AR writes the ABC sheet after ABC_START, as Comfy's Generate ABC does
         abc_ids: List[int] = []
