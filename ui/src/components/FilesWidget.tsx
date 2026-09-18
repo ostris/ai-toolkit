@@ -105,7 +105,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                     <Box className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <div className="flex text-sm text-gray-200">
-                        <span className="overflow-hidden text-ellipsis direction-rtl whitespace-nowrap">
+                        <span className="overflow-hidden text-ellipsis whitespace-nowrap" dir="rtl">
                           {nameWithoutExt}
                         </span>
                       </div>
@@ -144,7 +144,7 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                   <SlidersHorizontal className="w-4 h-4 text-amber-500 flex-shrink-0" />
                   <div className="flex flex-col min-w-0">
                     <div className="flex text-sm text-amber-200">
-                      <span className="overflow-hidden text-ellipsis direction-rtl whitespace-nowrap">optimizer</span>
+                      <span className="overflow-hidden text-ellipsis whitespace-nowrap" dir="rtl">optimizer</span>
                     </div>
                     <span className="text-xs text-amber-600/70">.pt · optimizer state</span>
                   </div>
