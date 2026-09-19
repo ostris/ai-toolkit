@@ -36,7 +36,8 @@ import { defaultInferenceJobConfig } from '@/helpers/inferenceJobConfig';
 import { encodeFilePathForUrl, objToTags, tagsToObj } from '@/utils/basic';
 import { latentToImage, payloadToFloat32, readEngineFrames, PreviewInfo } from '@/utils/engineStream';
 import { isMac } from '@/helpers/basic';
-import { modelArchs, getGenerateDefaults, GenerateDefaults } from '@/app/jobs/new/options';
+import { getGenerateDefaults, GenerateDefaults } from '@/app/jobs/new/options';
+import { useModelArchs } from '@/extensions/modelArchs';
 import GenerateFooter from '@/components/generate/GenerateFooter';
 import LoraBrowserModal, { LoraPick } from '@/components/generate/LoraBrowserModal';
 
@@ -296,9 +297,10 @@ function GeneratePageInner() {
 
   // ---- models: the same arch list the training UI uses (jobs/new/options.tsx) ----
   // text-generating archs have no Generate page path yet
+  const { archs: modelArchs } = useModelArchs();
   const archs: GenerateDefaults[] = useMemo(
     () => modelArchs.filter(a => a.group !== 'llm').map(getGenerateDefaults),
-    [],
+    [modelArchs],
   );
   const ready = !!engineStatus?.running;
 

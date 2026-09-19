@@ -1,5 +1,5 @@
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
-import { modelArchs, ModelArch } from './options';
+import { ModelArch } from './options';
 import { objectCopy } from '@/utils/basic';
 
 const expandDatasetDefaults = (
@@ -22,6 +22,7 @@ const expandDatasetDefaults = (
 };
 
 export const handleModelArchChange = (
+  modelArchs: ModelArch[],
   currentArchName: string,
   newArchName: string,
   jobConfig: JobConfig,

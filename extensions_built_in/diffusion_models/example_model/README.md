@@ -34,9 +34,10 @@ example/
    own `AI_TOOLKIT_MODELS` list — see `extensions/z_image_pixel/`.)
 3. The class attribute `arch` (e.g. `"example"`) is matched against
    `model.arch` in the training config YAML to pick your class.
-4. To expose it in the web UI, add an entry to
-   `ui/src/app/jobs/new/options.ts` (search for an existing arch like
-   `ideogram4` to copy the shape).
+4. To expose it in the web UI, add an entry to your package's `ui.tsx`
+   (`AI_TOOLKIT_UI_MODELS`, see `ui/src/extensions/README.md`; built-in
+   models live in `extensions_built_in/diffusion_models/ui.tsx`). It is
+   loaded at runtime, so no UI rebuild is needed.
 
 Minimal config YAML to train it:
 
