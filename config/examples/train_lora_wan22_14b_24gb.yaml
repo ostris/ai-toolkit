@@ -51,6 +51,8 @@ config:
         # uncomment to completely disable sampling
 #        disable_sampling: true
         dtype: bf16
+        # Enable flash SDP backend for faster attention (recommended for faster sampling)
+        sdp: true
 
         # IMPORTANT: this is for Wan 2.2 MOE. It will switch training one stage or the other every this many steps
         switch_boundary_every: 10
@@ -77,6 +79,8 @@ config:
           # you can train high noise, low noise, or both. With low vram it will automatically unload the one not being trained.
           train_high_noise: true
           train_low_noise: true
+          # Enable flash attention for faster sampling (requires flash-attn package)
+          # use_flash_attention: true
       sample:
         sampler: "flowmatch"
         sample_every: 250 # sample every this many steps
