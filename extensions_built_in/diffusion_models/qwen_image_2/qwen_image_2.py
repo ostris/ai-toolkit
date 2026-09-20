@@ -122,6 +122,7 @@ class QwenImage2Model(BaseModel):
         )
         self.is_flow_matching = True
         self.is_transformer = True
+        self.use_old_lokr_format = False
         self.target_lora_modules = ["QwenImage21Transformer2DModel"]
         self.vae_scale_factor = VAE_SCALE_FACTOR
         self.prompt_encoder: Optional[QwenImage21PromptEncoder] = None
