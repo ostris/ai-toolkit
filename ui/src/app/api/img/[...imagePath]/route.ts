@@ -57,14 +57,18 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
       return new NextResponse('Access denied', { status: 403 });
     }
 
-    // ?thumb=1 serves the pre-generated 300x300 jpg from the sibling .thumbs
-    // folder (<name>.<ext>.jpg) when it exists; otherwise falls through to
-    // the full file exactly as before.
+    // ?thumb=1 serves the pre-generated 300x300 thumb from the sibling .thumbs
+    // folder when it exists; otherwise falls through to the full file exactly
+    // as before. A source with alpha gets a <name>.<ext>.png thumb so the
+    // transparency survives, everything else stays <name>.<ext>.jpg.
     if (request.nextUrl.searchParams.has('thumb')) {
-      const thumbPath = path.join(path.dirname(resolved), '.thumbs', path.basename(resolved) + '.jpg');
-      const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
-      if (thumbStat && thumbStat.isFile()) {
-        resolved = thumbPath;
+      const thumbBase = path.join(path.dirname(resolved), '.thumbs', path.basename(resolved));
+      for (const thumbPath of [`${thumbBase}.png`, `${thumbBase}.jpg`]) {
+        const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+        if (thumbStat && thumbStat.isFile()) {
+          resolved = thumbPath;
+          break;
+        }
       }
     }
 

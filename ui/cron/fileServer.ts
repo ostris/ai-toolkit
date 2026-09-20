@@ -86,8 +86,10 @@ async function getRoots(forceFresh = false): Promise<Roots> {
 // ---------------------------------------------------------------------------
 // Thumbnail generation for ?thumb=1 requests whose thumb doesn't exist yet.
 // Output matches the Python generator (SampleConfig._generate_thumbnail in
-// toolkit/config_modules.py): 300x300 center-cropped q90 jpg written
-// atomically into the sibling .thumbs folder as <name>.<ext>.jpg.
+// toolkit/config_modules.py): a 300x300 center-cropped thumb written
+// atomically into the sibling .thumbs folder as <name>.<ext>.jpg, or
+// <name>.<ext>.png when the source has alpha (jpg cannot carry it, and the
+// RGB under a transparent pixel shows through as a garbage color).
 // ---------------------------------------------------------------------------
 const THUMB_SIZE = 300;
 const IMAGE_THUMB_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']);
@@ -125,7 +127,7 @@ let ffmpegMissing = false;
 // re-written file retries) — the gallery re-requests thumbs constantly and
 // must not re-run ffmpeg/sharp against a broken file on every poll.
 const failedThumbs = new Set<string>();
-const inFlightThumbs = new Map<string, Promise<boolean>>();
+const inFlightThumbs = new Map<string, Promise<string | null>>();
 
 // A gallery burst can request hundreds of missing thumbs at once; cap how
 // many decodes/ffmpeg spawns run concurrently per worker.
@@ -168,24 +170,25 @@ function runFfmpeg(args: string[]): Promise<void> {
 
 const SQUARE_THUMB_VF = `crop='min(iw,ih)':'min(iw,ih)',scale=${THUMB_SIZE}:${THUMB_SIZE}`;
 
-async function generateThumb(sourcePath: string, thumbPath: string): Promise<boolean> {
+async function generateThumb(sourcePath: string, thumbBase: string): Promise<string | null> {
   const ext = path.extname(sourcePath).toLowerCase();
   const isImage = IMAGE_THUMB_EXTS.has(ext);
   const isVideo = VIDEO_THUMB_EXTS.has(ext);
   const isAudio = AUDIO_THUMB_EXTS.has(ext);
-  if ((isImage && !sharp) || ((isVideo || isAudio) && ffmpegMissing) || (!isImage && !isVideo && !isAudio)) return false;
+  if ((isImage && !sharp) || ((isVideo || isAudio) && ffmpegMissing) || (!isImage && !isVideo && !isAudio)) return null;
+  // only images can carry alpha; video frames and audio waveforms never do
+  const hasAlpha = isImage && (await sharp(sourcePath).metadata().catch(() => null))?.hasAlpha === true;
+  const thumbPath = `${thumbBase}${hasAlpha ? '.png' : '.jpg'}`;
   await fs.promises.mkdir(path.dirname(thumbPath), { recursive: true });
   // Write to a per-process tmp name, then atomically rename into place (same
   // as the Python generator) so a concurrent request never reads a partial
-  // thumb. The .jpg suffix is required for ffmpeg's output format detection.
-  const tmpPath = `${thumbPath}.${process.pid}.tmp.jpg`;
+  // thumb. The suffix is required for ffmpeg's output format detection.
+  const tmpPath = `${thumbPath}.${process.pid}.tmp${hasAlpha ? '.png' : '.jpg'}`;
   try {
     if (isImage) {
       // sharp opens animated formats on the first frame by default
-      await sharp(sourcePath)
-        .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' })
-        .jpeg({ quality: 90 })
-        .toFile(tmpPath);
+      const pipeline = sharp(sourcePath).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'cover' });
+      await (hasAlpha ? pipeline.png() : pipeline.jpeg({ quality: 90 })).toFile(tmpPath);
     } else if (isVideo) {
       await runFfmpeg(['-i', sourcePath, '-frames:v', '1', '-vf', SQUARE_THUMB_VF, '-q:v', '2', tmpPath]);
     } else {
@@ -205,29 +208,31 @@ async function generateThumb(sourcePath: string, thumbPath: string): Promise<boo
       }
     }
     await fs.promises.rename(tmpPath, thumbPath);
-    return true;
+    return thumbPath;
   } catch (err) {
     await fs.promises.unlink(tmpPath).catch(() => { });
     throw err;
   }
 }
 
-function ensureThumb(sourcePath: string, thumbPath: string, sourceMtimeMs: number): Promise<boolean> {
-  const failKey = `${thumbPath}:${sourceMtimeMs}`;
-  if (failedThumbs.has(failKey)) return Promise.resolve(false);
-  let pending = inFlightThumbs.get(thumbPath);
+// Resolves to the thumb path it wrote (the extension depends on alpha), or
+// null when none could be generated.
+function ensureThumb(sourcePath: string, thumbBase: string, sourceMtimeMs: number): Promise<string | null> {
+  const failKey = `${thumbBase}:${sourceMtimeMs}`;
+  if (failedThumbs.has(failKey)) return Promise.resolve(null);
+  let pending = inFlightThumbs.get(thumbBase);
   if (!pending) {
-    pending = withThumbGenSlot(() => generateThumb(sourcePath, thumbPath))
+    pending = withThumbGenSlot(() => generateThumb(sourcePath, thumbBase))
       .catch(err => {
         console.warn(`Failed to generate thumbnail for ${sourcePath}: ${err?.message || err}`);
-        return false;
+        return null;
       })
-      .then(ok => {
-        if (!ok) failedThumbs.add(failKey);
-        return ok;
+      .then(written => {
+        if (!written) failedThumbs.add(failKey);
+        return written;
       })
-      .finally(() => inFlightThumbs.delete(thumbPath));
-    inFlightThumbs.set(thumbPath, pending);
+      .finally(() => inFlightThumbs.delete(thumbBase));
+    inFlightThumbs.set(thumbBase, pending);
   }
   return pending;
 }
@@ -305,21 +310,34 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       return true;
     }
 
-    // ?thumb=1 serves the 300x300 jpg from the sibling .thumbs folder
-    // (<name>.<ext>.jpg), generating and saving it on the fly when missing.
-    // Falls through to the full file only if generation isn't possible
-    // (unsupported format, no ffmpeg, corrupt file). Album art is always the
-    // thumb.
+    // ?thumb=1 serves the 300x300 thumb from the sibling .thumbs folder
+    // (<name>.<ext>.png when the source has alpha, else <name>.<ext>.jpg),
+    // generating and saving it on the fly when missing. Falls through to the
+    // full file only if generation isn't possible (unsupported format, no
+    // ffmpeg, corrupt file). Album art is always the thumb.
     if (isArt || (isImg && new URL(req.url || '', 'http://localhost').searchParams.has('thumb'))) {
-      const thumbPath = path.join(path.dirname(resolvedFilePath), '.thumbs', path.basename(resolvedFilePath) + '.jpg');
-      let thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
-      if (!(thumbStat && thumbStat.isFile())) {
-        const srcStat = await fs.promises.stat(resolvedFilePath).catch(() => null);
-        if (srcStat && srcStat.isFile() && (await ensureThumb(resolvedFilePath, thumbPath, srcStat.mtimeMs))) {
-          thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+      const thumbBase = path.join(path.dirname(resolvedFilePath), '.thumbs', path.basename(resolvedFilePath));
+      let thumbPath: string | null = null;
+      let thumbStat: fs.Stats | null = null;
+      for (const candidate of [`${thumbBase}.png`, `${thumbBase}.jpg`]) {
+        const stat = await fs.promises.stat(candidate).catch(() => null);
+        if (stat && stat.isFile()) {
+          thumbPath = candidate;
+          thumbStat = stat;
+          break;
         }
       }
-      if (thumbStat && thumbStat.isFile()) {
+      if (!thumbStat) {
+        const srcStat = await fs.promises.stat(resolvedFilePath).catch(() => null);
+        if (srcStat && srcStat.isFile()) {
+          const written = await ensureThumb(resolvedFilePath, thumbBase, srcStat.mtimeMs);
+          if (written) {
+            thumbPath = written;
+            thumbStat = await fs.promises.stat(written).catch(() => null);
+          }
+        }
+      }
+      if (thumbPath && thumbStat && thumbStat.isFile()) {
         resolvedFilePath = thumbPath;
       } else if (isArt) {
         return false;

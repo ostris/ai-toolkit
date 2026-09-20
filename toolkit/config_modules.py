@@ -1284,16 +1284,19 @@ class GenerateImageConfig:
         for file in files:
             tmp_thumb = os.path.join(tmp_folder, file + '.thumb')
             try:
-                if self._generate_thumbnail(os.path.join(tmp_folder, file), tmp_thumb):
+                thumb_ext = self._generate_thumbnail(os.path.join(tmp_folder, file), tmp_thumb)
+                if thumb_ext:
                     os.makedirs(thumbs_folder, exist_ok=True)
-                    os.replace(tmp_thumb, os.path.join(thumbs_folder, file + '.jpg'))
+                    os.replace(tmp_thumb, os.path.join(thumbs_folder, file + thumb_ext))
             except Exception as e:
                 print(f"Failed to generate thumbnail for {file}: {e}")
         for file in files:
             os.replace(os.path.join(tmp_folder, file), os.path.join(real_folder, file))
 
     def _generate_thumbnail(self, media_path, thumb_path):
-        # 300x300 center-cropped 90% jpg. Returns True if one was written.
+        # 300x300 center-cropped thumb. Returns the extension it wrote ('.png'
+        # when the source has alpha, which jpg cannot carry, else '.jpg'), or
+        # None when the format is not thumbnailable.
         from PIL import Image as PILImage
         ext = os.path.splitext(media_path)[1].lower()
         img = None
@@ -1311,15 +1314,23 @@ class GenerateImageConfig:
             from toolkit.audio.album_artwork import create_artwork, load_waveform
             img = create_artwork(load_waveform(media_path), size=300)
         if img is None:
-            return False
-        img = img.convert('RGB')
+            return None
+        # without this the RGB under a transparent pixel shows through as a
+        # garbage color, which is what an RGBA sample's thumb used to look like
+        has_alpha = img.mode in ('RGBA', 'LA') or (
+            img.mode == 'P' and 'transparency' in img.info
+        )
+        img = img.convert('RGBA' if has_alpha else 'RGB')
         w, h = img.size
         side = min(w, h)
         left = (w - side) // 2
         top = (h - side) // 2
         img = img.crop((left, top, left + side, top + side)).resize((300, 300), PILImage.LANCZOS)
+        if has_alpha:
+            img.save(thumb_path, format='PNG', optimize=True)
+            return '.png'
         img.save(thumb_path, format='JPEG', quality=90)
-        return True
+        return '.jpg'
 
     def save_image(self, image, count: int = 0, max_count=0):
         # make parent dirs
