@@ -534,6 +534,41 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     },
   },
   {
+    name: "qwen_image_2",
+    label: "Qwen-Image-2.1",
+    group: "image",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      "config.process[0].model.name_or_path": [
+        "Comfy-Org/Qwen-Image-2.1",
+        defaultNameOrPath,
+      ],
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].train.unload_text_encoder": [false, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      // the Comfy-Org weights are pre-quantized int8 convrot; these qtypes
+      // match the checkpoints exactly, so the load is unchanged. Picking a
+      // different qtype re-quantizes layer by layer into that format.
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      // 2.1 is meant to be sampled without guidance
+      "config.process[0].sample.guidance_scale": [1.0, 4.0],
+    },
+    disableSections: ["network.conv", "train.unload_text_encoder"],
+    // one model: it edits when the dataset has control paths, and is plain
+    // text to image when it does not
+    additionalSections: [
+      "datasets.multi_control_paths",
+      "sample.multi_ctrl_imgs",
+      "model.low_vram",
+      "model.layer_offloading",
+    ],
+  },
+  {
     name: "hidream",
     label: "HiDream",
     group: "image",

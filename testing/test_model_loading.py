@@ -178,6 +178,13 @@ MODEL_TESTS = {
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 4.0},
         "needs_control_image": True,
     },
+    "qwen_image_2": {
+        "model": {"name_or_path": "Comfy-Org/Qwen-Image-2.1", "quantize": True, "quantize_te": True},
+        # 2.1 is meant to be sampled without guidance. One arch: the control
+        # image exercises the reference path, which plain t2i is a subset of
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
     # ---- legacy monolith archs (components adopted into v2 on load) ----
     "sd1": {
         "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"},

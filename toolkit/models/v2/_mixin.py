@@ -672,6 +672,11 @@ class OstrisModelMixin:
         (and importer-assigned bias) legitimately report as missing keys."""
         from toolkit.util.ostris_quant import OstrisLinear
 
+        # Anything the importer already materialized is not missing, it is
+        # done: a convrot embedding becomes a plain nn.Embedding holding the
+        # unrotated table, so its key is gone from the state dict on purpose.
+        # Taken before the load, while everything else is still on meta.
+        preloaded = {n for n, p in model.named_parameters() if not p.is_meta}
         result = model.load_state_dict(state_dict, assign=True, strict=False)
         quantized_param_keys = set()
         for name, m in model.named_modules():
@@ -679,7 +684,11 @@ class OstrisModelMixin:
                 quantized_param_keys.add(f"{name}.weight")
                 if m.bias is not None:
                     quantized_param_keys.add(f"{name}.bias")
-        bad_missing = [k for k in result.missing_keys if k not in quantized_param_keys]
+        bad_missing = [
+            k
+            for k in result.missing_keys
+            if k not in quantized_param_keys and k not in preloaded
+        ]
         if bad_missing or result.unexpected_keys:
             raise ValueError(
                 f"{type(model).__name__} load mismatch: missing {bad_missing[:8]}, "
