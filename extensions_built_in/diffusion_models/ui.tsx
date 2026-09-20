@@ -555,8 +555,7 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       // different qtype re-quantizes layer by layer into that format.
       "config.process[0].model.qtype": ["convrot8", "qfloat8"],
       "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
-      // 2.1 is meant to be sampled without guidance
-      "config.process[0].sample.guidance_scale": [1.0, 4.0],
+      "config.process[0].sample.guidance_scale": [3.0, 4.0],
     },
     disableSections: ["network.conv", "train.unload_text_encoder"],
     // one model: it edits when the dataset has control paths, and is plain
