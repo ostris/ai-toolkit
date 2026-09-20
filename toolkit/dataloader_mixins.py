@@ -931,7 +931,13 @@ class ImageProcessingDTOMixin:
             np_img = np_img[:, :, :3]
             img = Image.fromarray(np_img)
 
-        img = img.convert('RGB')
+        # load_rgba keeps a 4th channel for models with an RGBA VAE. alpha_mask
+        # consumes the alpha itself, so the two are mutually exclusive.
+        if self.load_rgba and not self.use_alpha_as_mask:
+            # sources without alpha get a fully opaque one
+            img = img.convert('RGBA')
+        else:
+            img = img.convert('RGB')
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
@@ -1182,7 +1188,11 @@ class ControlFileItemDTOMixin:
                 img = Image.open(control_path)
                 img = exif_transpose(img)
 
-                if img.mode in ("RGBA", "LA"):
+                if self.load_rgba:
+                    # keep the alpha instead of flattening it; sources without
+                    # one get a fully opaque alpha
+                    img = img.convert("RGBA")
+                elif img.mode in ("RGBA", "LA"):
                     # Create a background with the specified transparent color
                     transparent_color = tuple(self.dataset_config.control_transparent_color)
                     background = Image.new("RGB", img.size, transparent_color)
@@ -1514,9 +1524,13 @@ class AugmentationFileItemDTOMixin:
         # save the original tensor
         self.unaugmented_tensor = transforms.ToTensor()(img) if transform is None else transform(img)
 
+        has_alpha = img.mode == 'RGBA'
         open_cv_image = np.array(img)
-        # Convert RGB to BGR
-        open_cv_image = open_cv_image[:, :, ::-1].copy()
+        # Convert RGB to BGR, leaving any alpha channel where it is
+        if has_alpha:
+            open_cv_image = open_cv_image[:, :, [2, 1, 0, 3]].copy()
+        else:
+            open_cv_image = open_cv_image[:, :, ::-1].copy()
 
         # apply augmentations
         transformed = self.aug_transform(image=open_cv_image)
@@ -1533,7 +1547,7 @@ class AugmentationFileItemDTOMixin:
             self.aug_replay_spatial_transforms = augmented_params
 
         # convert back to RGB tensor
-        augmented = cv2.cvtColor(augmented, cv2.COLOR_BGR2RGB)
+        augmented = cv2.cvtColor(augmented, cv2.COLOR_BGRA2RGBA if has_alpha else cv2.COLOR_BGR2RGB)
 
         # convert to PIL image
         augmented = Image.fromarray(augmented)
@@ -1550,20 +1564,24 @@ class AugmentationFileItemDTOMixin:
 
         # save colorspace to convert back to
         colorspace = img.mode
+        has_alpha = colorspace == 'RGBA'
 
-        # convert to rgb
-        img = img.convert('RGB')
+        # convert to rgb, keeping alpha so it rides the same spatial transform
+        img = img.convert('RGBA' if has_alpha else 'RGB')
 
         open_cv_image = np.array(img)
-        # Convert RGB to BGR
-        open_cv_image = open_cv_image[:, :, ::-1].copy()
+        # Convert RGB to BGR, leaving any alpha channel where it is
+        if has_alpha:
+            open_cv_image = open_cv_image[:, :, [2, 1, 0, 3]].copy()
+        else:
+            open_cv_image = open_cv_image[:, :, ::-1].copy()
 
         # Replay transforms
         transformed = A.ReplayCompose.replay(self.aug_replay_spatial_transforms, image=open_cv_image)
         augmented = transformed["image"]
 
         # convert back to RGB tensor
-        augmented = cv2.cvtColor(augmented, cv2.COLOR_BGR2RGB)
+        augmented = cv2.cvtColor(augmented, cv2.COLOR_BGRA2RGBA if has_alpha else cv2.COLOR_BGR2RGB)
 
         # convert to PIL image
         augmented = Image.fromarray(augmented)
@@ -1859,6 +1877,10 @@ class LatentCachingFileItemDTOMixin:
         if self.dataset_config.cache_tensors_to_disk:
             # tensor is stored in the cache file, invalidate caches made without it
             item["cache_tensors_to_disk"] = True
+        if self.load_rgba:
+            # the encoded alpha changes the latent; only added when on so caches
+            # made before this existed stay valid for models that do not use it
+            item["load_rgba"] = True
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):

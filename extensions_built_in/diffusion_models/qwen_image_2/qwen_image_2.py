@@ -206,11 +206,11 @@ class QwenImage2Model(BaseModel):
         self.print_and_status_update("Model Loaded")
 
     # ------------------------------------------------------------------
-    # VAE. The latents are RGBA; toolkit images are RGB, so encode pads an
-    # opaque alpha channel and decode drops it again (unless model_kwargs.rgba).
+    # VAE. The latents are RGBA. Images without alpha get an opaque one on
+    # encode, and decode drops it again unless RGBA output is on.
     # ------------------------------------------------------------------
     @property
-    def output_rgba(self) -> bool:
+    def load_rgba(self) -> bool:
         return bool(self.model_config.model_kwargs.get("rgba", False))
 
     def _latent_stats(self, device, dtype):
@@ -242,7 +242,7 @@ class QwenImage2Model(BaseModel):
 
     def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
         images = self._decode_rgba(latents, device=device, dtype=dtype)
-        if not self.output_rgba:
+        if not self.load_rgba:
             images = images[:, :3]
         return images
 
@@ -277,7 +277,7 @@ class QwenImage2Model(BaseModel):
         return images.squeeze(2).to(device, dtype=dtype)
 
     def decode_to_images(self, latents: torch.Tensor) -> List[Image.Image]:
-        """Decode to PIL, keeping the alpha channel when model_kwargs.rgba is set."""
+        """Decode to PIL, keeping the alpha channel when load_rgba is set."""
         return [
             self.image_tensor_to_pil(image) for image in self.decode_latents(latents)
         ]
@@ -521,9 +521,12 @@ class QwenImage2Model(BaseModel):
         ]
         condition_images = None
         if paths:
+            # same channels the dataloader gives training references, so a
+            # transparent reference behaves the same way in both
+            mode = "RGBA" if self.load_rgba else "RGB"
             tensors = [
                 torch.from_numpy(
-                    np.array(Image.open(path).convert("RGBA"), dtype=np.float32) / 255.0
+                    np.array(Image.open(path).convert(mode), dtype=np.float32) / 255.0
                 )
                 .permute(2, 0, 1)
                 .unsqueeze(0)

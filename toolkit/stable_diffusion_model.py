@@ -301,6 +301,11 @@ class StableDiffusion:
     @property
     def is_ssd(self):
         return self.arch == 'ssd'
+
+    @property
+    def load_rgba(self) -> bool:
+        # no legacy arch has an RGBA VAE
+        return False
     
     @property
     def is_v3(self):

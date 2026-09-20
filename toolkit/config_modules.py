@@ -1362,6 +1362,10 @@ class GenerateImageConfig:
             if self.output_ext == 'mp3':
                 add_album_artwork(audio_path)
         else:
+            if image.mode == 'RGBA' and self.output_ext not in ['png', 'webp']:
+                # jpg cannot carry alpha, and dropping it silently would hide
+                # the transparency an RGBA model just generated
+                self.output_ext = 'png'
             # TODO save image gen header info for A1111 and us, our seeds probably wont match
             image.save(self.get_image_path(count, max_count))
             # do prompt file

@@ -556,6 +556,13 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "config.process[0].model.qtype": ["convrot8", "qfloat8"],
       "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
       "config.process[0].sample.guidance_scale": [3.0, 4.0],
+      // the VAE is RGBA: images load, encode and decode with their alpha
+      "config.process[0].model.model_kwargs": [
+        {
+          rgba: false,
+        },
+        {},
+      ],
     },
     disableSections: ["network.conv", "train.unload_text_encoder"],
     // one model: it edits when the dataset has control paths, and is plain
@@ -565,6 +572,52 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "sample.multi_ctrl_imgs",
       "model.low_vram",
       "model.layer_offloading",
+    ],
+    customModelSelectOptions: [
+      {
+        type: "checkbox",
+        label: "Transparency (RGBA)",
+        getValue: (config: JobConfig) =>
+          config?.config?.process?.[0]?.model?.model_kwargs?.rgba ?? false,
+        onChange: (
+          value: boolean,
+          config: JobConfig,
+          setJobConfig: (value: any, key: string) => void,
+        ) => {
+          const kwargs = {
+            ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}),
+          };
+          if (value) {
+            kwargs.rgba = true;
+          } else {
+            delete kwargs.rgba;
+          }
+          setJobConfig(kwargs, "config.process[0].model.model_kwargs");
+        },
+        doc: {
+          title: "Transparency (RGBA)",
+          description: (
+            <div className="space-y-2">
+              <p>
+                This model&apos;s VAE is natively RGBA, so alpha can be carried
+                end to end. When on, dataset images and reference images load
+                with their alpha channel, the VAE encodes all four channels, and
+                samples are saved as PNGs with their transparency intact.
+              </p>
+              <p>
+                Images with no alpha of their own get a fully opaque one, so a
+                mixed dataset is fine. Turn this off to train and sample flat
+                RGB: alpha is dropped on the way in and added back as opaque.
+              </p>
+              <p>
+                Changing this re-caches latents, and it cannot be combined with
+                a dataset using <code>alpha_mask</code>, which consumes the
+                alpha channel as a loss mask instead.
+              </p>
+            </div>
+          ),
+        },
+      },
     ],
   },
   {

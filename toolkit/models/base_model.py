@@ -257,6 +257,14 @@ class BaseModel:
         return self.arch == 'ssd'
 
     @property
+    def load_rgba(self) -> bool:
+        """Images keep an alpha channel end to end: the dataloader loads them
+        as RGBA (opaque alpha when the source has none), the VAE encodes four
+        channels, and decoded samples keep the alpha. Only models with an RGBA
+        VAE override this."""
+        return False
+
+    @property
     def is_v3(self):
         return self.arch == 'sd3'
 
