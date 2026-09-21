@@ -99,7 +99,14 @@ def mxfp8_config_or_none(recipe: str = "MXFP8_RCEIL") -> Tuple[Optional[object],
     if torch.cuda.get_device_capability() < (10, 0):
         cap = torch.cuda.get_device_capability()
         return None, f"mxfp8 needs sm_100+ (Blackwell); got sm_{cap[0]}{cap[1]}"
-    # ③ native kernel guard (the dim1 CUDA cast op must be registered/loadable)
+    # ③ native kernel guard (the dim1 CUDA cast op must be registered/loadable).
+    # torchao>=0.19 defines the op lazily in mx_formats.kernels (gated there on
+    # sm_100+ and CUDA>=12.8); older torchao registered it at `import torchao`.
+    if not hasattr(torch.ops.torchao, "mxfp8_quantize"):
+        try:
+            import torchao.prototype.mx_formats.kernels  # noqa: F401
+        except Exception:
+            pass
     if not hasattr(torch.ops.torchao, "mxfp8_quantize"):
         return None, "native mxfp8 kernel not built (need source-built torchao)"
     try:
@@ -136,7 +143,12 @@ def _move_mxtensor(mxt, device):
 
 
 def _static_casts():
-    """Lazy (cast_dim0, cast_dim1) using the torchao Triton/CUDA mxfp8 kernels."""
+    """Lazy (cast_dim0, cast_dim1) using the torchao Triton/CUDA mxfp8 kernels.
+
+    torchao>=0.19 routes MXTensor mm through torch's F.scaled_mm v2, which on
+    some GPUs (sm_120 consumer Blackwell) only accepts SWIZZLE_32_4_4 scales.
+    Probe once with the fast unswizzled casts (Triton dim0 / native CUDA dim1)
+    and fall back to swizzled TORCH casts when the unswizzled mm is rejected."""
     global _STATIC_CASTS
     if _STATIC_CASTS is not None:
         return _STATIC_CASTS
@@ -150,16 +162,42 @@ def _static_casts():
     BS = 32
     KP = KernelPreference.AUTO
     SM = ScaleCalculationMode.RCEIL
-    T0 = MXFP8Dim0CastKernelChoice.TRITON
-    C1 = MXFP8Dim1CastKernelChoice.CUDA
 
-    def cast_dim0(t):  # activation/dim0 cast -> MXTensor (fast Triton kernel)
-        return MXTensor.to_mx(t.contiguous(), e4m3, BS, SM, KP, mxfp8_dim0_cast_kernel_choice=T0)
+    def make_casts(swizzled: bool):
+        if swizzled:
+            T0 = MXFP8Dim0CastKernelChoice.TORCH
 
-    def cast_dim1(W):  # weight dim1 cast -> MXTensor (native CUDA kernel)
-        return _to_mxfp8_dim1_kernel_wrapper(W, BS, e4m3, W.dtype, KP, C1, SM)
+            def cast_dim0(t):  # -> swizzled MXTensor (TORCH cast + to_blocked scales)
+                return MXTensor.to_mx(t.contiguous(), e4m3, BS, SM, KP,
+                                      is_swizzled_scales=True,
+                                      mxfp8_dim0_cast_kernel_choice=T0)
 
-    _STATIC_CASTS = (cast_dim0, cast_dim1)
+            def cast_dim1(W):  # -> swizzled MXTensor shaped like W.t() (blocks along N)
+                return MXTensor.to_mx(W.t().contiguous(), e4m3, BS, SM, KP,
+                                      is_swizzled_scales=True,
+                                      mxfp8_dim0_cast_kernel_choice=T0)
+        else:
+            T0 = MXFP8Dim0CastKernelChoice.TRITON
+            C1 = MXFP8Dim1CastKernelChoice.CUDA
+
+            def cast_dim0(t):  # activation/dim0 cast -> MXTensor (fast Triton kernel)
+                return MXTensor.to_mx(t.contiguous(), e4m3, BS, SM, KP, mxfp8_dim0_cast_kernel_choice=T0)
+
+            def cast_dim1(W):  # weight dim1 cast -> MXTensor (native CUDA kernel)
+                return _to_mxfp8_dim1_kernel_wrapper(W, BS, e4m3, W.dtype, KP, C1, SM)
+
+        return cast_dim0, cast_dim1
+
+    casts = make_casts(swizzled=False)
+    if torch.cuda.is_available():
+        try:
+            # probe whether an unswizzled MX mm is accepted on this torch/GPU
+            _a = casts[0](torch.randn(128, 64, device="cuda", dtype=torch.bfloat16))
+            _b = casts[1](torch.randn(64, 64, device="cuda", dtype=torch.bfloat16))
+            torch.mm(_a, _b.t())
+        except Exception:
+            casts = make_casts(swizzled=True)
+    _STATIC_CASTS = casts
     return _STATIC_CASTS
 
 
