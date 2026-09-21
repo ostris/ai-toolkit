@@ -178,6 +178,13 @@ MODEL_TESTS = {
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 4.0},
         "needs_control_image": True,
     },
+    "qwen_image_2": {
+        "model": {"name_or_path": "Comfy-Org/Qwen-Image-2.1", "quantize": True, "quantize_te": True},
+        # 2.1 is meant to be sampled without guidance. One arch: the control
+        # image exercises the reference path, which plain t2i is a subset of
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
     # ---- legacy monolith archs (components adopted into v2 on load) ----
     "sd1": {
         "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"},
@@ -190,6 +197,11 @@ MODEL_TESTS = {
     "ace_step_15": {
         "model": {"name_or_path": "ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors", "quantize": True, "quantize_te": True},
         "sample": {"width": 512, "height": 512, "num_inference_steps": 20, "guidance_scale": 4.0, "seed": 42},
+    },
+    "yue2": {
+        # untagged test prompt = style only; keep the AR budget short for the smoke run
+        "model": {"name_or_path": "Comfy-Org/YuE2/checkpoints/yue2_3b_int8_convrot.safetensors", "quantize": True, "qtype": "convrot8", "model_kwargs": {"sample_max_seconds": 15, "cot": "off"}},
+        "sample": {"width": 512, "height": 512, "num_inference_steps": 16, "guidance_scale": 1.0, "seed": 42},
     },
     "f-lite": {
         "model": {"name_or_path": "Freepik/F-Lite", "quantize": True, "quantize_te": True},

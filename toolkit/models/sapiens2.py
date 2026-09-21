@@ -766,7 +766,8 @@ class Sapiens2(nn.Module):
         rope_sincos = self.rope_embed(H=patch_resolution[0], W=patch_resolution[1])
         outs = []
         for i, layer in enumerate(self.blocks):
-            if self.gradient_checkpointing and self.training:
+            # gate on is_grad_enabled, not self.training: DFE keeps this in eval
+            if self.gradient_checkpointing and torch.is_grad_enabled():
                 x = checkpoint(layer, x, rope_sincos, use_reentrant=False)
             else:
                 x = layer(x, rope=rope_sincos)

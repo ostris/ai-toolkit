@@ -69,6 +69,8 @@ class SampleItem:
         self.sample_steps: int = kwargs.get('sample_steps', sample_config.sample_steps)
         self.fps: int = kwargs.get('fps', sample_config.fps)
         self.num_frames: int = kwargs.get('num_frames', sample_config.num_frames)
+        # audio models: max seconds to generate
+        self.duration: Optional[float] = kwargs.get('duration', sample_config.duration)
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
         # for multi control image models
@@ -109,6 +111,7 @@ class SampleConfig:
         self.extra_values = kwargs.get('extra_values', [])
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
+        self.duration: Optional[float] = kwargs.get('duration', None)
         if self.num_frames > 1 and self.ext not in ['webp']:
             print("Changing sample extension to animated webp")
             self.ext = 'webp'
@@ -564,6 +567,9 @@ class TrainConfig:
         self.target_norm_std = kwargs.get('target_norm_std', None)
         self.target_norm_std_value = kwargs.get('target_norm_std_value', 1.0)
         self.timestep_type = kwargs.get('timestep_type', 'sigmoid')  # sigmoid, linear, lognorm_blend, next_sample, weighted, one_step
+        
+        self.first_timestep_chance = kwargs.get('first_timestep_chance', 0.0)
+        
         self.next_sample_timesteps = kwargs.get('next_sample_timesteps', 8)
         self.linear_timesteps = kwargs.get('linear_timesteps', False)
         self.linear_timesteps2 = kwargs.get('linear_timesteps2', False)
@@ -838,6 +844,8 @@ class EMAConfig:
         self.ema_decay: float = kwargs.get('ema_decay', 0.999)
         # feeds back the decay difference into the parameter
         self.use_feedback: bool = kwargs.get('use_feedback', False)
+        # per-step fraction of (shadow - param) pulled back into the param; keep well below 1 - ema_decay
+        self.feedback_rate: float = kwargs.get('feedback_rate', 0.001)
         
         # every update, the params are multiplied by this amount
         # only use for things without a bias like lora
@@ -1162,6 +1170,7 @@ class GenerateImageConfig:
             ctrl_img_3: Optional[str] = None,  # third control image for multi control model
             num_frames: int = 1,
             fps: int = 15,
+            duration: Optional[float] = None,  # audio models: max seconds
             ctrl_idx: int = 0,
             do_cfg_norm: bool = False,
     ):
@@ -1194,6 +1203,7 @@ class GenerateImageConfig:
         self.extra_values = extra_values if extra_values is not None else []
         self.num_frames = num_frames
         self.fps = fps
+        self.duration = duration
         self.ctrl_img = ctrl_img
         self.ctrl_idx = ctrl_idx
         
@@ -1286,16 +1296,19 @@ class GenerateImageConfig:
         for file in files:
             tmp_thumb = os.path.join(tmp_folder, file + '.thumb')
             try:
-                if self._generate_thumbnail(os.path.join(tmp_folder, file), tmp_thumb):
+                thumb_ext = self._generate_thumbnail(os.path.join(tmp_folder, file), tmp_thumb)
+                if thumb_ext:
                     os.makedirs(thumbs_folder, exist_ok=True)
-                    os.replace(tmp_thumb, os.path.join(thumbs_folder, file + '.jpg'))
+                    os.replace(tmp_thumb, os.path.join(thumbs_folder, file + thumb_ext))
             except Exception as e:
                 print(f"Failed to generate thumbnail for {file}: {e}")
         for file in files:
             os.replace(os.path.join(tmp_folder, file), os.path.join(real_folder, file))
 
     def _generate_thumbnail(self, media_path, thumb_path):
-        # 300x300 center-cropped 90% jpg. Returns True if one was written.
+        # 300x300 center-cropped thumb. Returns the extension it wrote ('.png'
+        # when the source has alpha, which jpg cannot carry, else '.jpg'), or
+        # None when the format is not thumbnailable.
         from PIL import Image as PILImage
         ext = os.path.splitext(media_path)[1].lower()
         img = None
@@ -1308,22 +1321,38 @@ class GenerateImageConfig:
             cap.release()
             if ok:
                 img = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        elif ext in ['.mp3', '.wav', '.flac', '.ogg']:
+            # waveform cover rendered at thumb size so the UI never has to read the tags
+            from toolkit.audio.album_artwork import create_artwork, load_waveform
+            img = create_artwork(load_waveform(media_path), size=300)
         if img is None:
-            return False
-        img = img.convert('RGB')
+            return None
+        # without this the RGB under a transparent pixel shows through as a
+        # garbage color, which is what an RGBA sample's thumb used to look like
+        has_alpha = img.mode in ('RGBA', 'LA') or (
+            img.mode == 'P' and 'transparency' in img.info
+        )
+        img = img.convert('RGBA' if has_alpha else 'RGB')
         w, h = img.size
         side = min(w, h)
         left = (w - side) // 2
         top = (h - side) // 2
         img = img.crop((left, top, left + side, top + side)).resize((300, 300), PILImage.LANCZOS)
+        if has_alpha:
+            img.save(thumb_path, format='PNG', optimize=True)
+            return '.png'
         img.save(thumb_path, format='JPEG', quality=90)
-        return True
+        return '.jpg'
 
     def save_image(self, image, count: int = 0, max_count=0):
         # make parent dirs
         os.makedirs(self.output_folder, exist_ok=True)
         self.set_gen_time()
-        if isinstance(image, list):
+        if isinstance(image, str):
+            # text-generating models: the sample is the text itself
+            with open(self.get_prompt_path(count, max_count), 'w', encoding='utf-8') as f:
+                f.write(image)
+        elif isinstance(image, list):
             # video
             if self.num_frames == 1:
                 raise ValueError(f"Expected 1 img but got a list {len(image)}")
@@ -1356,6 +1385,10 @@ class GenerateImageConfig:
             if self.output_ext == 'mp3':
                 add_album_artwork(audio_path)
         else:
+            if image.mode == 'RGBA' and self.output_ext not in ['png', 'webp']:
+                # jpg cannot carry alpha, and dropping it silently would hide
+                # the transparency an RGBA model just generated
+                self.output_ext = 'png'
             # TODO save image gen header info for A1111 and us, our seeds probably wont match
             image.save(self.get_image_path(count, max_count))
             # do prompt file
@@ -1479,7 +1512,7 @@ class GenerateImageConfig:
         pass
     
     def log_image(self, image, count: int = 0, max_count=0):
-        if self.logger is None:
+        if self.logger is None or isinstance(image, str):
             return
 
         self.logger.log_image(image, count, self.prompt)

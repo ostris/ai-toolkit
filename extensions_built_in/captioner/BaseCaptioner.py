@@ -54,6 +54,8 @@ class CaptionConfig:
         # (low-vram machines); percent is the fraction of linears offloaded
         self.layer_offloading = kwargs.get("layer_offloading", False)
         self.layer_offloading_percent = kwargs.get("layer_offloading_percent", 1.0)
+        # [{path, strength, name}] applied as sidechains, never merged
+        self.loras = kwargs.get("loras", None) or []
 
 
 class BaseCaptioner(BaseExtensionProcess):
@@ -89,6 +91,7 @@ class BaseCaptioner(BaseExtensionProcess):
 
         self.caption_config = self.caption_config_class(**self.get_conf("caption", {}))
         self.model = None
+        self.lora_stack = None
         self.processor = None
         self.model2 = None
         self.processor2 = None
@@ -103,6 +106,7 @@ class BaseCaptioner(BaseExtensionProcess):
             self.start_stop_watcher()
             self.update_status("running", "Loading Model")
             self.load_model()
+            self.load_loras()
             self.maybe_compile_models()
             self.update_status("running", "Looking for files")
             self.find_files()
@@ -201,6 +205,28 @@ class BaseCaptioner(BaseExtensionProcess):
 
     def load_model(self):
         raise NotImplementedError("Model loading not implemented for this captioner")
+
+    def load_loras(self):
+        """Attach the configured LoRAs to self.model as forward-hook sidechains
+        (the inference engine's hook mode): the low-rank branch runs alongside
+        the layer in the model's compute dtype and the base weights are never
+        touched, so quantized weights stay on their grid and nothing is merged."""
+        specs = [
+            l for l in self.caption_config.loras if isinstance(l, dict) and l.get("path")
+        ]
+        if not specs or self.model is None:
+            return
+        from toolkit.inference_lora import LoRAStack
+
+        # self is the holder: LoRAStack reads .model (and .text_encoder, unused here)
+        stack = LoRAStack(self, mode="hook").load(
+            specs, status_fn=self.print_and_status_update
+        )
+        stack.apply(status_fn=self.print_and_status_update)
+        self.lora_stack = stack
+        self.print_and_status_update(
+            f"Applied {len(stack.loras)} LoRA(s) as sidechains"
+        )
 
     def maybe_compile_models(self):
         if not self.caption_config.compile:

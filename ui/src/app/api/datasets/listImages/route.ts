@@ -12,7 +12,14 @@ export async function POST(request: Request) {
   const datasetsPath = await getDatasetsRoot();
   const body = await request.json();
   const { datasetName } = body;
-  const datasetFolder = path.join(datasetsPath, datasetName);
+  if (typeof datasetName !== 'string' || datasetName.trim() === '') {
+    return NextResponse.json({ error: 'Invalid dataset name' }, { status: 400 });
+  }
+  const datasetFolder = path.resolve(datasetsPath, datasetName);
+  // Must resolve to a direct child of the datasets root; rejects "..", absolute paths, and the root itself.
+  if (path.dirname(datasetFolder) !== datasetsPath || datasetFolder === datasetsPath) {
+    return NextResponse.json({ error: 'Invalid dataset name' }, { status: 400 });
+  }
 
   try {
     // Check if folder exists

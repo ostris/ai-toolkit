@@ -247,7 +247,31 @@ def import_comfy_quantized_layers(
                 )
             parent_path, _, attr = module_path.rpartition(".")
             parent = root.get_submodule(parent_path) if parent_path else root
-            setattr(parent, attr, Int8Embedding(weight, weight_scale, orig_dtype))
+            if conf.get("convrot"):
+                # rows are stored rotated like a linear's weight: attach to a stand-in linear
+                # (same shape) so the convrot backend undoes the rotation, then keep the table
+                # as a plain embedding (per-row lookups cannot apply the group rotation)
+                stand_in = torch.nn.Linear(
+                    module.embedding_dim, module.num_embeddings, bias=False, device="meta"
+                )
+                quantizer = get_ostris_quantizer("convrot8")
+                stand_in.register_buffer("cr8_qdata", weight.contiguous(), persistent=False)
+                stand_in.register_buffer(
+                    "cr8_scales",
+                    weight_scale.detach().float().reshape(-1).contiguous().view(torch.uint8),
+                    persistent=False,
+                )
+                stand_in.cr8_rot_size = int(conf.get("convrot_groupsize", 256))
+                _to_ostris(stand_in, quantizer, orig_dtype)
+                table = quantizer.dequantize_folded(stand_in).to(orig_dtype)
+                new = torch.nn.Embedding(
+                    module.num_embeddings, module.embedding_dim, padding_idx=module.padding_idx,
+                    device="meta", dtype=orig_dtype,
+                )
+                new.weight = torch.nn.Parameter(table, requires_grad=False)
+                setattr(parent, attr, new)
+            else:
+                setattr(parent, attr, Int8Embedding(weight, weight_scale, orig_dtype))
             converted += 1
             continue
 

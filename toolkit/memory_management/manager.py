@@ -8,6 +8,8 @@ from .manager_modules import (
     OstrisLinearLayerMemoryManager,
     EmbeddingLayerMemoryManager,
     _DEVICE_STATE,
+    _move_own_param,
+    _storage_device,
 )
 import random
 
@@ -290,9 +292,12 @@ class MemoryManager:
         for sub in module.modules():
             if hasattr(sub, "_layer_memory_manager"):
                 continue
-            for p in sub.parameters(recurse=False):
-                if p is not None and p.device != device:
-                    p.data = p.data.to(device)
+            # quantized tensor subclasses (torchao) ignore `p.data = ...` -- an unmanaged
+            # quantized linear (offload_percent < 1) would stay on cpu; _move_own_param
+            # swaps the Parameter in that case
+            for name, p in list(sub.named_parameters(recurse=False)):
+                if p is not None and _storage_device(p) != device:
+                    _move_own_param(sub, name, p, device)
             for name, b in sub._buffers.items():
                 if b is not None and b.device != device:
                     sub._buffers[name] = b.to(device)

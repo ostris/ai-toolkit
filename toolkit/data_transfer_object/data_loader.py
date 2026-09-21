@@ -76,6 +76,8 @@ class FileItemDTO(
             if _sd is not None and hasattr(_sd, "get_frame_count_snapper")
             else None
         )
+        # models with an RGBA VAE want the alpha channel loaded and encoded
+        self.load_rgba = _sd is not None and _sd.load_rgba
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(
