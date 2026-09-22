@@ -122,6 +122,16 @@ class SDTrainer(BaseSDTrainProcess):
     def before_model_load(self):
         pass
 
+    def get_batch_target_size(self, batch: 'DataLoaderBatchDTO'):
+        # (width, height) of the bucket the batch was cropped to; what the noisy
+        # latents will be, so reference sizing can match it
+        item = batch.file_items[0]
+        width = getattr(item, 'crop_width', None)
+        height = getattr(item, 'crop_height', None)
+        if width is None or height is None:
+            return None
+        return (width, height)
+
     def get_blank_control_image(self):
         # noise instead of a black image so the fallback does not read as a
         # meaningful (solid black) reference
@@ -242,13 +252,16 @@ class SDTrainer(BaseSDTrainProcess):
                         ctrl_img = ctrl_img_list[0] if len(ctrl_img_list) > 0 else None
                     
                     
+                    target_size = (gen_img_config.width, gen_img_config.height)
                     positive = self.sd.encode_prompt(
                         gen_img_config.prompt,
-                        control_images=ctrl_img
+                        control_images=ctrl_img,
+                        target_size=target_size,
                     ).to('cpu')
                     negative = self.sd.encode_prompt(
                         gen_img_config.negative_prompt,
-                        control_images=ctrl_img
+                        control_images=ctrl_img,
+                        target_size=target_size,
                     ).to('cpu')
                 else:
                     positive = self.sd.encode_prompt(gen_img_config.prompt).to('cpu')
@@ -1325,12 +1338,13 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt_kwargs = {}
                     if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
                         prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        prompt_kwargs['target_size'] = self.get_batch_target_size(batch)
                     embeds_to_use = self.sd.encode_prompt(
                         prompt_list,
-                        long_prompts=self.do_long_prompts).to(
+                        long_prompts=self.do_long_prompts,
+                        **prompt_kwargs).to(
                         self.device_torch,
-                        dtype=dtype,
-                        **prompt_kwargs
+                        dtype=dtype
                     ).detach()
 
             # dont use network on this
@@ -1739,6 +1753,7 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt_kwargs = {}
                     if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
                         prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        prompt_kwargs['target_size'] = self.get_batch_target_size(batch)
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
@@ -1818,6 +1833,7 @@ class SDTrainer(BaseSDTrainProcess):
                                 self.adapter.is_unconditional_run = False
                             if self.sd.encode_control_in_text_embeddings and batch.control_tensor_list is not None:
                                 prompt_kwargs['control_images'] = batch.control_tensor_list
+                                prompt_kwargs['target_size'] = self.get_batch_target_size(batch)
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,

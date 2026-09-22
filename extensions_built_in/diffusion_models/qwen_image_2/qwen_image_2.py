@@ -132,11 +132,10 @@ class QwenImage2Model(BaseModel):
         # embeddings as vision tokens and their latents into the sequence.
         self.encode_control_in_text_embeddings = True
         self.has_multiple_control_images = True
-        # References are bucket-resized to the target size by the dataloader.
-        # The DiT reads the image-slot layout from row 0 of the batch, so every
-        # sample must contribute the same slot count -- raw (per-image aspect)
-        # references would break that.
-        self.use_raw_control_images = False
+        # References keep their own size/aspect; prepare_condition_image budgets them
+        # identically in the cache and training paths so slot counts always agree.
+        # Batch > 1 requires same-size references (checked in encode_condition_images).
+        self.use_raw_control_images = True
 
     @staticmethod
     def get_train_scheduler():
@@ -294,12 +293,37 @@ class QwenImage2Model(BaseModel):
     # ------------------------------------------------------------------
     @property
     def control_image_max_pixels(self) -> int:
-        """Pixel budget a reference image is shrunk to fit. A reference that is
-        already smaller keeps its size (only snapped to the 32 px grid), so a
-        bucket-resized training reference stays at the target resolution."""
+        """Pixel budget a reference image is shrunk to fit when no target size is
+        known (blank/static prompts). A smaller reference keeps its size, only
+        snapped to the 32 px grid."""
         return int(
             self.model_config.model_kwargs.get("control_image_max_pixels", 1024 * 1024)
         )
+
+    @property
+    def match_target_res(self) -> bool:
+        """References are scaled to the target's pixel area (own aspect kept).
+        model_kwargs.match_target_res: false -> control_image_max_pixels cap only."""
+        return bool(self.model_config.model_kwargs.get("match_target_res", True))
+
+    @property
+    def text_embedding_uses_target_size(self) -> bool:
+        # the dataloader adds the item's bucket size to the text-embedding cache key
+        return self.match_target_res
+
+    def get_text_embedding_space_version(self) -> str:
+        # reference sizing changes the vision tokens; keep caches from different rules apart
+        rule = "match" if self.match_target_res else f"cap{self.control_image_max_pixels}"
+        return f"{self.text_embedding_space_version}_ref{rule}"
+
+    def _target_pixels(self, target_size) -> Optional[int]:
+        """`(width, height)` -> pixel area on the 32 px grid, or None. Floors the
+        same way generate_single_image does so the TE and VAE passes agree."""
+        if target_size is None:
+            return None
+        divisor = self.get_bucket_divisibility()
+        width, height = target_size
+        return int(width // divisor * divisor) * int(height // divisor * divisor)
 
     def _normalize_control_images(self, control_images, batch_size: int) -> List[List]:
         """Any of the shapes the toolkit hands over -> one list per batch item.
@@ -327,10 +351,14 @@ class QwenImage2Model(BaseModel):
         return control_images
 
     def _prepare_control_images(
-        self, control_images: List[List[torch.Tensor]]
+        self,
+        control_images: List[List[torch.Tensor]],
+        target_pixels: Optional[int] = None,
     ) -> List[List[torch.Tensor]]:
-        """Put every reference on the 32 px grid, as `(1, C, H, W)` in [0, 1]."""
-        budget = self.control_image_max_pixels
+        """Put every reference on the 32 px grid, as `(1, C, H, W)` in [0, 1].
+        With match_target_res and a known target, scale each to the target's area."""
+        match = self.match_target_res and target_pixels is not None
+        budget = target_pixels if match else self.control_image_max_pixels
         prepared = []
         for sample in control_images:
             images = []
@@ -338,7 +366,9 @@ class QwenImage2Model(BaseModel):
                 if image.dim() == 3:
                     image = image.unsqueeze(0)
                 images.append(
-                    prepare_condition_image(image.to(self.device_torch), budget)
+                    prepare_condition_image(
+                        image.to(self.device_torch), budget, match=match
+                    )
                 )
             prepared.append(images)
         return prepared
@@ -378,7 +408,9 @@ class QwenImage2Model(BaseModel):
     # ------------------------------------------------------------------
     # Prompts
     # ------------------------------------------------------------------
-    def get_prompt_embeds(self, prompt, control_images=None) -> AdvancedPromptEmbeds:
+    def get_prompt_embeds(
+        self, prompt, control_images=None, target_size=None
+    ) -> AdvancedPromptEmbeds:
         if isinstance(prompt, str):
             prompt = [prompt]
         if self.text_encoder[0].device != self.device_torch:
@@ -387,7 +419,8 @@ class QwenImage2Model(BaseModel):
         images = None
         if control_images is not None:
             samples = self._prepare_control_images(
-                self._normalize_control_images(control_images, len(prompt))
+                self._normalize_control_images(control_images, len(prompt)),
+                target_pixels=self._target_pixels(target_size),
             )
             images = [[tensor_to_pil(image) for image in sample] for sample in samples]
 
@@ -446,8 +479,14 @@ class QwenImage2Model(BaseModel):
                 control = batch.control_tensor_list
                 if control is None:
                     control = batch.control_tensor
+                # same area the dataloader cached the prompt against (bucket crop)
+                target_pixels = self._target_pixels((
+                    latent_model_input.shape[3] * VAE_SCALE_FACTOR,
+                    latent_model_input.shape[2] * VAE_SCALE_FACTOR,
+                ))
                 samples = self._prepare_control_images(
-                    self._normalize_control_images(control, batch_size)
+                    self._normalize_control_images(control, batch_size),
+                    target_pixels=target_pixels,
                 )
                 condition_latents, condition_shapes = self.encode_condition_images(
                     samples
@@ -533,7 +572,8 @@ class QwenImage2Model(BaseModel):
                 for path in paths
             ]
             condition_images = self._prepare_control_images(
-                self._normalize_control_images([tensors], 1)
+                self._normalize_control_images([tensors], 1),
+                target_pixels=self._target_pixels((gen_config.width, gen_config.height)),
             )
 
         return pipeline(

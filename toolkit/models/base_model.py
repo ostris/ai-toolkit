@@ -681,19 +681,21 @@ class BaseModel:
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
                         conditional_embeds = self.encode_prompt(
-                            gen_config.prompt, 
-                            gen_config.prompt_2, 
+                            gen_config.prompt,
+                            gen_config.prompt_2,
                             force_all=True,
-                            control_images=ctrl_img
+                            control_images=ctrl_img,
+                            target_size=(gen_config.width, gen_config.height),
                         )
 
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = True
                         unconditional_embeds = self.encode_prompt(
-                            gen_config.negative_prompt, 
-                            gen_config.negative_prompt_2, 
+                            gen_config.negative_prompt,
+                            gen_config.negative_prompt_2,
                             force_all=True,
-                            control_images=ctrl_img
+                            control_images=ctrl_img,
+                            target_size=(gen_config.width, gen_config.height),
                         )
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
@@ -1183,6 +1185,7 @@ class BaseModel:
             max_length=None,
             dropout_prob=0.0,
             control_images=None,
+            target_size=None,
     ) -> PromptEmbeds:
         # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt
@@ -1194,7 +1197,11 @@ class BaseModel:
             prompt2 = [prompt2]
         # if control_images in the signature, pass it. This keep from breaking plugins
         if self.encode_control_in_text_embeddings:
-            return self.get_prompt_embeds(prompt, control_images=control_images)
+            kwargs = {"control_images": control_images}
+            # target (width, height) only for models that size references against it
+            if target_size is not None and "target_size" in inspect.signature(self.get_prompt_embeds).parameters:
+                kwargs["target_size"] = target_size
+            return self.get_prompt_embeds(prompt, **kwargs)
 
         return self.get_prompt_embeds(prompt)
 

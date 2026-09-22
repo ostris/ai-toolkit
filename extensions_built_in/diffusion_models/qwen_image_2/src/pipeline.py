@@ -54,17 +54,20 @@ def calculate_dimensions(target_area: int, ratio: float) -> tuple[int, int]:
     return _snap(width), _snap(width / ratio)
 
 
-def prepare_condition_image(image: torch.Tensor, max_pixels: int) -> torch.Tensor:
+def prepare_condition_image(
+    image: torch.Tensor, max_pixels: int, match: bool = False
+) -> torch.Tensor:
     """Put one `(1, C, H, W)` condition image on the 32 px grid, shrinking it
-    first if it is over the pixel budget.
+    first if it is over the pixel budget. With `match`, scale it to the budget's
+    area in both directions (own aspect kept) instead of only shrinking.
 
-    Deterministic in the image alone, on purpose: the Qwen3-VL pass and the VAE
-    pass happen in different calls (`get_prompt_embeds` and
+    Deterministic in the image and budget alone, on purpose: the Qwen3-VL pass
+    and the VAE pass happen in different calls (`get_prompt_embeds` and
     `get_noise_prediction`) and must agree on the size to the pixel, or the slot
     count and the latent-token count disagree and the sequence is rejected.
     """
     height, width = image.shape[2], image.shape[3]
-    if height * width > max_pixels:
+    if match or height * width > max_pixels:
         new_width, new_height = calculate_dimensions(max_pixels, width / height)
     else:
         new_width, new_height = _snap(width), _snap(height)

@@ -91,6 +91,8 @@ class FileItemDTO(
         self.te_padding_side = kwargs.get("te_padding_side", "right")
         self.latent_space_version = kwargs.get("latent_space_version", "sd1")
         self.text_embedding_space_version = kwargs.get("text_embedding_space_version", "sd1")
+        # model sizes references against the item's bucket, so the cache key must carry it
+        self.text_embedding_uses_target_size = kwargs.get("text_embedding_uses_target_size", False)
         if dataset_root is not None:
             # remove dataset root from path
             file_key = self.path.replace(dataset_root, "")

@@ -2250,6 +2250,8 @@ class TextEmbeddingFileItemDTOMixin:
         # if we have a control image, cache the path
         if self.encode_control_in_text_embeddings and self.control_path is not None:
             item["control_path"] = self.control_path
+            if getattr(self, 'text_embedding_uses_target_size', False) and getattr(self, 'crop_width', None):
+                item["control_target_size"] = [self.crop_width, self.crop_height]
         if self.encode_control_in_text_embeddings and getattr(self, 'control_video_paths', None):
             item["control_videos"] = sorted(self.control_video_paths)
             # v2: reference-video vision blocks are no longer resampled by the
@@ -2506,6 +2508,10 @@ class TextEmbeddingCachingMixin:
                             ctrl_img = ctrl_img_list[0]
                         else:
                             ctrl_img = ctrl_img_list
+                        # the bucket the item trains at, so references can be sized against it
+                        target_size = None
+                        if getattr(file_item, 'crop_width', None) and getattr(file_item, 'crop_height', None):
+                            target_size = (file_item.crop_width, file_item.crop_height)
                         for path, caption in encode_targets:
                             if path in dropout_target_paths:
                                 # dropout embeds are plain text. Only fall back to the
@@ -2513,9 +2519,11 @@ class TextEmbeddingCachingMixin:
                                 try:
                                     prompt_embeds: PromptEmbeds = self.sd.encode_prompt(caption)
                                 except Exception:
-                                    prompt_embeds: PromptEmbeds = self.sd.encode_prompt(caption, control_images=ctrl_img)
+                                    prompt_embeds: PromptEmbeds = self.sd.encode_prompt(
+                                        caption, control_images=ctrl_img, target_size=target_size)
                             else:
-                                prompt_embeds: PromptEmbeds = self.sd.encode_prompt(caption, control_images=ctrl_img)
+                                prompt_embeds: PromptEmbeds = self.sd.encode_prompt(
+                                    caption, control_images=ctrl_img, target_size=target_size)
                             prompt_embeds.save(path)
                             del prompt_embeds
                     elif (
