@@ -26,6 +26,7 @@ from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, conca
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sd_device_states_presets import empty_preset
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
+from toolkit.unloader import FakeTextEncoder
 import torch
 from toolkit.pipelines import CustomStableDiffusionXLPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, DDPMScheduler, \
@@ -1499,8 +1500,10 @@ class BaseModel:
         }
         if isinstance(self.text_encoder, list):
             self.device_state['text_encoder']: List[dict] = []
+            # unloaded TEs are FakeTextEncoder stubs; arch probes into TE internals would raise
+            any_fake = any(isinstance(e, FakeTextEncoder) for e in self.text_encoder)
             for encoder in self.text_encoder:
-                te_has_grad = self.get_te_has_grad()
+                te_has_grad = False if any_fake else self.get_te_has_grad()
                 self.device_state['text_encoder'].append({
                     'training': encoder.training,
                     'device': encoder.device,
@@ -1508,7 +1511,10 @@ class BaseModel:
                     'requires_grad': te_has_grad
                 })
         elif self.text_encoder is not None:
-            te_has_grad = self.get_te_has_grad()
+            if isinstance(self.text_encoder, FakeTextEncoder):
+                te_has_grad = False
+            else:
+                te_has_grad = self.get_te_has_grad()
 
             self.device_state['text_encoder'] = {
                 'training': self.text_encoder.training,
