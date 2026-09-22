@@ -176,8 +176,15 @@ class QwenImageEditPlusModel(QwenImageModel):
             
         if control_images is None:
             raise ValueError("Missing control images for QwenImageEditPlusModel")
-        
-        if not isinstance(control_images, list):
+
+        if isinstance(control_images, torch.Tensor):
+            # training with one control image per item hands us the batch-stacked
+            # tensor (bs, ch, h, w); one set per prompt, not one set of bs images
+            if control_images.dim() == 4 and control_images.shape[0] == len(prompt):
+                control_images = [[img] for img in control_images]
+            else:
+                control_images = [control_images]
+        elif not isinstance(control_images, list):
             control_images = [control_images]
         
         # expects a list of list of control images List[List[Tensor]] where each item corresponds to a batch item, 
