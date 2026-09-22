@@ -7,6 +7,10 @@ The official audio -> semantic-token tokenizer is unreleased; training condition
 from the community head (MERT-v2-FullSong + classifier) in
 ``Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4``. Its companion NAR adapter can
 be merged into the base NAR on load (``model_kwargs.merge_nar_lora``, default false).
+The default is the v4 pair; the repo's later pairs (v5 / v8 / v9, safetensors only) load through
+``model_kwargs.semantic_head_path`` / ``nar_lora_path``, e.g.
+``Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4/tokenizer_head_joint_v9.safetensors``
+(or a local file). A non-default head gets its own latent cache key, since the cache holds its tokens.
 
 Training: per song the latent cache carries VAE latents plus the head's codec tokens; the
 "text embedding" is the AR prompt prefix (instruction + tags + lyrics) as token embeddings.
@@ -303,6 +307,11 @@ class YuE2AudioModel(BaseAudioModel):
 
     def get_latent_space_version(self):
         version = super().get_latent_space_version()
+        # the cached codec tokens come from the semantic head: a non-default head needs its own cache
+        # (the default keeps the plain key so existing caches stay valid)
+        if self.semantic_head_path != f"{HEAD_REPO}/{HEAD_FILE}":
+            head_name = os.path.splitext(os.path.basename(self.semantic_head_path))[0]
+            version = f"{version}_{re.sub(r'[^A-Za-z0-9]+', '-', head_name)}"
         # stem tokens/sheets only ride the latent cache in separation mode
         return f"{version}_sep" if self.do_separation else version
 

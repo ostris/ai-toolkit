@@ -167,6 +167,17 @@ class SheetSage2Transcriber:
         return abc
 
 
+def load_head_state_dict(head_path: str) -> dict:
+    """Head weights from either release format of the community tokenizer repo: the original ``.pt``
+    (``{"model": state_dict, "cfg": ...}``) or the ``.safetensors`` files, which hold the same state dict
+    flat. The v5 / v8 / v9 joint heads (same architecture as v4) are published as safetensors only."""
+    if str(head_path).endswith(".safetensors"):
+        from safetensors.torch import load_file
+
+        return load_file(head_path, device="cpu")
+    return torch.load(head_path, map_location="cpu", weights_only=False)["model"]
+
+
 class SemanticTokenizer(nn.Module):
     """Waveform -> per-frame codec ids (0..32767) at 25 Hz."""
 
@@ -180,8 +191,7 @@ class SemanticTokenizer(nn.Module):
         self.mert.requires_grad_(False)
         _rebuild_rotary(self.mert)
         self.head = TokenizerHead()
-        ck = torch.load(head_path, map_location="cpu", weights_only=False)
-        self.head.load_state_dict(ck["model"])
+        self.head.load_state_dict(load_head_state_dict(head_path))
         self.head.eval().requires_grad_(False)
 
     @property
