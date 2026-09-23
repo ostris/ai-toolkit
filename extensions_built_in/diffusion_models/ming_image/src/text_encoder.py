@@ -310,8 +310,8 @@ class MingImageTextEncoder(nn.Module, OstrisTransformersMixin):
         out = {}
         banks = {}
         for key, value in state_dict.items():
-            if key == "tokenizer_json":  # the tokenizer comes from the vendor repo
-                continue
+            if key == "tokenizer_json" or key.startswith("thinker.lm_head."):
+                continue  # tokenizer comes from the vendor repo; no lm head here
             if not key.startswith("thinker."):
                 out[key] = value
                 continue
@@ -355,8 +355,8 @@ class MingImageTextEncoder(nn.Module, OstrisTransformersMixin):
     ):
         state_dict = cls.convert_state_dict_on_load(state_dict)
         if not any(k.startswith("vision.") for k in state_dict):
-            # the ComfyUI repack carries no vision tower (its PR is text to
-            # image so far); editing needs one, so it comes from the vendor repo
+            # a repack without the vision tower (the first uploads); editing
+            # needs one, so it comes from the vendor repo
             state_dict = dict(state_dict)
             state_dict.update(cls.read_vision_weights(config_path or cls.aitk_config_repo, dtype))
         return super().load_from_state_dict(
