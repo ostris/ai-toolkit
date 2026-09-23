@@ -21,6 +21,7 @@ def get_lr_scheduler(
             optimizer, **kwargs
         )
     elif name == "step":
+        kwargs.pop('total_iters', None)
 
         return torch.optim.lr_scheduler.StepLR(
             optimizer, **kwargs
