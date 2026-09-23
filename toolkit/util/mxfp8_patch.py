@@ -246,6 +246,28 @@ def _static_casts():
 
 _RT_OP = "triton_to_mxfp8_32x32_swizzle_dim0_qdata_dim01_scale"
 
+_NN_OK = None
+
+
+def _nn_blockscaled_ok() -> bool:
+    """Probe once whether this cuBLAS accepts a row-major mat2 for block-scaled fp8
+    (_scaled_mm "NN"). cuBLAS < 13.6 (torch cu130 wheels ship 13.1) is TN-only on
+    sm_90/sm_120; 13.6 (CUDA 13.3 Update 1) lifts the restriction, which makes the
+    runtime transpose unnecessary (and is even faster than TN). Cached."""
+    global _NN_OK
+    if _NN_OK is None:
+        try:
+            from torchao.prototype.mx_formats.utils import to_blocked
+            a = torch.zeros(128, 64, device="cuda").to(torch.float8_e4m3fn)
+            b = torch.zeros(64, 128, device="cuda").to(torch.float8_e4m3fn)
+            sa = to_blocked(torch.ones(128, 2, device="cuda").to(torch.float8_e8m0fnu))
+            sb = to_blocked(torch.ones(128, 2, device="cuda").to(torch.float8_e8m0fnu))
+            torch._scaled_mm(a, b, scale_a=sa, scale_b=sb, out_dtype=torch.bfloat16)
+            _NN_OK = True
+        except Exception:
+            _NN_OK = False
+    return _NN_OK
+
 
 def _rt_available() -> bool:
     try:
@@ -296,13 +318,22 @@ class _StaticMXFp8LinearFn(torch.autograd.Function):
         cast0, _ = _static_casts()
         gyr = gy.reshape(-1, gy.shape[-1])
         if w._sf_rt is not None:
-            # runtime transpose: materialize qdata.t() once per dgrad (fused under
-            # torch.compile), reuse the stored dim-M scale frame -> TN gemm.
-            from torchao.prototype.mx_formats.mx_tensor import MXTensor
-            wt = MXTensor(w._w_dim0.qdata.t().contiguous(), w._sf_rt,
-                          torch.float8_e4m3fn, 32, w._orig_dtype,
-                          w._w_dim0.kernel_preference, None, True)
-            gx = torch.mm(cast0(gyr), wt.t())
+            gy_mx = cast0(gyr)
+            if _nn_blockscaled_ok():
+                # cuBLAS >= 13.6: block-scaled NN accepted -> zero-copy dgrad,
+                # mat2 = the stored row-major qdata directly (+ dim-M scale frame).
+                out_dt = gyr.dtype if gyr.dtype in (torch.bfloat16, torch.float16) else torch.bfloat16
+                gx = torch._scaled_mm(gy_mx.qdata, w._w_dim0.qdata,
+                                      scale_a=gy_mx.scale, scale_b=w._sf_rt,
+                                      out_dtype=out_dt)
+            else:
+                # runtime transpose: materialize qdata.t() once per dgrad (fused under
+                # torch.compile), reuse the stored dim-M scale frame -> TN gemm.
+                from torchao.prototype.mx_formats.mx_tensor import MXTensor
+                wt = MXTensor(w._w_dim0.qdata.t().contiguous(), w._sf_rt,
+                              torch.float8_e4m3fn, 32, w._orig_dtype,
+                              w._w_dim0.kernel_preference, None, True)
+                gx = torch.mm(gy_mx, wt.t())
         elif w._w_dim1 is not None:
             gx = torch.mm(cast0(gyr), w._w_dim1.t())            # all-fp8 dgrad
         else:
