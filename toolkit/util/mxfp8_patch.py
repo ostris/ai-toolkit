@@ -223,14 +223,20 @@ def _static_casts():
             _b = c[1](torch.randn(64, 64, device="cuda", dtype=torch.bfloat16))
             torch.mm(_a, _b.t())
 
-        for mode in ("unswizzled", "swizzled_fast", "swizzled_torch"):
-            try:
-                c = make_casts(mode)
-                _probe(c)
-                casts = c
-                break
-            except Exception:
-                continue
+        # The probe MUST run on real tensors: if the first caller is a torch.compile
+        # AOT trace (fake tensors), fake-mode mm does not enforce the swizzle
+        # requirement and the probe would wrongly pick "unswizzled" -> downstream
+        # is_swizzled_scales mismatch (assert in MXTensor.mm).
+        from torch._subclasses.fake_tensor import unset_fake_temporarily
+        with unset_fake_temporarily():
+            for mode in ("unswizzled", "swizzled_fast", "swizzled_torch"):
+                try:
+                    c = make_casts(mode)
+                    _probe(c)
+                    casts = c
+                    break
+                except Exception:
+                    continue
     _STATIC_CASTS = casts
     return _STATIC_CASTS
 
@@ -249,6 +255,27 @@ _RT_OP = "triton_to_mxfp8_32x32_swizzle_dim0_qdata_dim01_scale"
 _NN_OK = None
 
 
+def _nn_mm_op():
+    """torch._scaled_mm NN (row-major mat2) wrapped as a custom op. torch 2.14's META
+    registration for _scaled_mm still enforces mat2 col-major for block-scaled recipes
+    even though cuBLAS >= 13.6 accepts NN at runtime - so under torch.compile the NN call
+    must hide behind an opaque op whose fake impl skips the stale stride check."""
+    if not hasattr(torch.ops.mxfp8_patch, "nn_mm"):
+        from torch.library import custom_op
+
+        @custom_op("mxfp8_patch::nn_mm", mutates_args=(), device_types="cuda")
+        def _nn_mm(a: torch.Tensor, b: torch.Tensor,
+                   scale_a: torch.Tensor, scale_b: torch.Tensor,
+                   out_dtype: torch.dtype) -> torch.Tensor:
+            return torch._scaled_mm(a, b, scale_a=scale_a, scale_b=scale_b, out_dtype=out_dtype)
+
+        @_nn_mm.register_fake
+        def _(a, b, scale_a, scale_b, out_dtype):
+            return a.new_empty(a.shape[0], b.shape[1], dtype=out_dtype)
+
+    return torch.ops.mxfp8_patch.nn_mm
+
+
 def _nn_blockscaled_ok() -> bool:
     """Probe once whether this cuBLAS accepts a row-major mat2 for block-scaled fp8
     (_scaled_mm "NN"). cuBLAS < 13.6 (torch cu130 wheels ship 13.1) is TN-only on
@@ -256,13 +283,16 @@ def _nn_blockscaled_ok() -> bool:
     runtime transpose unnecessary (and is even faster than TN). Cached."""
     global _NN_OK
     if _NN_OK is None:
+        from torch._subclasses.fake_tensor import unset_fake_temporarily
         try:
-            from torchao.prototype.mx_formats.utils import to_blocked
-            a = torch.zeros(128, 64, device="cuda").to(torch.float8_e4m3fn)
-            b = torch.zeros(64, 128, device="cuda").to(torch.float8_e4m3fn)
-            sa = to_blocked(torch.ones(128, 2, device="cuda").to(torch.float8_e8m0fnu))
-            sb = to_blocked(torch.ones(128, 2, device="cuda").to(torch.float8_e8m0fnu))
-            torch._scaled_mm(a, b, scale_a=sa, scale_b=sb, out_dtype=torch.bfloat16)
+            # probe on real tensors even when first called from an AOT fake-tensor trace
+            with unset_fake_temporarily():
+                from torchao.prototype.mx_formats.utils import to_blocked
+                a = torch.zeros(128, 64, device="cuda").to(torch.float8_e4m3fn)
+                b = torch.zeros(64, 128, device="cuda").to(torch.float8_e4m3fn)
+                sa = to_blocked(torch.ones(128, 2, device="cuda").to(torch.float8_e8m0fnu))
+                sb = to_blocked(torch.ones(128, 2, device="cuda").to(torch.float8_e8m0fnu))
+                torch._scaled_mm(a, b, scale_a=sa, scale_b=sb, out_dtype=torch.bfloat16)
             _NN_OK = True
         except Exception:
             _NN_OK = False
@@ -322,10 +352,10 @@ class _StaticMXFp8LinearFn(torch.autograd.Function):
             if _nn_blockscaled_ok():
                 # cuBLAS >= 13.6: block-scaled NN accepted -> zero-copy dgrad,
                 # mat2 = the stored row-major qdata directly (+ dim-M scale frame).
+                # Via a custom op so torch.compile's stale TN-only meta check is bypassed.
                 out_dt = gyr.dtype if gyr.dtype in (torch.bfloat16, torch.float16) else torch.bfloat16
-                gx = torch._scaled_mm(gy_mx.qdata, w._w_dim0.qdata,
-                                      scale_a=gy_mx.scale, scale_b=w._sf_rt,
-                                      out_dtype=out_dt)
+                gx = _nn_mm_op()(gy_mx.qdata, w._w_dim0.qdata,
+                                 gy_mx.scale, w._sf_rt, out_dt)
             else:
                 # runtime transpose: materialize qdata.t() once per dgrad (fused under
                 # torch.compile), reuse the stored dim-M scale frame -> TN gemm.
