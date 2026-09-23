@@ -35,6 +35,7 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 - [circlestone-labs/Anima-Base-v1.0-Diffusers](https://huggingface.co/circlestone-labs/Anima-Base-v1.0-Diffusers) (Anima)
 - [krea/Krea-2-Raw](https://huggingface.co/krea/Krea-2-Raw) (Krea 2)
 - [krea/Krea-2-Turbo](https://huggingface.co/krea/Krea-2-Turbo) (Krea 2 Turbo)
+- [inclusionAI/Ming-Image-0.1-Design](https://huggingface.co/inclusionAI/Ming-Image-0.1-Design) (Ming-Image 0.1 Design)
 - [microsoft/Mage-Flow-Base](https://huggingface.co/microsoft/Mage-Flow-Base) (Mage-Flow)
 
 ### Instruction / Edit

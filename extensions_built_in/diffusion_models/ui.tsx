@@ -621,6 +621,108 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     ],
   },
   {
+    name: "ming_image",
+    label: "Ming-Image 0.1 Design (w/ Training Adapter)",
+    group: "image",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      // the ComfyUI repack (local copies in the comfy models folder win over
+      // the download); the vendor repo or a fine-tune here loads as named
+      "config.process[0].model.name_or_path": [
+        "Kijai/Ming-Image-ComfyUI",
+        defaultNameOrPath,
+      ],
+      "config.process[0].model.quantize": [true, false],
+      // the text encoder is a 16B MoE (34 GB in bf16): quantize it, and
+      // prefer caching text embeddings so it can be unloaded before training
+      "config.process[0].model.quantize_te": [true, false],
+      // the ComfyUI repack ships int8 convrot for both; these qtypes match it
+      // exactly, so the files attach as-is (another qtype re-quantizes)
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      // training adapter: merged in for training, inverted for sampling
+      "config.process[0].model.assistant_lora_path": [
+        "ostris/ming_image_training_adapter/ming_image_01_design_training_adapter_v1.safetensors",
+        undefined,
+      ],
+      // recommended: 12 steps, no guidance (the negative is zero conditioning)
+      "config.process[0].sample.guidance_scale": [1.0, 4.0],
+      "config.process[0].sample.sample_steps": [12, 25],
+      // the VAE is RGBA: images load, encode and decode with their alpha
+      "config.process[0].model.model_kwargs": [
+        {
+          rgba: false,
+        },
+        {},
+      ],
+    },
+    disableSections: ["network.conv"],
+    // the model also edits (a dataset control path + reference image); the
+    // UI does not expose that yet
+    additionalSections: [
+      "model.low_vram",
+      "model.layer_offloading",
+      "model.assistant_lora_path",
+    ],
+    customModelSelectOptions: [
+      {
+        type: "checkbox",
+        label: "Transparency (RGBA)",
+        getValue: (config: JobConfig) =>
+          config?.config?.process?.[0]?.model?.model_kwargs?.rgba ?? false,
+        onChange: (
+          value: boolean,
+          config: JobConfig,
+          setJobConfig: (value: any, key: string) => void,
+        ) => {
+          const kwargs = {
+            ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}),
+          };
+          if (value) {
+            kwargs.rgba = true;
+          } else {
+            delete kwargs.rgba;
+          }
+          setJobConfig(kwargs, "config.process[0].model.model_kwargs");
+        },
+        doc: {
+          title: "Transparency (RGBA)",
+          description: (
+            <div className="space-y-2">
+              <p>
+                Ming-Image&apos;s VAE is natively RGBA, so alpha can be carried
+                end to end. When on, dataset images and reference images load
+                with their alpha channel, the VAE encodes all four channels, and
+                samples are saved as PNGs with their transparency intact.
+              </p>
+              <p>
+                Images with no alpha of their own get a fully opaque one, so a
+                mixed dataset is fine. Turn this off to train and sample flat
+                RGB: alpha is dropped on the way in and added back as opaque.
+              </p>
+              <p>
+                To sample a transparent image, start the prompt with one of the
+                model&apos;s fixed trigger phrases, e.g.{" "}
+                <code>RGBA, 4-channel, transparent background</code> or{" "}
+                <code>带透明通道，4通道RGBA图像</code>, and sample at 2048x2048:
+                the same prompts come out opaque at 1024.
+              </p>
+              <p>
+                Changing this re-caches latents, and it cannot be combined with
+                a dataset using <code>alpha_mask</code>, which consumes the
+                alpha channel as a loss mask instead.
+              </p>
+            </div>
+          ),
+        },
+      },
+    ],
+  },
+  {
     name: "hidream",
     label: "HiDream",
     group: "image",

@@ -1,0 +1,34 @@
+"""Where Ming-Image weights come from.
+
+`name_or_path` is authoritative. COMFY_REPO, the single-file ComfyUI repack,
+is the default: its int8_convrot files are the toolkit's convrot8 storage, so a
+quantized load attaches them as-is, and copies already in the local ComfyUI
+models folder win over the download. Anything else in `name_or_path` (the
+vendor repo, a local checkpoint, a fine-tune) loads exactly what it names,
+local comfy files or not. BASE_REPO is the vendor's diffusers-layout
+checkpoint; its configs, tokenizer, image processor and (until the repack
+carries one) the vision tower are used with the repack. The repack tracks a
+work-in-progress ComfyUI PR and is expected to move: change COMFY_REPO and the
+UI default together.
+"""
+
+BASE_REPO = "inclusionAI/Ming-Image-0.1-Design"
+COMFY_REPO = "Kijai/Ming-Image-ComfyUI"
+
+# repo-relative comfy files per component; the resolver orders them by the
+# requested qtype (convrot8 -> the int8 file, anything else -> bf16)
+COMFY_TRANSFORMER_FILES = [
+    "diffusion_models/ming_image_0.1_design_int8_convrot.safetensors",
+    "diffusion_models/ming_image_0.1_design_bf16.safetensors",
+]
+COMFY_TEXT_ENCODER_FILES = [
+    "text_encoders/ming_image_0.1_ling_mini_2.0_int8_convrot.safetensors",
+    "text_encoders/ming_image_0.1_ling_mini_2.0_bf16.safetensors",
+]
+COMFY_VAE_FILES = ["vae/ming_image_vae_bf16.safetensors"]
+
+
+def comfy_weight_names(files):
+    """OstrisModelMixin candidate map: only the repack id resolves to these
+    files; every other name_or_path loads what it names."""
+    return {COMFY_REPO: list(files)}

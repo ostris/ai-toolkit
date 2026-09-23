@@ -185,6 +185,20 @@ MODEL_TESTS = {
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 1.0},
         "needs_control_image": True,
     },
+    "ming_image": {
+        "model": {
+            "name_or_path": "Kijai/Ming-Image-ComfyUI",
+            "quantize": True,
+            "quantize_te": True,
+            # the repack's int8 convrot files attach as-is at convrot8
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        # recommended settings: 12 steps, no guidance; the control image
+        # exercises the single-reference editing path
+        "sample": {**IMG, "num_inference_steps": 12, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
     # ---- legacy monolith archs (components adopted into v2 on load) ----
     "sd1": {
         "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"},
