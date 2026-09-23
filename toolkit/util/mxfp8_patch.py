@@ -423,6 +423,41 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         kwargs = kwargs or {}
         aten = torch.ops.aten
+        c10d = torch.ops._c10d_functional
+        # FSDP2 / collectives (torchao MXTensor pattern, but gathering the raw
+        # bytes ourselves: torchao's MXTensor-level dispatch segfaults on gloo).
+        # Ships compressed bytes (qdata uint8 + scale frames), never a
+        # high-precision master -> ~2x less comm volume than a bf16 gather.
+        if func in (c10d.all_gather_into_tensor.default, c10d.wait_tensor.default):
+            from torchao.prototype.mx_formats.mx_tensor import MXTensor
+
+            def run_comp(mxt):
+                if mxt is None:
+                    return None
+                qd = func(mxt.qdata.view(torch.uint8), *args[1:], **kwargs)
+                sc = func(mxt.scale.view(torch.uint8), *args[1:], **kwargs)
+                return MXTensor(qd.view(mxt.elem_dtype), sc.view(torch.float8_e8m0fnu),
+                                mxt.elem_dtype, mxt.block_size, mxt.orig_dtype,
+                                mxt.kernel_preference, mxt.act_quant_kwargs,
+                                mxt.is_swizzled_scales)
+
+            s = args[0]
+
+            def run_sf(sf):
+                if sf is None:
+                    return None
+                # e8m0 scale frame: gather as raw bytes (collectives reject fp8 dtypes)
+                return func(sf.view(torch.uint8), *args[1:], **kwargs).view(sf.dtype)
+
+            g = {"_w_dim0": run_comp(s._w_dim0),
+                 "_w_dim1": run_comp(s._w_dim1),
+                 "_sf_rt": run_sf(s._sf_rt)}
+            if func is c10d.wait_tensor.default:
+                meta = {"shape": tuple(s.shape), "dtype": s._orig_dtype}
+            else:
+                world = g["_w_dim0"].shape[0] // s._w_dim0.shape[0]
+                meta = {"shape": (s.shape[0] * world, *s.shape[1:]), "dtype": s._orig_dtype}
+            return cls.__tensor_unflatten__(g, meta, None, None)
         if func in (aten.detach.default, aten.alias.default, aten.clone.default):
             s = args[0]
             return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype, s._w_dim0.device, sf_rt=s._sf_rt)
@@ -440,7 +475,6 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
         def uw(a):
             return a.dequantize() if isinstance(a, cls) else a
         return func(*[uw(a) for a in args], **{k: uw(v) for k, v in kwargs.items()})
-
 
 def make_mxfp8_static_frozen_weight(weight: torch.Tensor, store_dim1: bool = False,
                                     runtime_transpose: bool = False) -> "MXFp8StaticFrozenWeight":
