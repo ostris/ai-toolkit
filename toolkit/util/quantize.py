@@ -69,7 +69,7 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
     # mxfp8 is resolved lazily + guarded (needs sm_100+ and a source-built torchao
     # with the mxfp8 training op). Importing it here keeps quantize.py importable on
     # older torchao that lacks MXFP8TrainingOpConfig. See toolkit/util/mxfp8_patch.py.
-    if isinstance(qtype, str) and qtype in ("mxfp8", "mxfp8_static", "mxfp8_static_d1"):
+    if isinstance(qtype, str) and qtype in ("mxfp8", "mxfp8_static", "mxfp8_static_d1", "mxfp8_static_rt"):
         from toolkit.util.mxfp8_patch import (
             mxfp8_config_or_none,
             apply_mxfp8_frozen_wgrad_patch,
@@ -82,12 +82,16 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
         #                      dim0-only ~0.5x weight memory, fp8 fprop, bf16 dgrad. min memory.
         # "mxfp8_static_d1" -> static + dim0+dim1 fp8 (~bf16 weight memory): all-fp8 fprop+dgrad,
         #                      no wgrad. SPEED mode (best with compile). See mxfp8_patch.py.
-        static = qtype in ("mxfp8_static", "mxfp8_static_d1")
+        # "mxfp8_static_rt" -> static 32x32 cast: ONE fp8 qdata + both scale frames (~0.53x bf16
+        #                      weight memory); dgrad materializes qdata.t() at runtime (fast
+        #                      transpose, fused under torch.compile) + cuBLAS TN. MEMORY+SPEED mode.
+        static = qtype in ("mxfp8_static", "mxfp8_static_d1", "mxfp8_static_rt")
         if not static:
             apply_mxfp8_frozen_wgrad_patch()
         at = aotype("mxfp8", config=config)
         at.static = static
         at.store_dim1 = qtype == "mxfp8_static_d1"  # True = bf16-parity mem, all-fp8 dgrad (fast)
+        at.runtime_transpose = qtype == "mxfp8_static_rt"  # single qdata, runtime-transposed dgrad
         return at
     if qtype in torchao_qtypes:
         return aotype(qtype)
@@ -277,7 +281,9 @@ def quantize(
                         # (no-op on non-Linear / non-cuda); drops the bf16 master.
                         from toolkit.util.mxfp8_patch import mxfp8_static_swap_linear
                         mxfp8_static_swap_linear(
-                            m, store_dim1=getattr(weights, "store_dim1", False)
+                            m,
+                            store_dim1=getattr(weights, "store_dim1", False),
+                            runtime_transpose=getattr(weights, "runtime_transpose", False),
                         )
                     else:
                         torchao_quantize_(m, weights.config)

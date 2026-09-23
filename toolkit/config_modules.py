@@ -782,7 +782,7 @@ class ModelConfig:
         # cannot rescue a real offload move. So compiling an mxfp8 model that also offloads is
         # unsupported -> fail fast here instead of crashing minutes into the run.
         _mxfp8_compilable = isinstance(self.qtype, str) and self.qtype in (
-            "mxfp8", "mxfp8_static", "mxfp8_static_d1",
+            "mxfp8", "mxfp8_static", "mxfp8_static_d1", "mxfp8_static_rt",
         )
         if self.quantize and _mxfp8_compilable and self.compile and (self.low_vram or self.layer_offloading):
             _which = "low_vram" if self.low_vram else "layer_offloading"

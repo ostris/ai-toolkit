@@ -235,6 +235,50 @@ def _static_casts():
     return _STATIC_CASTS
 
 
+# ===================== runtime-transpose mxfp8 (32x32 cast) =====================
+# sm_90/sm_120 cuBLAS block-scaled FP8 GEMM is TN-only, so an all-fp8 dgrad normally needs a
+# second, transposed fp8 copy of the weight (store_dim1=True, ~1.0x bf16). torchao#4777's
+# standalone 32x32 Triton cast emits ONE qdata plus BOTH swizzled scale frames (dim-K and
+# dim-M) from a single square-block quantization: the block scale is shared, so the dim-M
+# frame can reuse the same qdata transposed. At dgrad time we materialize qdata.t()
+# (~40us under torch.compile's fused transpose, ~220us eager for 3072x3072) and run cuBLAS
+# TN with the dim-M frame -> all-fp8 dgrad at ~0.53x bf16 weight memory.
+
+_RT_OP = "triton_to_mxfp8_32x32_swizzle_dim0_qdata_dim01_scale"
+
+
+def _rt_available() -> bool:
+    try:
+        import torchao.prototype.mx_formats.kernels  # noqa: F401
+    except Exception:
+        pass
+    return hasattr(torch.ops.torchao, _RT_OP)
+
+
+def _rt_cast(W):
+    """32x32-cast a contiguous 2D weight -> (w_dim0 MXTensor, dim-M swizzled scale frame).
+    The returned frame pairs with w_dim0.qdata.t().contiguous() for the dgrad TN gemm."""
+    from torchao.prototype.mx_formats.mx_tensor import MXTensor
+    from torchao.prototype.mx_formats.utils import hp_data_dims_to_swizzled_scale_dims_mx
+    from torchao.quantization.quantize_.common.kernel_preference import KernelPreference
+
+    N, K = W.shape
+    if N % 32 or K % 32:
+        raise ValueError(f"mxfp8_static_rt needs weight dims % 32 == 0, got {tuple(W.shape)}")
+    qk, sk, sm = getattr(torch.ops.torchao, _RT_OP)(W.contiguous())
+    sk = sk.reshape(*hp_data_dims_to_swizzled_scale_dims_mx(N, K))
+    sm = sm.reshape(*hp_data_dims_to_swizzled_scale_dims_mx(K, N))
+    w_dim0 = MXTensor(qk, sk, torch.float8_e4m3fn, 32, W.dtype, KernelPreference.AUTO, None, True)
+    return w_dim0, sm
+
+
+def make_mxfp8_static_rt_weight(weight: torch.Tensor) -> "MXFp8StaticFrozenWeight":
+    """Build a static fp8 weight using the 32x32 runtime-transpose representation."""
+    w_dim0, sm = _rt_cast(weight.detach())
+    return MXFp8StaticFrozenWeight(
+        w_dim0, None, weight.shape, weight.dtype, weight.device, sf_rt=sm)
+
+
 class _StaticMXFp8LinearFn(torch.autograd.Function):
     """fp8 fprop with a pre-quantized static weight; dgrad only (frozen -> no wgrad)."""
 
@@ -251,7 +295,15 @@ class _StaticMXFp8LinearFn(torch.autograd.Function):
         w = ctx.weight
         cast0, _ = _static_casts()
         gyr = gy.reshape(-1, gy.shape[-1])
-        if w._w_dim1 is not None:
+        if w._sf_rt is not None:
+            # runtime transpose: materialize qdata.t() once per dgrad (fused under
+            # torch.compile), reuse the stored dim-M scale frame -> TN gemm.
+            from torchao.prototype.mx_formats.mx_tensor import MXTensor
+            wt = MXTensor(w._w_dim0.qdata.t().contiguous(), w._sf_rt,
+                          torch.float8_e4m3fn, 32, w._orig_dtype,
+                          w._w_dim0.kernel_preference, None, True)
+            gx = torch.mm(cast0(gyr), wt.t())
+        elif w._w_dim1 is not None:
             gx = torch.mm(cast0(gyr), w._w_dim1.t())            # all-fp8 dgrad
         else:
             gx = gyr.contiguous() @ w._w_dim0.dequantize().to(gyr.dtype)  # bf16 dgrad (low-mem)
@@ -265,30 +317,35 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
     supports .dequantize() for save; cross-device move degrades to dequantized bf16."""
 
     @staticmethod
-    def __new__(cls, w_dim0, w_dim1, shape, dtype, device):
+    def __new__(cls, w_dim0, w_dim1, shape, dtype, device, sf_rt=None):
         return torch.Tensor._make_wrapper_subclass(
             cls, shape, dtype=dtype, device=device, requires_grad=False)
 
-    def __init__(self, w_dim0, w_dim1, shape, dtype, device):
+    def __init__(self, w_dim0, w_dim1, shape, dtype, device, sf_rt=None):
         self._w_dim0 = w_dim0
         self._w_dim1 = w_dim1
+        self._sf_rt = sf_rt  # dim-M swizzled scale frame for runtime-transpose dgrad
         self._orig_dtype = dtype
 
     def __repr__(self):
-        return f"MXFp8StaticFrozenWeight({tuple(self.shape)}, dim1={'y' if self._w_dim1 is not None else 'n'})"
+        mode = "rt" if self._sf_rt is not None else ("d1" if self._w_dim1 is not None else "d0")
+        return f"MXFp8StaticFrozenWeight({tuple(self.shape)}, {mode})"
 
     def dequantize(self):
         return self._w_dim0.dequantize().to(self._orig_dtype)
 
     def __tensor_flatten__(self):
-        names = ["_w_dim0"] + (["_w_dim1"] if self._w_dim1 is not None else [])
+        names = ["_w_dim0"]
+        names += ["_w_dim1"] if self._w_dim1 is not None else []
+        names += ["_sf_rt"] if self._sf_rt is not None else []
         return names, {"shape": tuple(self.shape), "dtype": self._orig_dtype}
 
     @staticmethod
     def __tensor_unflatten__(inner, meta, sz, st):
         return MXFp8StaticFrozenWeight(
             inner["_w_dim0"], inner.get("_w_dim1"),
-            torch.Size(meta["shape"]), meta["dtype"], inner["_w_dim0"].device)
+            torch.Size(meta["shape"]), meta["dtype"], inner["_w_dim0"].device,
+            sf_rt=inner.get("_sf_rt"))
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
@@ -307,31 +364,39 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
         aten = torch.ops.aten
         if func in (aten.detach.default, aten.alias.default, aten.clone.default):
             s = args[0]
-            return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype, s._w_dim0.device)
+            return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype, s._w_dim0.device, sf_rt=s._sf_rt)
         if func is aten._to_copy.default:
             s = args[0]
             tgt = kwargs.get("device")
             if tgt is None:
-                return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype, s._w_dim0.device)
+                return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype, s._w_dim0.device, sf_rt=s._sf_rt)
             d = torch.device(tgt)
             # move the fp8 components (keeps the static representation on either device)
             d0 = _move_mxtensor(s._w_dim0, d)
             d1 = _move_mxtensor(s._w_dim1, d) if s._w_dim1 is not None else None
-            return cls(d0, d1, s.shape, s._orig_dtype, d)
+            sf = s._sf_rt.to(d) if s._sf_rt is not None else None
+            return cls(d0, d1, s.shape, s._orig_dtype, d, sf_rt=sf)
         def uw(a):
             return a.dequantize() if isinstance(a, cls) else a
         return func(*[uw(a) for a in args], **{k: uw(v) for k, v in kwargs.items()})
 
 
-def make_mxfp8_static_frozen_weight(weight: torch.Tensor, store_dim1: bool = False) -> "MXFp8StaticFrozenWeight":
+def make_mxfp8_static_frozen_weight(weight: torch.Tensor, store_dim1: bool = False,
+                                    runtime_transpose: bool = False) -> "MXFp8StaticFrozenWeight":
     """Build a static fp8 weight from a (cuda, floating) bf16/fp16 weight tensor."""
+    if runtime_transpose:
+        try:
+            return make_mxfp8_static_rt_weight(weight)
+        except Exception as e:
+            print(f"[mxfp8_patch] runtime-transpose cast failed ({e}); "
+                  f"falling back to bf16 dgrad for {tuple(weight.shape)}")
     cast0, cast1 = _static_casts()
     W = weight.detach()
     return MXFp8StaticFrozenWeight(
         cast0(W), cast1(W) if store_dim1 else None, W.shape, weight.dtype, W.device)
 
 
-def mxfp8_static_swap_linear(module, store_dim1: bool = False) -> bool:
+def mxfp8_static_swap_linear(module, store_dim1: bool = False, runtime_transpose: bool = False) -> bool:
     """Swap a single nn.Linear's frozen weight to the static fp8 representation, in place.
 
     Accepts a plain bf16 weight OR an already-dynamic MXFP8TrainingWeightWrapperTensor
@@ -348,17 +413,19 @@ def mxfp8_static_swap_linear(module, store_dim1: bool = False) -> bool:
         torch.bfloat16, torch.float16, torch.float32,
     ):
         return False
-    static = make_mxfp8_static_frozen_weight(src, store_dim1=store_dim1)
+    static = make_mxfp8_static_frozen_weight(
+        src, store_dim1=store_dim1, runtime_transpose=runtime_transpose)
     module.weight = nn.Parameter(static, requires_grad=False)
     return True
 
 
-def apply_mxfp8_static_frozen_weight(root, store_dim1: bool = False) -> int:
+def apply_mxfp8_static_frozen_weight(root, store_dim1: bool = False,
+                                     runtime_transpose: bool = False) -> int:
     """Walk `root` and static-swap every eligible (cuda, frozen) nn.Linear weight.
     Returns the number of modules swapped."""
     n = 0
     for m in root.modules():
-        if mxfp8_static_swap_linear(m, store_dim1=store_dim1):
+        if mxfp8_static_swap_linear(m, store_dim1=store_dim1, runtime_transpose=runtime_transpose):
             n += 1
     return n
 
