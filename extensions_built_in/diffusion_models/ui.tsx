@@ -629,7 +629,7 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       // the ComfyUI repack (local copies in the comfy models folder win over
       // the download); the vendor repo or a fine-tune here loads as named
       "config.process[0].model.name_or_path": [
-        "Kijai/Ming-Image-ComfyUI",
+        "Comfy-Org/Ming-Image",
         defaultNameOrPath,
       ],
       "config.process[0].model.quantize": [true, false],

@@ -187,7 +187,7 @@ MODEL_TESTS = {
     },
     "ming_image": {
         "model": {
-            "name_or_path": "Kijai/Ming-Image-ComfyUI",
+            "name_or_path": "Comfy-Org/Ming-Image",
             "quantize": True,
             "quantize_te": True,
             # the repack's int8 convrot files attach as-is at convrot8

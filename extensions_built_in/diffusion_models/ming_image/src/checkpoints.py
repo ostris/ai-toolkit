@@ -7,13 +7,15 @@ models folder win over the download. Anything else in `name_or_path` (the
 vendor repo, a local checkpoint, a fine-tune) loads exactly what it names,
 local comfy files or not. BASE_REPO is the vendor's diffusers-layout
 checkpoint; its configs, tokenizer, image processor and (until the repack
-carries one) the vision tower are used with the repack. The repack tracks a
-work-in-progress ComfyUI PR and is expected to move: change COMFY_REPO and the
-UI default together.
+carries one) the vision tower are used with the repack. The repack started
+life under Kijai's account while its ComfyUI PR was in progress; that id is
+rewritten to the Comfy-Org one (same files) so older configs keep working.
 """
 
 BASE_REPO = "inclusionAI/Ming-Image-0.1-Design"
-COMFY_REPO = "Kijai/Ming-Image-ComfyUI"
+COMFY_REPO = "Comfy-Org/Ming-Image"
+# earlier home of the same files
+LEGACY_COMFY_REPOS = {"Kijai/Ming-Image-ComfyUI": COMFY_REPO}
 
 # repo-relative comfy files per component; the resolver orders them by the
 # requested qtype (convrot8 -> the int8 file, anything else -> bf16)
@@ -28,7 +30,12 @@ COMFY_TEXT_ENCODER_FILES = [
 COMFY_VAE_FILES = ["vae/ming_image_vae_bf16.safetensors"]
 
 
+def canonical_repo(name_or_path: str) -> str:
+    """The current id for a repack that has moved; anything else unchanged."""
+    return LEGACY_COMFY_REPOS.get(name_or_path, name_or_path)
+
+
 def comfy_weight_names(files):
-    """OstrisModelMixin candidate map: only the repack id resolves to these
-    files; every other name_or_path loads what it names."""
-    return {COMFY_REPO: list(files)}
+    """OstrisModelMixin candidate map: only the repack id (current or legacy)
+    resolves to these files; every other name_or_path loads what it names."""
+    return {repo: list(files) for repo in (COMFY_REPO, *LEGACY_COMFY_REPOS)}

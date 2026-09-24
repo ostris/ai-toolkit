@@ -41,7 +41,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 
-from .src.checkpoints import BASE_REPO, COMFY_REPO
+from .src.checkpoints import BASE_REPO, COMFY_REPO, canonical_repo
 from .src.pipeline import (
     PIXELS_PER_TOKEN,
     VAE_SCALE_FACTOR,
@@ -134,8 +134,8 @@ class MingImageModel(BaseModel):
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Ming-Image model")
-        model_path = self.model_config.name_or_path
-        extras_path = self.model_config.extras_name_or_path
+        model_path = canonical_repo(self.model_config.name_or_path)
+        extras_path = canonical_repo(self.model_config.extras_name_or_path)
         if extras_path == model_path and model_path.endswith(".safetensors"):
             # a single transformer file (a fine-tune): the rest comes from
             # the repack
