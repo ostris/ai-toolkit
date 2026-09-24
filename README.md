@@ -102,7 +102,7 @@ cd ai-toolkit
 
 Then start the manager with the script for your platform:
 
-Linux:
+Linux (x86_64 and ARM64, including DGX Spark / DGX OS):
 ```bash
 chmod +x run_linux.sh
 ./run_linux.sh
@@ -146,7 +146,7 @@ pip3 install --no-cache-dir torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0
 pip3 install -r requirements.txt
 ```
 
-For devices running **DGX OS** (including DGX Spark), follow [these](dgx_instructions.md) instructions.
+These steps also work on ARM64 Linux, including DGX Spark / DGX OS.
 
 
 Windows:

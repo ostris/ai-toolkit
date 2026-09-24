@@ -21,11 +21,11 @@ python3 -m manager doctor      # diagnose problems
 - **Hardware → spec mapping** is in [spec.py](spec.py). One universal torch
   pin (2.13.0 / torchvision 0.28.0 / torchaudio 2.11.0) on every platform:
   cu130 wheels when the driver supports CUDA 13 (cu126 fallback for older
-  drivers, refused outright on Blackwell GPUs which need cu130), same stack +
-  Python 3.11 + `dgx_requirements.txt` on DGX/Grace, PyPI wheels on Mac,
+  drivers, refused outright on Blackwell GPUs which need cu130), the same
+  stack on Linux aarch64 (DGX Spark / Grace), PyPI wheels on Mac,
   rocm7.1 (experimental) for AMD, `--cpu` to force a CPU install. **Torch
   pins there must be updated together with the README install instructions,
-  run_mac.zsh, and dgx_instructions.md.**
+  and run_mac.zsh.**
 - **Accelerators everywhere wheels exist**, via per-spec `extra_packages`
   (installed after requirements with `--upgrade` so they override pins) and
   `optional_packages` (installed one-by-one, warn-only on failure):
