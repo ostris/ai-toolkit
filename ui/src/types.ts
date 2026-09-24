@@ -11,6 +11,8 @@ export interface GpuMemory {
   total: number;
   free: number;
   used: number;
+  // unified memory (e.g. GB10): figures are the system RAM pool the GPU shares
+  shared?: boolean;
 }
 
 export interface GpuPower {
