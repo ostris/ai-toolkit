@@ -252,6 +252,34 @@ def _static_casts():
 
 _RT_OP = "triton_to_mxfp8_32x32_swizzle_dim0_qdata_dim01_scale"
 
+
+def _cast_dim0_matching(t: "torch.Tensor", ref_mx) -> "object":
+    """dim0 activation cast whose scale layout matches the weight operand.
+
+    _static_casts() may legitimately probe to an unswizzled cast (cuBLAS >= 13.6
+    accepts it), while rt weights always carry SWIZZLE_32_4_4 frames. Eager mm
+    tolerates the mismatch, but torchao's fake-tensor mm asserts layout equality,
+    which hard-errors when dynamo traces the mm without a graph break. Rearrange
+    the activation scale frame to the weight's layout instead (fused away under
+    torch.compile).
+    """
+    cast0, _ = _static_casts()
+    m = cast0(t)
+    if getattr(m, "is_swizzled_scales", None) == getattr(ref_mx, "is_swizzled_scales", None):
+        return m
+    if ref_mx.is_swizzled_scales and not m.is_swizzled_scales:
+        from torchao.prototype.mx_formats.mx_tensor import MXTensor
+        from torchao.prototype.mx_formats.utils import (
+            to_blocked, hp_data_dims_to_swizzled_scale_dims_mx)
+        M, K = t.shape[0], t.shape[-1]
+        sc = to_blocked(m.scale.view(M, K // m.block_size))
+        sM, sK = hp_data_dims_to_swizzled_scale_dims_mx(M, K)
+        return MXTensor(m.qdata, sc.view(sM, sK), m.elem_dtype, m.block_size,
+                        m.orig_dtype, m.kernel_preference, m.act_quant_kwargs, True)
+    raise RuntimeError(
+        f"unsupported scale-layout mismatch: act swizzled={m.is_swizzled_scales}, "
+        f"weight swizzled={ref_mx.is_swizzled_scales}")
+
 _NN_OK = None
 
 
@@ -337,9 +365,8 @@ class _StaticMXFp8LinearFn(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, weight):
         ctx.weight = weight
-        cast0, _ = _static_casts()
         xr = x.reshape(-1, x.shape[-1])
-        out = torch.mm(cast0(xr), weight._w_dim0.t())          # fp8 _scaled_mm
+        out = torch.mm(_cast_dim0_matching(xr, weight._w_dim0), weight._w_dim0.t())  # fp8 _scaled_mm
         return out.reshape(*x.shape[:-1], out.shape[-1])
 
     @staticmethod
@@ -348,7 +375,7 @@ class _StaticMXFp8LinearFn(torch.autograd.Function):
         cast0, _ = _static_casts()
         gyr = gy.reshape(-1, gy.shape[-1])
         if w._sf_rt is not None:
-            gy_mx = cast0(gyr)
+            gy_mx = _cast_dim0_matching(gyr, w._w_dim0)
             if _nn_blockscaled_ok():
                 # cuBLAS >= 13.6: block-scaled NN accepted -> zero-copy dgrad,
                 # mat2 = the stored row-major qdata directly (+ dim-M scale frame).
