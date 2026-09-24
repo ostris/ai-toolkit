@@ -939,6 +939,17 @@ class MinimaxH3Model(BaseModel):
             if cond_rows is not None:
                 video_rows = torch.cat([cond_rows, video_rows], dim=1)
 
+        # Training pass (LoRA/adapters): the pruned fp16 checkpoint drives the text
+        # rows to inf in the last block. Harmless for the base model, fatal for
+        # adapters (NaN grads everywhere) — guard both the LoRA input and the
+        # backward path. Cleared again on no-grad passes (sampling), so inference
+        # always runs the untouched forward. See transformer._zero_nonfinite_grad
+        # and network_mixins.
+        training = torch.is_grad_enabled()
+        self.model.sanitize_backward_nonfinite = training
+        network = getattr(self, "network", None)
+        if network is not None:
+            network.zero_nonfinite_lora_inputs = training
         video_pred, audio_pred = self.model(
             hidden_states=video_rows,
             audio_hidden_states=audio_rows.to(dtype),
