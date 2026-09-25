@@ -973,10 +973,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
       "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
       "config.process[0].train.cache_text_embeddings": [true, false],
-      "config.process[0].train.do_guidance_loss": [true, undefined],
-      "config.process[0].train.guidance_loss_target": [3.5, undefined],
       "config.process[0].model.assistant_lora_path": [
-        "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors",
+        "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v3.safetensors",
         undefined,
       ],
       "config.process[0].network.linear": [16, defaultLinearRank],
@@ -1019,10 +1017,10 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
         label: "Distillation Handling Method",
         options: [
           { value: "cg", label: "Contrastive Guidance" },
-          { value: "ta", label: "Training Adapter" },
+          { value: "ta", label: "Training Adapter (default)" },
           {
             value: "both",
-            label: "Contrastive Guidance + Training Adapter (default)",
+            label: "Contrastive Guidance + Training Adapter",
           },
           { value: "none", label: "None" },
         ],
@@ -1065,13 +1063,13 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
               "config.process[0].train.guidance_loss_target",
             );
             setJobConfig(
-              "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors",
+              "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v3.safetensors",
               "config.process[0].model.assistant_lora_path",
             );
           } else if (value === "both") {
             setJobConfig(true, "config.process[0].train.do_guidance_loss");
             setJobConfig(
-              "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors",
+              "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v3.safetensors",
               "config.process[0].model.assistant_lora_path",
             );
             if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
@@ -1165,10 +1163,8 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
       "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
       "config.process[0].train.cache_text_embeddings": [true, false],
-      "config.process[0].train.do_guidance_loss": [true, undefined],
-      "config.process[0].train.guidance_loss_target": [3.5, undefined],
       "config.process[0].model.assistant_lora_path": [
-        "ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v1.safetensors",
+        "ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v2.safetensors",
         undefined,
       ],
       "config.process[0].network.linear": [16, defaultLinearRank],
@@ -1210,10 +1206,10 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
         label: "Distillation Handling Method",
         options: [
           { value: "cg", label: "Contrastive Guidance" },
-          { value: "ta", label: "Training Adapter" },
+          { value: "ta", label: "Training Adapter (default)" },
           {
             value: "both",
-            label: "Contrastive Guidance + Training Adapter (default)",
+            label: "Contrastive Guidance + Training Adapter",
           },
           { value: "dopsd", label: "D-OPSD" },
           { value: "none", label: "None" },
@@ -1271,13 +1267,13 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
               "config.process[0].train.guidance_loss_target",
             );
             setJobConfig(
-              "ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v1.safetensors",
+              "ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v2.safetensors",
               "config.process[0].model.assistant_lora_path",
             );
           } else if (value === "both") {
             setJobConfig(true, "config.process[0].train.do_guidance_loss");
             setJobConfig(
-              "ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v1.safetensors",
+              "ostris/minimax_h3_training_adapter/minimax_h3_ref2va_training_adapter_v2.safetensors",
               "config.process[0].model.assistant_lora_path",
             );
             if (!config?.config?.process?.[0]?.train?.guidance_loss_target) {
@@ -1484,7 +1480,7 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
         ) => {
           setJobConfig(
             value === "ta"
-              ? "ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_v1.safetensors"
+              ? "ostris/minimax_h3_training_adapter/fastvideo_fasth3_8step_v2_training_adapter_v1.safetensors"
               : undefined,
             "config.process[0].model.assistant_lora_path",
           );
