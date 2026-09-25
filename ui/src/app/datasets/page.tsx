@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal } from '@/components/Modal';
 import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
+import RemoteSourceBrowseModal from '@/components/RemoteSourceBrowseModal';
 import { Button } from '@headlessui/react';
 import { FaRegTrashAlt } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
@@ -13,11 +14,29 @@ import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { apiClient } from '@/utils/api';
 import { useRouter } from 'next/navigation';
 
+interface RemotePlugin {
+  id: string;
+  display_name: string;
+  icon?: string;
+}
+
 export default function Datasets() {
   const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
+
+  // Remote data-source plugins
+  const [plugins, setPlugins] = useState<RemotePlugin[]>([]);
+  const [openPluginId, setOpenPluginId] = useState<string | null>(null);
+
+  // Load registered data-source plugins once on mount
+  useEffect(() => {
+    apiClient
+      .get('/api/datasets/remote/plugins')
+      .then(res => setPlugins(res.data ?? []))
+      .catch(() => setPlugins([]));
+  }, []);
 
   // Transform datasets array into rows with objects
   const tableRows = datasets.map(dataset => ({
@@ -117,7 +136,19 @@ export default function Datasets() {
           <h1 className="text-base sm:text-lg">Datasets</h1>
         </div>
         <div className="flex-1"></div>
-        <div>
+        <div className="flex items-center gap-2">
+          {plugins.map(plugin => (
+            <Button
+              key={plugin.id}
+              className="text-gray-200 bg-indigo-700 px-4 py-2 rounded-md hover:bg-indigo-600 transition-colors flex items-center gap-2"
+              onClick={() => setOpenPluginId(plugin.id)}
+            >
+              {plugin.icon && (
+                <img src={plugin.icon} alt="" className="w-4 h-4 object-contain flex-shrink-0" />
+              )}
+              Browse {plugin.display_name}
+            </Button>
+          ))}
           <Button
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md hover:bg-slate-500 transition-colors text-sm sm:text-base whitespace-nowrap"
             onClick={() => openNewDatasetModal()}
@@ -136,6 +167,17 @@ export default function Datasets() {
           onRefresh={refreshDatasets}
         />
       </MainContent>
+
+      {plugins.map(plugin => (
+        <RemoteSourceBrowseModal
+          key={plugin.id}
+          sourceId={plugin.id}
+          sourceName={plugin.display_name}
+          isOpen={openPluginId === plugin.id}
+          onClose={() => setOpenPluginId(null)}
+          onImportStarted={() => refreshDatasets()}
+        />
+      ))}
 
       <Modal
         isOpen={isNewDatasetModalOpen}
