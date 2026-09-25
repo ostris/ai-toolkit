@@ -119,15 +119,11 @@ COMFY_FILES = {
     "text_encoder": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "video_vae": "vae/minimax_h3_video_vae_fp16.safetensors",
     "audio_vae": "vae/minimax_h3_audio_vae_fp32.safetensors",
-    "dit_fasth3": "diffusion_models/minimax_h3_fasth3_preview_v0.2_int8_convrot.safetensors",
+    "dit_fasth3": "diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
 }
-# FastH3 (FastVideo 4-step VSA distill) int8-convrot repack, produced by
-# scripts/convert_minimax_h2_fastvideo.py from the FastVideo diffusers repo.
-# Hub fallback repo for the file (flat at the repo root, downloaded into
-# MODELS_PATH/diffusion_models/); not published there yet — until it is, the
-# file must exist locally or be built with the converter.
-FASTH3_REPO = "Kijai/MiniMax-H3-experimental"
-FASTH3_SOURCE_REPO = "FastVideo/FastVideo-Minimax-FastH3-Preview-v0.2"
+# FastH3 8-Step V2 (FastVideo DMD2 + VSA distill) comfy repack: DiT plus the
+# shared text encoder and VAEs at the same repo-relative paths
+FASTH3_REPO = "FastVideo/FastVideo-FastH3-Comfy"
 # tokenizer/processor/text-encoder config come from the original repo (tiny files)
 ORIGINAL_REPO = "MiniMaxAI/MiniMax-H3"
 
@@ -180,6 +176,10 @@ class MiniMaxH3VaeBundle(torch.nn.Module):
 
 class MinimaxH3Model(BaseModel):
     arch = "minimax_h3"
+    # video flow shift; audio stays on AUDIO_SIGMA_SHIFT, remapped from this
+    video_sigma_shift = packing.VIDEO_SIGMA_SHIFT
+    # hub repo for missing files when name_or_path isn't an org/repo id
+    comfy_repo = COMFY_REPO
     use_old_lokr_format = False
 
     def __init__(
@@ -216,9 +216,11 @@ class MinimaxH3Model(BaseModel):
             self.model_config.model_kwargs.get("max_text_length", 512)
         )
 
-    @staticmethod
-    def get_train_scheduler():
-        return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
+    @classmethod
+    def get_train_scheduler(cls):
+        return CustomFlowMatchEulerDiscreteScheduler(
+            **{**scheduler_config, "shift": cls.video_sigma_shift}
+        )
 
     def get_bucket_divisibility(self):
         # 16x VAE spatial compression * 2x2 transformer patch
@@ -256,7 +258,7 @@ class MinimaxH3Model(BaseModel):
         )
         return resolve_comfy_file(
             COMFY_FILES[component],
-            repo_id=repo_id_from_name_or_path(name_or_path, COMFY_REPO),
+            repo_id=repo_id_from_name_or_path(name_or_path, self.comfy_repo),
             override_path=self.model_config.model_kwargs.get(f"{component}_path", None),
             extra_roots=extra_roots,
             status_fn=self.print_and_status_update,
@@ -515,7 +517,7 @@ class MinimaxH3Model(BaseModel):
         vae_bundle = self._load_vaes()
         vae_bundle.to(self.vae_device_torch)
 
-        self.noise_scheduler = MinimaxH3Model.get_train_scheduler()
+        self.noise_scheduler = self.get_train_scheduler()
         self.vae = vae_bundle
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
@@ -788,7 +790,9 @@ class MinimaxH3Model(BaseModel):
                 sigma_v = sigma_v.unsqueeze(0)
             if sigma_v.shape[0] != batch_size:
                 sigma_v = sigma_v.expand(batch_size)
-            sigma_a = remap_sigma(sigma_v)
+            sigma_a = remap_sigma(
+                sigma_v, self.video_sigma_shift, packing.AUDIO_SIGMA_SHIFT
+            )
             t_v = 1.0 - sigma_v
             t_a = 1.0 - sigma_a
 
@@ -1552,29 +1556,31 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
 
 
 class MinimaxH3FastModel(MinimaxH3Model):
-    """FastH3: FastVideo's DMD2-distilled 4-step MiniMax-H3 preview, trained
-    with VSA (Video Sparse Attention) at 90% sparsity. Text-to-video(+audio)
-    only — no first-frame or reference conditioning.
+    """FastH3 8-Step V2: FastVideo's DMD2-distilled 8-step MiniMax-H3, trained
+    with VSA (Video Sparse Attention) at 80% sparsity and a video flow shift of
+    10 (audio stays at 3). Text-to-video(+audio) only — no first-frame or
+    reference conditioning.
 
-    The DiT is the int8-ConvRot repack of
-    ``FastVideo/FastVideo-Minimax-FastH3-Preview-v0.2`` (built with
-    scripts/convert_minimax_h2_fastvideo.py): the pruned comfy layout plus a
-    ``blocks.N.attn.to_gate_compress`` linear per block. Attention runs the
-    trained VSA policy — pooled 64-token (4,4,4) tile top-k block-sparse
+    Weights come from ``FASTH3_REPO``. The DiT is its int8-ConvRot repack:
+    the pruned comfy layout plus a ``blocks.N.attn.to_gate_compress`` linear
+    per block. Attention runs
+    the trained VSA policy — pooled 64-token (4,4,4) tile top-k block-sparse
     attention with the gated compression branch — via FlexAttention
     (src/vsa.py), in training and sampling alike. Text encoder and VAEs are
-    shared with the base model.
+    the base model's files, repacked in the same repo.
 
     ``model_kwargs``:
       - ``vsa`` (default true): false runs dense attention with the gate
         branch off, matching FastVideo's dense LoRA-preview mode
-      - ``vsa_sparsity`` (default 0.9, the checkpoint's trained policy)
+      - ``vsa_sparsity`` (default 0.8, the checkpoint's trained policy)
 
-    Sample with 4 steps (the distilled schedule) and guidance_scale 1.
+    Sample with 8 steps (the distilled schedule) and guidance_scale 1.
     """
 
     arch = "minimax_h3_vsa"
-    # FastH3 samples on its trained ladder: [999, 749, 500, 250] on the
+    video_sigma_shift = 10.0
+    comfy_repo = FASTH3_REPO
+    # FastH3 samples on its trained ladder: [999, 874, ..., 250, 125] on the
     # shared 1000-step grid, each scheduler applying its own shift
     t1000_sample_ladder = True
 
@@ -1583,53 +1589,10 @@ class MinimaxH3FastModel(MinimaxH3Model):
         kw = self.model_config.model_kwargs
         self.vsa_sparsity: Optional[float] = None
         if bool(kw.get("vsa", True)):
-            self.vsa_sparsity = float(kw.get("vsa_sparsity", 0.9))
+            self.vsa_sparsity = float(kw.get("vsa_sparsity", 0.8))
 
     def _dit_component(self) -> str:
         return "dit_fasth3"
-
-    def _resolve_comfy_file(self, component: str) -> str:
-        if component != "dit_fasth3":
-            return super()._resolve_comfy_file(component)
-        # local search at the comfy-layout locations first; the hub file sits
-        # at the FastH3 repo's root, so the download is done directly here
-        name_or_path = self.model_config.name_or_path
-        extra_roots = (
-            [name_or_path] if name_or_path and os.path.isdir(name_or_path) else []
-        )
-        rel_path = COMFY_FILES[component]
-        found = resolve_comfy_file(
-            rel_path,
-            repo_id=FASTH3_REPO,
-            override_path=self.model_config.model_kwargs.get(f"{component}_path", None),
-            extra_roots=extra_roots,
-            status_fn=self.print_and_status_update,
-            local_only=True,
-        )
-        if found is not None:
-            return found
-        import huggingface_hub
-
-        target_dir = os.path.join(MODELS_PATH, "diffusion_models")
-        os.makedirs(target_dir, exist_ok=True)
-        self.print_and_status_update(
-            f"Downloading {os.path.basename(rel_path)} from {FASTH3_REPO}"
-        )
-        try:
-            return huggingface_hub.hf_hub_download(
-                repo_id=FASTH3_REPO,
-                filename=os.path.basename(rel_path),
-                local_dir=target_dir,
-            )
-        except Exception as e:
-            raise FileNotFoundError(
-                f"{os.path.basename(rel_path)} was not found locally or on "
-                f"{FASTH3_REPO}. Build it from the FastVideo release with:\n"
-                f"  python scripts/convert_minimax_h2_fastvideo.py "
-                f"{FASTH3_SOURCE_REPO} {os.path.join(target_dir, os.path.basename(rel_path))}\n"
-                f"or point model_kwargs.dit_fasth3_path at an existing "
-                f"FastH3 int8-convrot file."
-            ) from e
 
     def _load_transformer(self) -> MiniMaxH3Transformer:
         transformer = super()._load_transformer()

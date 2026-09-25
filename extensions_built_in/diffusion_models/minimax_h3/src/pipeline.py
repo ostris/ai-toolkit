@@ -200,14 +200,15 @@ class MiniMaxH3Pipeline:
         audio_rows = pack_audio_latents(audio_noise)  # (1, 2*A, 32)
 
         # --- schedules -----------------------------------------------------
+        video_shift = getattr(model, "video_sigma_shift", VIDEO_SIGMA_SHIFT)
         sigmas_v = build_sigma_schedule(
             num_inference_steps,
-            VIDEO_SIGMA_SHIFT,
+            video_shift,
             t1000_ladder=getattr(model, "t1000_sample_ladder", False),
         ).to(device)
         # the audio schedule follows the video grid through the closed-form
         # shift remap so both streams sit at the same underlying position
-        sigmas_a = remap_sigma(sigmas_v, VIDEO_SIGMA_SHIFT, AUDIO_SIGMA_SHIFT)
+        sigmas_a = remap_sigma(sigmas_v, video_shift, AUDIO_SIGMA_SHIFT)
 
         position_ids = layout.position_ids[None].to(device)
         tags = layout.token_tags[None].to(device)
