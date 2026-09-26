@@ -8,7 +8,10 @@ import threading
 
 import numpy as np
 import torch
-import torchaudio
+try:
+    import torchaudio
+except Exception:  # optional: platforms without torchaudio wheels (e.g. Linux aarch64)
+    torchaudio = None  # note: the AceStep audio captioner needs torchaudio at runtime
 from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
 from transformers.generation import LogitsProcessor, LogitsProcessorList
 from collections import OrderedDict
