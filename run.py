@@ -35,6 +35,10 @@ import torch
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     torch.autograd.set_detect_anomaly(True)
 
+# on unified memory devices (DGX Spark), offloading modules to cpu is useless and very slow
+from toolkit.util.unified_memory import apply_unified_memory_patches
+apply_unified_memory_patches()
+
 if seed is not None:
     import random
     import numpy as np
