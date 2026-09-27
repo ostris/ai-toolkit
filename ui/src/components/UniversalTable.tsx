@@ -61,7 +61,7 @@ export default function UniversalTable({
                 const rowClass = index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800';
 
                 return (
-                  <tr key={index} className={`${rowClass} border-b border-gray-700 hover:bg-gray-700`}>
+                  <tr key={row.id ?? index} className={`${rowClass} border-b border-gray-700 hover:bg-gray-700`}>
                     {columns.map(column => (
                       <td key={column.key} className={classNames('px-3 py-2', column.className)}>
                         {column.render ? column.render(row) : row[column.key]}
