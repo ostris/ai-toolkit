@@ -171,6 +171,8 @@ class SDTrainer(BaseSDTrainProcess):
                 gen_img_config = GenerateImageConfig(
                     prompt=prompt, # it will autoparse the prompt
                     negative_prompt=sample_item.neg,
+                    width=sample_item.width,
+                    height=sample_item.height,
                     output_path=output_path,
                     ctrl_img=sample_item.ctrl_img,
                     ctrl_img_1=sample_item.ctrl_img_1,
