@@ -139,8 +139,14 @@ class OstrisModelMixin:
 
     @classmethod
     def aitk_from_pretrained(cls, path, subfolder=None, dtype=None, **kwargs):
+        # Build with real weights on CPU instead of meta placeholders.
+        # The meta + assign path can leave params on the meta device for some
+        # checkpoints (e.g. Qwen-Image-2.1 loaded from a local diffusers dir
+        # with quantize/low_vram off), which makes the later .to(device) in
+        # aitk_post_load raise "Cannot copy out of meta tensor".
         return cls._local_first(
-            cls.from_pretrained, path, subfolder=subfolder, torch_dtype=dtype, **kwargs
+            cls.from_pretrained, path, subfolder=subfolder, torch_dtype=dtype,
+            low_cpu_mem_usage=False, **kwargs
         )
 
     @classmethod
