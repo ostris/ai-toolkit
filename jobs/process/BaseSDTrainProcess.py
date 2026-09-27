@@ -2210,7 +2210,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         lr_scheduler_params = self.train_config.lr_scheduler_params
 
         # make sure it had bare minimum
-        if 'max_iterations' not in lr_scheduler_params:
+        if 'total_iters' not in lr_scheduler_params:
             lr_scheduler_params['total_iters'] = self.train_config.steps
 
         lr_scheduler = get_lr_scheduler(
