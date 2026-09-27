@@ -2941,7 +2941,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         readme_content = f"""---
 tags:
 {yaml.dump(tags, indent=4).strip()}
-{"widget:" if os.path.isdir(samples_dir) else ""}
+{"widget:" if widgets else ""}
 {yaml.dump(widgets, indent=4).strip() if widgets else ""}
 base_model: {base_model}
 {"instance_prompt: " + instance_prompt if instance_prompt else ""}
