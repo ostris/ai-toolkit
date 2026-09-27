@@ -37,6 +37,27 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
+
+def _zero_nonfinite_grad(grad: torch.Tensor) -> torch.Tensor:
+    return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _zero_nonfinite_rows(x: torch.Tensor) -> torch.Tensor:
+    """Zero every token row that carries an inf/NaN (forward value and gradient)."""
+    finite = torch.isfinite(x).all(dim=-1, keepdim=True)
+    if bool(finite.all()):
+        return x
+    return torch.where(finite, x, torch.zeros_like(x))
+
+
+def _mod_rows(table: torch.Tensor, idx: torch.Tensor, dt: torch.dtype, sanitize: bool) -> torch.Tensor:
+    """Gather per-token adaLN modulation rows, cast to the block dtype; with ``sanitize``
+    zero the rows that overflowed the cast (fp16 pruned checkpoints: the text rows of the
+    last block) so neither ``inf * 0`` in the forward nor ``0 * inf`` in the backward can
+    produce a NaN. Dead rows only — finite rows are untouched."""
+    v = table[idx].to(dt)
+    return _zero_nonfinite_rows(v) if sanitize else v
+
 MODALITY_NUM = 3  # 0 = video, 1 = text, 2 = audio; -1 marks padding rows
 
 
@@ -332,18 +353,34 @@ class MiniMaxH3Block(nn.Module):
             self.adaln_proj(temb)
         )
         dt = x.dtype  # pruned checkpoints store the adaln projections fp16
+        # Training only (set by the parent transformer): with the pruned fp16 checkpoint
+        # the modulation rows of the text tokens overflow to inf in the last block. Those
+        # rows are never read out, so the base forward is fine, but every op that touches
+        # an inf there yields NaN in the BACKWARD (0 * inf), the attention backward spreads
+        # it into every row, and every adapter upstream gets NaN gradients. Dead rows are
+        # zeroed (value and gradient) at the modulation, the norm output and the residual.
+        # A no-op wherever the base forward is finite, so the base model is untouched.
+        san = getattr(self, "sanitize_nonfinite_rows", False)
 
-        h = self.norm1(x) * (1.0 + scale_msa[adaln_indices].to(dt)) + shift_msa[
-            adaln_indices
-        ].to(dt)
-        x = x + gate_msa[adaln_indices].to(dt) * self.attn(
+        h = self.norm1(x) * (1.0 + _mod_rows(scale_msa, adaln_indices, dt, san)) + _mod_rows(
+            shift_msa, adaln_indices, dt, san
+        )
+        if san:
+            h = _zero_nonfinite_rows(h)
+        x = x + _mod_rows(gate_msa, adaln_indices, dt, san) * self.attn(
             h, rotary_emb, attn_mask, vsa
         )
+        if san:
+            x = _zero_nonfinite_rows(x)
 
-        h = self.norm2(x) * (1.0 + scale_mlp[adaln_indices].to(dt)) + shift_mlp[
-            adaln_indices
-        ].to(dt)
-        x = x + gate_mlp[adaln_indices].to(dt) * self.mlp(h)
+        h = self.norm2(x) * (1.0 + _mod_rows(scale_mlp, adaln_indices, dt, san)) + _mod_rows(
+            shift_mlp, adaln_indices, dt, san
+        )
+        if san:
+            h = _zero_nonfinite_rows(h)
+        x = x + _mod_rows(gate_mlp, adaln_indices, dt, san) * self.mlp(h)
+        if san:
+            x = _zero_nonfinite_rows(x)
         return x
 
 
@@ -379,9 +416,12 @@ class MiniMaxH3FinalLayer(nn.Module):
     ):
         shift, scale = self.adaln_proj(temb)
         dt = x.dtype
-        h = self.norm(x) * (1.0 + scale[timestep_indices].to(dt)) + shift[
-            timestep_indices
-        ].to(dt)
+        san = getattr(self, "sanitize_nonfinite_rows", False)  # see MiniMaxH3Block.forward
+        h = self.norm(x) * (1.0 + _mod_rows(scale, timestep_indices, dt, san)) + _mod_rows(
+            shift, timestep_indices, dt, san
+        )
+        if san:
+            h = _zero_nonfinite_rows(h)
         h = h.to(self.video_out.weight.dtype)
         return self.video_out(h), self.audio_out(h)
 
@@ -445,6 +485,9 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
         self.final_layer = MiniMaxH3FinalLayer(p)
 
         self.gradient_checkpointing = False
+        # training only: zero non-finite gradient components at every block boundary
+        # (set by MiniMaxH3Model.get_noise_prediction). Inference never sets it.
+        self.sanitize_backward_nonfinite = False
         # None = dense attention. Set by the FastH3 model wrapper; only takes
         # effect on gate_compress checkpoints when the caller passes the grid.
         self.vsa_sparsity: Optional[float] = None
@@ -567,7 +610,9 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
                 )
             )
 
+        self.final_layer.sanitize_nonfinite_rows = self.sanitize_backward_nonfinite
         for block in self.blocks:
+            block.sanitize_nonfinite_rows = self.sanitize_backward_nonfinite
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 x = checkpoint(
                     block,
@@ -581,6 +626,12 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
                 )
             else:
                 x = block(x, temb, adaln_indices, rotary_emb, attn_mask, vsa_ctx)
+            if self.sanitize_backward_nonfinite and x.requires_grad:
+                # Text rows overflow to inf in the last block (their outputs are never read
+                # out, so the forward is fine), but backward through those values yields
+                # NaN for the text positions and poisons every adapter upstream via the
+                # packed sequence. Zero the non-finite components before they travel.
+                x.register_hook(_zero_nonfinite_grad)
 
         video_all, audio_all = self.final_layer(x, temb, inverse)
         video_out = video_all.index_select(1, video_indices)
