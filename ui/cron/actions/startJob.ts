@@ -250,6 +250,12 @@ const startAndWatchJob = (job: Job) => {
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
       PYTHONUNBUFFERED: '1', // write Python output immediately so it is not lost on a crash
+      // Force UTF-8 for stdout/stderr and the log file. On Windows the default
+      // locale encoding (cp1252) cannot encode tqdm progress-bar block glyphs
+      // (e.g. ▎), which crashes the job during model load. UTF-8 mode fixes both
+      // sys.stdout and open() defaults used by toolkit/print.py.
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
     };
 
     // HF_TOKEN

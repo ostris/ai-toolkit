@@ -18,6 +18,7 @@ The presentation is raw tokens — no chat template, no special tokens:
 from typing import List, Optional
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from dataclasses import dataclass, field
 
@@ -240,22 +241,39 @@ def encode_minimax_h3_prompt(
     )
 
     # call the inner .model directly: the LM head's vocab projection is dead
-    # weight here and hidden_states[50] is all that is consumed
-    outputs = text_encoder.model(
-        input_ids=input_ids,
-        attention_mask=torch.ones_like(input_ids),
-        mm_token_type_ids=mm_token_type_ids,
-        pixel_values=None
-        if pixel_values is None
-        else pixel_values.to(device, text_encoder.dtype),
-        image_grid_thw=None if image_grid_thw is None else image_grid_thw.to(device),
-        pixel_values_videos=None
-        if pixel_values_videos is None
-        else pixel_values_videos.to(device, text_encoder.dtype),
-        video_grid_thw=None if video_grid_thw is None else video_grid_thw.to(device),
-        use_cache=False,
-        output_hidden_states=True,
-    )
+    # weight here and hidden_states[50] is all that is consumed.
+    #
+    # Prefer cuDNN for SDPA inside the encoder. transformers drops the all-ones
+    # mask to None and then passes enable_gqa=True (64 q / 8 kv heads); torch's
+    # default priority is flash > efficient > math > cudnn, and with flash
+    # unavailable and efficient rejecting GQA that lands on the math backend,
+    # which materializes the full (64, S, S) fp32 attention matrix — ~33 GiB
+    # for a 73-frame video prompt. cuDNN handles GQA in <1 GiB. Priority list
+    # rather than a hard pin so non-NVIDIA backends still fall through.
+    with sdpa_kernel(
+        [
+            SDPBackend.CUDNN_ATTENTION,
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.MATH,
+        ],
+        set_priority=True,
+    ):
+        outputs = text_encoder.model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            mm_token_type_ids=mm_token_type_ids,
+            pixel_values=None
+            if pixel_values is None
+            else pixel_values.to(device, text_encoder.dtype),
+            image_grid_thw=None if image_grid_thw is None else image_grid_thw.to(device),
+            pixel_values_videos=None
+            if pixel_values_videos is None
+            else pixel_values_videos.to(device, text_encoder.dtype),
+            video_grid_thw=None if video_grid_thw is None else video_grid_thw.to(device),
+            use_cache=False,
+            output_hidden_states=True,
+        )
     layer = min(TEXT_ENCODER_LAYER, len(outputs.hidden_states) - 1)
     embeds = outputs.hidden_states[layer][0]
     if dtype is not None:
