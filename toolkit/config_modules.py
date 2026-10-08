@@ -568,6 +568,9 @@ class TrainConfig:
         self.unload_text_encoder = kwargs.get('unload_text_encoder', False)
         # will toggle all datasets to cache text embeddings
         self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
+        # merge all datasets into one file list so buckets/batches mix across folders;
+        # reg datasets pool separately from non-reg ones
+        self.pool_datasets: bool = kwargs.get('pool_datasets', False)
         # for swapping which parameters are trained during training
         self.do_paramiter_swapping = kwargs.get('do_paramiter_swapping', False)
         # 0.1 is 10% of the parameters active at a time lower is less vram, higher is more
@@ -1109,10 +1112,28 @@ class DatasetConfig:
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
     """
-    This just splits up the datasets by resolutions so you dont have to do it manually
+    This just splits up the datasets by paths and resolutions so you dont have to do it manually
     :param raw_config:
     :return:
     """
+    # split up datasets by folder_path / dataset_path lists: one dataset per path,
+    # all other settings shared (pair with train.pool_datasets to mix them)
+    path_split_config = []
+    for dataset in raw_config:
+        split = False
+        for path_key in ['folder_path', 'dataset_path']:
+            paths = dataset.get(path_key, None)
+            if isinstance(paths, (list, tuple)):
+                for path in paths:
+                    dataset_copy = dataset.copy()
+                    dataset_copy[path_key] = path
+                    path_split_config.append(dataset_copy)
+                split = True
+                break
+        if not split:
+            path_split_config.append(dataset)
+    raw_config = path_split_config
+
     # split up datasets by resolutions
     new_config = []
     for dataset in raw_config:

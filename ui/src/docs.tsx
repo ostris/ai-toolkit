@@ -288,6 +288,30 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.pool_datasets': {
+    title: 'Pool Datasets',
+    description: (
+      <>
+        Off by default. Only useful when you have numerous datasets.
+        <br />
+        <br />
+        Normally every dataset is loaded as its own unit with its own buckets, so each batch is built from a single
+        dataset and each dataset keeps its own loader threads. With many datasets this means batches never mix images
+        from different folders and the number of loader threads grows with the dataset count.
+        <br />
+        <br />
+        Pooling merges all of your datasets into one shared set of buckets. Images from different folders that land in
+        the same bucket are mixed together in the same batch, and only one set of loader threads is used for the whole
+        pool. Regularization datasets are pooled separately from your training datasets, never together.
+        <br />
+        <br />
+        Each dataset keeps its own settings (captions, control images, repeats, flips, scale, resolution). Datasets whose
+        settings would not collate into one batch (for example a different number of control images, video vs image,
+        or different caching) are automatically kept in separate buckets within the pool. All pooled datasets must use
+        the same batch size.
+      </>
+    ),
+  },
   'train.do_differential_guidance': {
     title: 'Differential Guidance',
     description: (
