@@ -160,6 +160,10 @@ MODEL_TESTS = {
         "model": {"name_or_path": "Photoroom/prxpixel-t2i", "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
     },
+    "iris3b": {
+        "model": {"name_or_path": "speridlabs/iris-3b", "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
     "zeta_chroma": {
         "model": {"name_or_path": "lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors", "extras_name_or_path": "Tongyi-MAI/Z-Image-Turbo", "quantize": True, "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
