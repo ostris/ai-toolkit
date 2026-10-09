@@ -1663,6 +1663,38 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     ],
   },
   {
+    name: "flux3",
+    label: "FLUX.3 (small)",
+    group: "image",
+    gateUrl: "https://huggingface.co/herzogenhorn/f3-image-small",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      "config.process[0].model.name_or_path": [
+        "herzogenhorn/f3-image-small",
+        defaultNameOrPath,
+      ],
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].sample.width": [1024, 1024],
+      "config.process[0].sample.height": [1024, 1024],
+      "config.process[0].sample.guidance_scale": [3.5, 4],
+      "config.process[0].sample.sample_steps": [28, 25],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+    },
+    disableSections: ["network.conv"],
+    additionalSections: [
+      "datasets.control_path",
+      "sample.ctrl_img",
+      "model.layer_offloading",
+      "model.low_vram",
+    ],
+  },
+  {
     name: "flux2_klein_4b",
     label: "FLUX.2-klein-base-4B",
     group: "image",
