@@ -189,6 +189,18 @@ MODEL_TESTS = {
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 1.0},
         "needs_control_image": True,
     },
+    "qwen_image_2:turbo": {
+        # model_kwargs.turbo samples with the checkpoint's fixed 8-step
+        # schedule at CFG 1
+        "model": {
+            "name_or_path": "Comfy-Org/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+            "quantize": True,
+            "quantize_te": True,
+            "model_kwargs": {"turbo": True},
+        },
+        "sample": {**IMG, "num_inference_steps": 8, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
     "ming_image": {
         "model": {
             "name_or_path": "Comfy-Org/Ming-Image",

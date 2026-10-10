@@ -2,7 +2,7 @@
 // registers in AI_TOOLKIT_MODELS. Loaded at runtime by the UI, not bundled:
 // see ui/src/extensions/README.md for the convention and the allowed imports.
 import Link from "next/link";
-import type { ModelArch } from "@/app/jobs/new/options";
+import type { CustomModelOption, ModelArch } from "@/app/jobs/new/options";
 import type { JobConfig } from "@/types";
 import {
   defaultSampleConfig,
@@ -11,6 +11,55 @@ import {
 
 const defaultNameOrPath = "";
 const defaultLinearRank = 32;
+
+// Qwen-Image-2.1 and its turbo distill share the RGBA VAE, so both entries
+// carry this option
+const qwenImage21TransparencyOption: CustomModelOption[] = [
+  {
+    type: "checkbox",
+    label: "Transparency (RGBA)",
+    getValue: (config: JobConfig) =>
+      config?.config?.process?.[0]?.model?.model_kwargs?.rgba ?? false,
+    onChange: (
+      value: boolean,
+      config: JobConfig,
+      setJobConfig: (value: any, key: string) => void,
+    ) => {
+      const kwargs = {
+        ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}),
+      };
+      if (value) {
+        kwargs.rgba = true;
+      } else {
+        delete kwargs.rgba;
+      }
+      setJobConfig(kwargs, "config.process[0].model.model_kwargs");
+    },
+    doc: {
+      title: "Transparency (RGBA)",
+      description: (
+        <div className="space-y-2">
+          <p>
+            This model&apos;s VAE is natively RGBA, so alpha can be carried
+            end to end. When on, dataset images and reference images load
+            with their alpha channel, the VAE encodes all four channels, and
+            samples are saved as PNGs with their transparency intact.
+          </p>
+          <p>
+            Images with no alpha of their own get a fully opaque one, so a
+            mixed dataset is fine. Turn this off to train and sample flat
+            RGB: alpha is dropped on the way in and added back as opaque.
+          </p>
+          <p>
+            Changing this re-caches latents, and it cannot be combined with
+            a dataset using <code>alpha_mask</code>, which consumes the
+            alpha channel as a loss mask instead.
+          </p>
+        </div>
+      ),
+    },
+  },
+];
 
 export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
   {
@@ -573,52 +622,56 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "model.low_vram",
       "model.layer_offloading",
     ],
-    customModelSelectOptions: [
-      {
-        type: "checkbox",
-        label: "Transparency (RGBA)",
-        getValue: (config: JobConfig) =>
-          config?.config?.process?.[0]?.model?.model_kwargs?.rgba ?? false,
-        onChange: (
-          value: boolean,
-          config: JobConfig,
-          setJobConfig: (value: any, key: string) => void,
-        ) => {
-          const kwargs = {
-            ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}),
-          };
-          if (value) {
-            kwargs.rgba = true;
-          } else {
-            delete kwargs.rgba;
-          }
-          setJobConfig(kwargs, "config.process[0].model.model_kwargs");
+    customModelSelectOptions: qwenImage21TransparencyOption,
+  },
+  {
+    name: "qwen_image_2:turbo",
+    label: "Qwen-Image-2.1 Turbo (w/ Training Adapter)",
+    generateNameOverride: "Qwen-Image-2.1 Turbo",
+    group: "image",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      // the turbo weight file in the repack (text encoder and VAE come from
+      // the same repack); model_kwargs.turbo selects the turbo schedule
+      "config.process[0].model.name_or_path": [
+        "Comfy-Org/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+        defaultNameOrPath,
+      ],
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].train.unload_text_encoder": [false, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      // training adapter: live on the DiT while training, off while sampling
+      "config.process[0].model.assistant_lora_path": [
+        'ostris/qwen_image_2_turbo_training_adapter/qwen_image_2_turbo_training_adapter_v1.safetensors',
+        undefined
+      ],
+      // the turbo checkpoint samples with its own fixed 8-step schedule at
+      // CFG 1; the step count here is informational
+      "config.process[0].sample.guidance_scale": [1.0, 4.0],
+      "config.process[0].sample.sample_steps": [8, 25],
+      "config.process[0].model.model_kwargs": [
+        {
+          turbo: true,
+          rgba: false,
         },
-        doc: {
-          title: "Transparency (RGBA)",
-          description: (
-            <div className="space-y-2">
-              <p>
-                This model&apos;s VAE is natively RGBA, so alpha can be carried
-                end to end. When on, dataset images and reference images load
-                with their alpha channel, the VAE encodes all four channels, and
-                samples are saved as PNGs with their transparency intact.
-              </p>
-              <p>
-                Images with no alpha of their own get a fully opaque one, so a
-                mixed dataset is fine. Turn this off to train and sample flat
-                RGB: alpha is dropped on the way in and added back as opaque.
-              </p>
-              <p>
-                Changing this re-caches latents, and it cannot be combined with
-                a dataset using <code>alpha_mask</code>, which consumes the
-                alpha channel as a loss mask instead.
-              </p>
-            </div>
-          ),
-        },
-      },
+        {},
+      ],
+    },
+    disableSections: ["network.conv", "train.unload_text_encoder"],
+    additionalSections: [
+      "datasets.multi_control_paths",
+      "sample.multi_ctrl_imgs",
+      "model.low_vram",
+      "model.layer_offloading",
+      "model.assistant_lora_path",
     ],
+    customModelSelectOptions: qwenImage21TransparencyOption,
   },
   {
     name: "ming_image",
