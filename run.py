@@ -119,6 +119,7 @@ def main():
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
+        job = None
         try:
             job = get_job(config_file, args.name)
             job.run()
@@ -128,7 +129,8 @@ def main():
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
             try:
-                job.process[0].on_error(e)
+                if job is not None:
+                    job.process[0].on_error(e)
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
             if not args.recover:
@@ -136,7 +138,8 @@ def main():
                 raise e
         except KeyboardInterrupt as e:
             try:
-                job.process[0].on_error(e)
+                if job is not None:
+                    job.process[0].on_error(e)
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
             if not args.recover:
