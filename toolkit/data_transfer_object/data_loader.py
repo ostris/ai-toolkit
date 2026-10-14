@@ -11,6 +11,7 @@ from toolkit import image_utils
 from toolkit.basic import get_quick_signature_string
 from toolkit.dto import DTO
 from toolkit.dataloader_mixins import (
+    _latent_from_uint8,
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
     LatentCachingFileItemDTOMixin,
@@ -212,13 +213,34 @@ class FileItemDTO(
         self.cleanup_mask()
         self.cleanup_unconditional()
 
+    @property
+    def tensor(self) -> Union[torch.Tensor, None]:
+        t = self.__dict__.get('_tensor')
+        if t is None:
+            cached = getattr(self, '_cached_tensor_uint8', None)
+            if cached is not None:
+                # cached pixels stay uint8 until first read, so workers ship 1 byte/px over shm;
+                # fp16 on read (consumers cast up themselves)
+                t = _latent_from_uint8(cached, dtype=torch.float16)
+                self._tensor = t
+        return t
+
+    @tensor.setter
+    def tensor(self, value):
+        self._tensor = value
+
+    @tensor.deleter
+    def tensor(self):
+        self._tensor = None
+
 
 class DataLoaderBatchDTO:
     def __init__(self, **kwargs):
         try:
             self.file_items: List["FileItemDTO"] = kwargs.get("file_items", None)
             is_latents_cached = self.file_items[0].is_latent_cached
-            self.tensor: Union[torch.Tensor, None] = None
+            self._tensor: Union[torch.Tensor, None] = None
+            self._tensor_uint8: Union[torch.Tensor, None] = None
             self.latents: Union[torch.Tensor, None] = None
             self.control_tensor: Union[torch.Tensor, None] = None
             self.control_tensor_list: Union[List[List[torch.Tensor]], None] = None
@@ -265,9 +287,11 @@ class DataLoaderBatchDTO:
             ):
                 # only return a tensor if latents are not cached, or if we are explicitly
                 # loading the raw image alongside the cached latents
-                self.tensor: torch.Tensor = torch.cat(
-                    [x.tensor.unsqueeze(0) for x in self.file_items]
-                )
+                if all(x.__dict__.get('_tensor') is None and getattr(x, '_cached_tensor_uint8', None) is not None for x in self.file_items):
+                    # cached pixels cross the worker boundary as uint8; `tensor` expands them on first read
+                    self._tensor_uint8 = torch.cat([x._cached_tensor_uint8.unsqueeze(0) for x in self.file_items])
+                else:
+                    self.tensor = torch.cat([x.tensor.unsqueeze(0) for x in self.file_items])
             # if we have encoded latents, we concatenate them
             self.latents: Union[torch.Tensor, None] = None
             if is_latents_cached:
@@ -559,6 +583,23 @@ class DataLoaderBatchDTO:
     @latents.deleter
     def latents(self):
         self._latents = None
+
+    @property
+    def tensor(self) -> Union[torch.Tensor, None]:
+        if self._tensor is None and self._tensor_uint8 is not None:
+            self._tensor = _latent_from_uint8(self._tensor_uint8, dtype=torch.float16)
+            self._tensor_uint8 = None
+        return self._tensor
+
+    @tensor.setter
+    def tensor(self, value):
+        self._tensor = value
+        self._tensor_uint8 = None
+
+    @tensor.deleter
+    def tensor(self):
+        self._tensor = None
+        self._tensor_uint8 = None
 
     @property
     def audio_latents(self) -> Union[torch.Tensor, None]:
