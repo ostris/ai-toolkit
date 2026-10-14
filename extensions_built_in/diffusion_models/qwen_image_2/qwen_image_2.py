@@ -19,19 +19,30 @@ see the sampled timestep.
 
 Flow-matching convention matches ai-toolkit (t=1 noise -> t=0 clean, target =
 noise - clean), so `get_noise_prediction` does no time flip or negation.
+
+Qwen-Image-2.1-Turbo is the same architecture distilled to 8 steps at CFG 1.
+Point `name_or_path` at its weight file in the repack
+(`Comfy-Org/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors`);
+`model_kwargs.turbo` samples with the schedule the checkpoint ships. Training
+it goes through a training adapter
+(`assistant_lora_path`): a LoRA that is live on the DiT while training and
+off while sampling, so samples show the turbo model plus what was trained.
 """
 
 import os
 from typing import TYPE_CHECKING, List, Optional
 
+import huggingface_hub
 import numpy as np
 import torch
 from PIL import Image
+from safetensors.torch import load_file
 
 from toolkit.accelerator import unwrap_model
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.basic import flush
-from toolkit.config_modules import GenerateImageConfig, ModelConfig
+from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
+from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.samplers.custom_flowmatch_sampler import (
@@ -79,6 +90,16 @@ scheduler_config = {
 # configs and the processor, which the repack does not carry
 COMFY_REPO = "Comfy-Org/Qwen-Image-2.1"
 BASE_REPO = "Qwen/Qwen-Image-2.1"
+
+# the turbo checkpoint is sampled with the schedule it ships
+# (TURBO_SAMPLE_SIGMAS in src/pipeline.py) as-is: no resolution shift, no
+# terminal stretch; the step count is fixed
+turbo_scheduler_config = {
+    **scheduler_config,
+    "shift": 1.0,
+    "shift_terminal": None,
+    "use_dynamic_shifting": False,
+}
 
 # decode above this many output pixels goes through the VAE's tiled path
 TILE_DECODE_ABOVE_PIXELS = 1024 * 1024
@@ -141,6 +162,15 @@ class QwenImage2Model(BaseModel):
     def get_train_scheduler():
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
+    @property
+    def is_turbo(self) -> bool:
+        return bool(self.model_config.model_kwargs.get("turbo", False))
+
+    def get_sample_scheduler(self):
+        if self.is_turbo:
+            return CustomFlowMatchEulerDiscreteScheduler(**turbo_scheduler_config)
+        return self.get_train_scheduler()
+
     def get_bucket_divisibility(self):
         # 16 for the VAE, 2 more because the DiT groups target latent tokens
         # into 2x2 blocks, one per vision slot
@@ -165,12 +195,35 @@ class QwenImage2Model(BaseModel):
             # a local full checkpoint supplies its own text encoder / vae
             base_model_path = model_path
 
+        load_kwargs = self.component_load_kwargs("transformer")
         self.print_and_status_update("Loading transformer")
-        transformer = QwenImage21Transformer2DModel.load(
-            model_path,
-            config_path=base_model_path,
-            **self.component_load_kwargs("transformer"),
-        )
+        if self.model_config.assistant_lora_path is None:
+            transformer = QwenImage21Transformer2DModel.load(
+                model_path, config_path=base_model_path, **load_kwargs
+            )
+        else:
+            # the adapter stays a live LoRA on the quantized linears, attached
+            # after quantization (it must wrap the quantized forward) and
+            # before layer offloading (the offloader routes through it)
+            offload = load_kwargs.pop("offload", 0.0)
+            transformer = QwenImage21Transformer2DModel.load_model(
+                model_path,
+                dtype=load_kwargs["dtype"],
+                config_path=base_model_path,
+                qtype=(load_kwargs.get("qtype") or "").split("|", 1)[0] or None,
+                quantize_on_load=False,
+            )
+            transformer.aitk_post_load(offload=0.0, **load_kwargs)
+            self.load_training_adapter(transformer)
+            if offload and offload > 0:
+                from toolkit.memory_management import MemoryManager
+
+                MemoryManager.attach(
+                    transformer,
+                    torch.device(load_kwargs["quantize_device"]),
+                    offload_percent=offload,
+                    ignore_modules=list(transformer.get_offload_ignore_modules() or []),
+                )
         flush()
 
         self.print_and_status_update("Loading text encoder")
@@ -203,6 +256,66 @@ class QwenImage2Model(BaseModel):
         self.prompt_encoder = QwenImage21PromptEncoder(text_encoder, processor)
         self.pipeline = QwenImage21Pipeline(self)
         self.print_and_status_update("Model Loaded")
+
+    def load_training_adapter(self, transformer: QwenImage21Transformer2DModel):
+        """Attach the training adapter (a LoRA on the DiT) as a live assistant:
+        on at 1.0 while training, off while sampling so samples show the turbo
+        model. It is never merged: the weights are int8, whose grid swallows a
+        delta this small on a requantize."""
+        self.print_and_status_update("Loading assistant LoRA")
+        lora_path = self.model_config.assistant_lora_path
+        if not os.path.exists(lora_path):
+            # assume it is a hub path
+            lora_splits = lora_path.split("/")
+            if len(lora_splits) != 3:
+                raise ValueError(
+                    f"Assistant LoRA path {lora_path} is not a valid local path or hub path."
+                )
+            repo_id = "/".join(lora_splits[:2])
+            filename = lora_splits[2]
+            try:
+                lora_path = huggingface_hub.hf_hub_download(repo_id=repo_id, filename=filename)
+                self.model_config.assistant_lora_path = lora_path
+            except Exception as e:
+                raise ValueError(f"Failed to download assistant LoRA from {lora_path}: {e}")
+        lora_state_dict = load_file(lora_path)
+        dim_key = next(k for k in lora_state_dict if k.endswith("lora_A.weight"))
+        dim = int(lora_state_dict[dim_key].shape[0])
+        lora_state_dict = {
+            key.replace("diffusion_model.", "transformer."): value
+            for key, value in lora_state_dict.items()
+        }
+
+        network_config = NetworkConfig(type="lora", linear=dim, linear_alpha=dim, transformer_only=True)
+        LoRASpecialNetwork.LORA_PREFIX_UNET = "lora_transformer"
+        network = LoRASpecialNetwork(
+            text_encoder=None,
+            unet=transformer,
+            lora_dim=network_config.linear,
+            multiplier=1.0,
+            alpha=network_config.linear_alpha,
+            train_unet=True,
+            train_text_encoder=False,
+            network_config=network_config,
+            network_type=network_config.type,
+            transformer_only=network_config.transformer_only,
+            is_transformer=True,
+            target_lin_modules=self.target_lora_modules,
+            is_assistant_adapter=True,
+            is_ara=True,
+            # transformer_only filters to the block list only through the holder
+            base_model=self,
+        )
+        network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
+        network.force_to(self.device_torch, dtype=self.torch_dtype)
+        network.eval()
+        network.requires_grad_(False)
+        network._update_torch_multiplier()
+        network.load_weights(lora_state_dict)
+        self.assistant_lora: LoRASpecialNetwork = network
+        self.assistant_lora.multiplier = 1.0
+        self.assistant_lora.is_active = True
+        self.invert_assistant_lora = False
 
     # ------------------------------------------------------------------
     # VAE. The latents are RGBA. Images without alpha get an opaque one on

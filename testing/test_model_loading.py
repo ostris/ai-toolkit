@@ -160,6 +160,10 @@ MODEL_TESTS = {
         "model": {"name_or_path": "Photoroom/prxpixel-t2i", "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
     },
+    "iris3b": {
+        "model": {"name_or_path": "speridlabs/iris-3b", "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
     "zeta_chroma": {
         "model": {"name_or_path": "lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors", "extras_name_or_path": "Tongyi-MAI/Z-Image-Turbo", "quantize": True, "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
@@ -183,6 +187,18 @@ MODEL_TESTS = {
         # 2.1 is meant to be sampled without guidance. One arch: the control
         # image exercises the reference path, which plain t2i is a subset of
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
+    "qwen_image_2:turbo": {
+        # model_kwargs.turbo samples with the checkpoint's fixed 8-step
+        # schedule at CFG 1
+        "model": {
+            "name_or_path": "Comfy-Org/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+            "quantize": True,
+            "quantize_te": True,
+            "model_kwargs": {"turbo": True},
+        },
+        "sample": {**IMG, "num_inference_steps": 8, "guidance_scale": 1.0},
         "needs_control_image": True,
     },
     "ming_image": {

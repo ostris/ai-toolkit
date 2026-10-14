@@ -303,6 +303,21 @@ def run_transformer(
     return unpack_latents(output[:, -target_tokens:], height, width)
 
 
+# Qwen-Image-2.1-Turbo's 8-step schedule, from `sample_sigmas` in the
+# checkpoint's model_index.json (Qwen/Qwen-Image-2.1-Turbo); the final step
+# runs from the last sigma to 0
+TURBO_SAMPLE_SIGMAS = [
+    1.0,
+    0.978453,
+    0.95418,
+    0.926626,
+    0.89508,
+    0.845148,
+    0.704534,
+    0.414568,
+]
+
+
 def calculate_shift(
     image_seq_len: int,
     base_seq_len: int = 256,
@@ -367,16 +382,22 @@ class QwenImage21Pipeline:
             )
         latents = latents.to(device, dtype=dtype)
 
-        scheduler = model.get_train_scheduler()
-        sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
-        mu = calculate_shift(
-            latent_height * latent_width,
-            scheduler.config.get("base_image_seq_len", 256),
-            scheduler.config.get("max_image_seq_len", 8192),
-            scheduler.config.get("base_shift", 0.5),
-            scheduler.config.get("max_shift", 0.9),
-        )
-        scheduler.set_timesteps(sigmas=sigmas, device=device, mu=mu)
+        scheduler = model.get_sample_scheduler()
+        if model.is_turbo:
+            # the turbo checkpoint's own 8-step schedule; num_inference_steps
+            # does not override it (other schedules are unevaluated)
+            sigmas = np.array(TURBO_SAMPLE_SIGMAS, dtype=np.float32)
+            scheduler.set_timesteps(sigmas=sigmas, device=device)
+        else:
+            sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
+            mu = calculate_shift(
+                latent_height * latent_width,
+                scheduler.config.get("base_image_seq_len", 256),
+                scheduler.config.get("max_image_seq_len", 8192),
+                scheduler.config.get("base_shift", 0.5),
+                scheduler.config.get("max_shift", 0.9),
+            )
+            scheduler.set_timesteps(sigmas=sigmas, device=device, mu=mu)
         scheduler.set_begin_index(0)
 
         # 2.1 is meant to be sampled without guidance; a scale of 1 skips it

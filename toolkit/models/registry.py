@@ -44,6 +44,7 @@ ARCH_REGISTRY: Dict[str, dict] = {
     "flux2_klein_4b": {"modality": "image", "model": {"name_or_path": "black-forest-labs/FLUX.2-klein-base-4B", "quantize_te": True}, "sample": dict(IMG)},
     "flux2_klein_9b": {"modality": "image", "model": {"name_or_path": "black-forest-labs/FLUX.2-klein-base-9B", "quantize": True, "quantize_te": True}, "sample": dict(IMG)},
     "prx_pixel": {"modality": "image", "model": {"name_or_path": "Photoroom/prxpixel-t2i", "quantize_te": True}, "sample": dict(IMG)},
+    "iris3b": {"modality": "image", "model": {"name_or_path": "speridlabs/iris-3b", "quantize_te": True}, "sample": {**IMG, "num_inference_steps": 30, "guidance_scale": 3.0}},
     "f-lite": {"modality": "image", "model": {"name_or_path": "Freepik/F-Lite", "quantize": True, "quantize_te": True}, "sample": dict(IMG)},
     "sd1": {"modality": "image", "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"}, "sample": {"width": 512, "height": 512, "num_inference_steps": 20, "guidance_scale": 7.5}},
     "sdxl": {"modality": "image", "model": {"name_or_path": "stabilityai/stable-diffusion-xl-base-1.0"}, "sample": {**IMG, "guidance_scale": 6.0}},
