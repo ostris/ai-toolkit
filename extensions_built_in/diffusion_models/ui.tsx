@@ -1738,13 +1738,20 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
       "config.process[0].sample.guidance_scale": [3.5, 4],
       "config.process[0].sample.sample_steps": [28, 25],
       "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      "config.process[0].model.model_kwargs": [
+        {
+          match_target_res: true,
+        },
+        {},
+      ],
     },
     disableSections: ["network.conv"],
     additionalSections: [
-      "datasets.control_path",
-      "sample.ctrl_img",
+      "datasets.multi_control_paths",
+      "sample.multi_ctrl_imgs",
       "model.layer_offloading",
       "model.low_vram",
+      "model.qie.match_target_res",
     ],
   },
   {

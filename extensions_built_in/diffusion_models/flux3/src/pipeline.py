@@ -143,7 +143,7 @@ class Flux3Pipeline:
         guidance_scale: float = DEFAULT_GUIDANCE,
         latents: Optional[torch.Tensor] = None,
         generator: Optional[torch.Generator] = None,
-        ctrl_img: Optional[torch.Tensor] = None,  # (1, 3, H, W) in [0, 1]
+        ctrl_imgs: Optional[List[torch.Tensor]] = None,  # each (1, 3, H, W) in [0, 1]
         alpha: Optional[float] = None,
         **kwargs,
     ):
@@ -178,14 +178,16 @@ class Flux3Pipeline:
         x = x.float()
         ids = ids.repeat(cfg_batch, 1, 1).to(device)
 
-        # reference-image conditioning
+        # reference-image conditioning: reference i rides at l = -1 - i
         cond_kwargs = {}
-        if ctrl_img is not None:
-            ctrl = ctrl_img.to(device, dtype) * 2 - 1
-            cond_latent = model.encode_images(list(ctrl), device=device, dtype=dtype)
-            xc, xc_ids, xc_ts = pack_i2i_image_condition(
-                [[cond_latent[0]]], device, dtype
-            )
+        if ctrl_imgs:
+            ref_latents = []
+            for ctrl_img in ctrl_imgs:
+                ctrl = ctrl_img.to(device, dtype) * 2 - 1
+                ref_latents.append(
+                    model.encode_images(list(ctrl), device=device, dtype=dtype)[0]
+                )
+            xc, xc_ids, xc_ts = pack_i2i_image_condition([ref_latents], device, dtype)
             cond_kwargs = {
                 "x_image_cond": xc.repeat(cfg_batch, 1, 1),
                 "x_image_cond_ids": xc_ids.repeat(cfg_batch, 1, 1),

@@ -25,10 +25,12 @@ target = noise - clean), so no time flips anywhere.
 """
 
 import json
+import math
 import os
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from safetensors.torch import load_file, save_file
 from torchvision.transforms.functional import to_tensor
@@ -103,6 +105,11 @@ class Flux3Model(BaseModel):
             self.model_config.model_kwargs.get("text_pad_multiple", DEFAULT_PAD_MULTIPLE)
         )
         self.package_config = None
+        # references are area-matched to the target by default; off = keep their
+        # own size, only scaling down when larger than the target area
+        self.match_target_res = bool(
+            self.model_config.model_kwargs.get("match_target_res", True)
+        )
         self.latent_space_version = "flux3_v1"
 
     @staticmethod
@@ -318,11 +325,23 @@ class Flux3Model(BaseModel):
                         gen_config.negative_prompt or "", target
                     )
 
-        ctrl_img = None
-        if gen_config.ctrl_img is not None:
-            img = Image.open(gen_config.ctrl_img).convert("RGB")
-            img = img.resize((gen_config.width, gen_config.height), Image.LANCZOS)
-            ctrl_img = to_tensor(img).unsqueeze(0)
+        # references: ctrl_img_1 mirrors ctrl_img, so dedupe by path order
+        ctrl_paths = []
+        for path in (
+            gen_config.ctrl_img,
+            gen_config.ctrl_img_1,
+            gen_config.ctrl_img_2,
+            gen_config.ctrl_img_3,
+        ):
+            if path is not None and path not in ctrl_paths:
+                ctrl_paths.append(path)
+        target_pixels = gen_config.width * gen_config.height
+        ctrl_imgs = [
+            self._fit_reference(
+                to_tensor(Image.open(path).convert("RGB")).unsqueeze(0), target_pixels
+            )
+            for path in ctrl_paths
+        ]
 
         alpha = self.model_config.model_kwargs.get("sample_alpha", None)
         alpha = float(alpha) if alpha is not None else None
@@ -336,10 +355,29 @@ class Flux3Model(BaseModel):
             guidance_scale=gen_config.guidance_scale,
             latents=gen_config.latents,
             generator=generator,
-            ctrl_img=ctrl_img,
+            ctrl_imgs=ctrl_imgs,
             alpha=alpha,
         )
         return result[0]
+
+    def _fit_reference(self, img: torch.Tensor, target_pixels: int) -> torch.Tensor:
+        """Size a (1, C, H, W) reference for the DiT. References keep their own
+        aspect ratio on their own position grid; match_target_res scales the
+        area to the target's, otherwise the image only scales down when it is
+        larger than the target area. Snapped to the 16-px grid."""
+        sc = self.get_bucket_divisibility()
+        h, w = img.shape[-2], img.shape[-1]
+        if self.match_target_res or h * w > target_pixels:
+            ratio = h / w
+            new_h = math.sqrt(target_pixels * ratio)
+            new_w = new_h / ratio
+        else:
+            new_h, new_w = float(h), float(w)
+        new_h = max(sc, int(round(new_h / sc)) * sc)
+        new_w = max(sc, int(round(new_w / sc)) * sc)
+        if (new_h, new_w) != (h, w):
+            img = F.interpolate(img.float(), size=(new_h, new_w), mode="bilinear")
+        return img
 
     def _encode_at_length(self, prompt: str, length: int) -> AdvancedPromptEmbeds:
         if self.text_encoder.device == torch.device("cpu"):
@@ -402,15 +440,17 @@ class Flux3Model(BaseModel):
                 elif batch.control_tensor is not None:
                     control_list = [[batch.control_tensor[b]] for b in range(batch_size)]
             if control_list is not None:
+                target_pixels = h_lat * w_lat * 16 * 16
                 ref_latents = []
                 for controls in control_list:
                     sample_refs = []
                     for ctrl in controls:
-                        if ctrl.ndim == 4:
-                            ctrl = ctrl[0]
+                        if ctrl.ndim == 3:
+                            ctrl = ctrl.unsqueeze(0)
+                        ctrl = self._fit_reference(ctrl, target_pixels)
                         # control tensors arrive in [0, 1]
                         lat = self.encode_images(
-                            ctrl.unsqueeze(0) * 2 - 1, device=device, dtype=dtype
+                            ctrl * 2 - 1, device=device, dtype=dtype
                         )
                         sample_refs.append(lat[0])
                     ref_latents.append(sample_refs)
