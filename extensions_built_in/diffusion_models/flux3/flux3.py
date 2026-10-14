@@ -10,11 +10,16 @@ t2i and i2i (reference images as clean conditioning tokens).
     in an ``AdvancedPromptEmbeds`` (padded to a multiple of 80 tokens -- the
     DiT has no text mask, pad tokens are part of the trained context).
 
-``model.name_or_path`` is the model package (hub repo id or local dir):
+``model.name_or_path`` is the model package (hub repo id, default
+``black-forest-labs/flux-3-image-klein-base``, or a local dir):
 
-    config.json  model.safetensors  ae.safetensors  text_encoder/  tokenizer/
+    config.json  model.safetensors  ae.safetensors  text_encoder/
 
-Only the DiT and the image VAE come from the package. The package's
+Only the DiT and the image VAE come from the package, and they live in the
+ComfyUI layout under MODELS_PATH: ``diffusion_models/flux_3_image_klein_base.safetensors``
+and ``vae/flux_3_vae.safetensors``. A file already there (or anywhere under its
+category folder) is used in place; only a missing one is downloaded from the
+package repo and renamed to that path. The package's
 text_encoder/ and tokenizer/ are byte-identical to Qwen/Qwen3-VL-4B-Instruct,
 so the text encoder loads from the Comfy-Org single file under
 MODELS_PATH/text_encoders/ (downloaded there once when missing) with config
@@ -41,6 +46,7 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
+from toolkit.paths import MODELS_PATH
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -65,6 +71,13 @@ from .src.transformer import Flux3Transformer, Flux3TransformerParams
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
+
+DEFAULT_REPO = "black-forest-labs/flux-3-image-klein-base"
+# package file -> ComfyUI-layout location under MODELS_PATH
+COMFY_FILES = {
+    "model.safetensors": "diffusion_models/flux_3_image_klein_base.safetensors",
+    "ae.safetensors": "vae/flux_3_vae.safetensors",
+}
 
 # Static flow-matching timeshift used for the training timestep/noise
 # schedule (the package's sampler alpha).
@@ -105,6 +118,7 @@ class Flux3Model(BaseModel):
             self.model_config.model_kwargs.get("text_pad_multiple", DEFAULT_PAD_MULTIPLE)
         )
         self.package_config = None
+        self._package_config_checked = False
         # references are area-matched to the target by default; off = keep their
         # own size, only scaling down when larger than the target area
         self.match_target_res = bool(
@@ -126,7 +140,8 @@ class Flux3Model(BaseModel):
     # ------------------------------------------------------------------
     def _package_file(self, filename: str, required: bool = True) -> Optional[str]:
         """A package file: model_kwargs ``<stem>_path`` override, else the file
-        inside a local package dir, else downloaded from the hub repo."""
+        inside a local package dir, else its ComfyUI-layout spot under
+        MODELS_PATH (weights), else downloaded from the hub repo."""
         override = self.model_config.model_kwargs.get(
             filename.split(".")[0] + "_path", None
         )
@@ -144,6 +159,8 @@ class Flux3Model(BaseModel):
             return None
         if os.path.isfile(base) and filename == "model.safetensors":
             return base  # name_or_path points straight at the DiT file
+        if filename in COMFY_FILES:
+            return self._comfy_weight(filename, base)
         from huggingface_hub import hf_hub_download
 
         try:
@@ -156,12 +173,46 @@ class Flux3Model(BaseModel):
             self.print_and_status_update(f" - no {filename} in {base} ({type(e).__name__})")
             return None
 
+    def _comfy_weight(self, filename: str, repo_id: str) -> str:
+        """``MODELS_PATH/<category>/<local name>`` (or the local name anywhere
+        under the category folder); a miss downloads the package file and
+        renames it to that spot."""
+        from toolkit.models.v2.resolver import find_file_recursive
+
+        rel_path = COMFY_FILES[filename]
+        target = os.path.join(MODELS_PATH, rel_path)
+        if os.path.exists(target):
+            return target
+        found = find_file_recursive(
+            os.path.join(MODELS_PATH, os.path.dirname(rel_path)),
+            os.path.basename(rel_path),
+        )
+        if found is not None:
+            return found
+        from huggingface_hub import hf_hub_download
+
+        self.print_and_status_update(
+            f"Downloading {filename} from {repo_id} to {target}"
+        )
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            token=os.getenv("HF_TOKEN", None),
+            local_dir=os.path.dirname(target),
+        )
+        os.replace(path, target)
+        return target
+
     def _load_package_config(self) -> Optional[dict]:
-        if self.package_config is None:
+        if not self._package_config_checked:
+            self._package_config_checked = True
             path = self._package_file("config.json", required=False)
             if path is not None:
                 with open(path, "r") as f:
                     self.package_config = json.load(f)
+            else:
+                self.print_and_status_update(" - using the canonical image-klein DiT layout")
         return self.package_config
 
     def _transformer_params(self) -> Flux3TransformerParams:

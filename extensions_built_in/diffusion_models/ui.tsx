@@ -1717,13 +1717,13 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
   },
   {
     name: "flux3",
-    label: "FLUX.3 (small)",
+    label: "FLUX.3 Image Klein (base)",
     group: "image",
-    gateUrl: "https://huggingface.co/herzogenhorn/f3-image-small",
+    gateUrl: "https://huggingface.co/black-forest-labs/flux-3-image-klein-base",
     defaults: {
       // default updates when [selected, unselected] in the UI
       "config.process[0].model.name_or_path": [
-        "herzogenhorn/f3-image-small",
+        "black-forest-labs/flux-3-image-klein-base",
         defaultNameOrPath,
       ],
       "config.process[0].model.quantize": [true, false],
