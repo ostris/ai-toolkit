@@ -193,6 +193,11 @@ class Flux3Model(BaseModel):
                 f"({cfg['quantization']}) are not supported; use the bf16 package "
                 "and let the toolkit quantize."
             )
+        if cfg is not None and cfg["dit"].get("flow_map", False):
+            raise ValueError(
+                "FLUX.3 step-distilled (flow-map) packages are not supported; "
+                "use the base package."
+            )
 
         state_dict = load_file(dit_path)
         state_dict = {

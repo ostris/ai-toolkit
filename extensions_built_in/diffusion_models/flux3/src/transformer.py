@@ -66,7 +66,6 @@ class Flux3TransformerParams:
     theta: int = 10000
     mlp_ratio: float = 3.0
     qkv_bias: bool = False
-    gate_type: str | None = None
     attn_mode: str = "native"
     # modes with a final_layer (velocity outputs); None = every content mode
     out_modes: list[str] | None = field(default_factory=lambda: ["image"])
@@ -248,7 +247,6 @@ class ModeBlock(nn.Module):
         num_heads: int,
         mlp_ratio: float = 3.0,
         qkv_bias: bool = False,
-        gate_type: str | None = None,
         use_gated_mlp: bool = True,
     ):
         super().__init__()
@@ -257,7 +255,6 @@ class ModeBlock(nn.Module):
         self.hidden_size = hidden_size
         self.mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp_mult_factor = 2 if use_gated_mlp else 1
-        self.gate_type = gate_type
 
         self.q_proj = nn.Linear(hidden_size, hidden_size, bias=qkv_bias)
         self.k_proj = nn.Linear(hidden_size, hidden_size, bias=qkv_bias)
@@ -265,8 +262,6 @@ class ModeBlock(nn.Module):
         self.mlp_in = nn.Linear(
             hidden_size, self.mlp_hidden_dim * self.mlp_mult_factor, bias=False
         )
-        if gate_type is not None:
-            self.gate_proj = nn.Linear(hidden_size, hidden_size, bias=False)
 
         self.attn_out = nn.Linear(hidden_size, hidden_size, bias=False)
         self.mlp_out = nn.Linear(self.mlp_hidden_dim, hidden_size, bias=False)
@@ -307,8 +302,6 @@ class ModeBlock(nn.Module):
         output = self.attn_out(_bf16_if_required(self.attn_out, attn)) + self.mlp_out(
             _bf16_if_required(self.mlp_out, self.mlp_act(mlp))
         )
-        if self.gate_type is not None:
-            output = output * F.silu(self.gate_proj(x_mod))
         return x + mod_gate * output
 
 
@@ -320,7 +313,6 @@ class SingleStreamBlock(nn.Module):
         hidden_size: int,
         num_heads: int,
         mlp_ratio: float = 3.0,
-        gate_type: str | None = None,
         use_gated_mlp: bool = True,
     ):
         super().__init__()
@@ -329,7 +321,6 @@ class SingleStreamBlock(nn.Module):
         self.hidden_size = hidden_size
         self.mlp_hidden_dim = int(hidden_size * mlp_ratio)
         self.mlp_mult_factor = 2 if use_gated_mlp else 1
-        self.gate_type = gate_type
 
         self.q_proj = nn.Linear(hidden_size, hidden_size, bias=False)
         self.k_proj = nn.Linear(hidden_size, hidden_size, bias=False)
@@ -339,8 +330,6 @@ class SingleStreamBlock(nn.Module):
         )
         self.attn_out = nn.Linear(hidden_size, hidden_size, bias=False)
         self.mlp_out = nn.Linear(self.mlp_hidden_dim, hidden_size, bias=False)
-        if gate_type is not None:
-            self.gate_proj = nn.Linear(hidden_size, hidden_size, bias=False)
 
         self.norm = QKNorm(head_dim)
         self.pre_norm = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -389,8 +378,6 @@ class SingleStreamBlock(nn.Module):
         output = self.attn_out(_bf16_if_required(self.attn_out, attn)) + self.mlp_out(
             _bf16_if_required(self.mlp_out, self.mlp_act(mlp))
         )
-        if self.gate_type is not None:
-            output = output * F.silu(self.gate_proj(combined))
 
         ctx_out, x_out = torch.split(output, [ctx.shape[1], x.shape[1]], dim=1)
         return ctx + mod_gate_ctx * ctx_out, x + mod_gate_x * x_out
@@ -428,7 +415,6 @@ class Flux3Transformer(nn.Module, OstrisModelMixin):
         self.depth_single_blocks = params.depth_single_blocks
         self.mlp_ratio = params.mlp_ratio
         self.qkv_bias = params.qkv_bias
-        self.gate_type = params.gate_type
         self.attn_mode = params.attn_mode
 
         self.gradient_checkpointing = False
@@ -494,7 +480,6 @@ class Flux3Transformer(nn.Module, OstrisModelMixin):
                             params.num_heads,
                             mlp_ratio=params.mlp_ratio,
                             qkv_bias=params.qkv_bias,
-                            gate_type=params.gate_type,
                         )
                         for _ in range(params.depth)
                     ]
@@ -509,7 +494,6 @@ class Flux3Transformer(nn.Module, OstrisModelMixin):
                     params.num_heads,
                     mlp_ratio=params.mlp_ratio,
                     qkv_bias=params.qkv_bias,
-                    gate_type=params.gate_type,
                 )
                 for _ in range(params.depth)
             ]
@@ -521,7 +505,6 @@ class Flux3Transformer(nn.Module, OstrisModelMixin):
                     params.hidden_size,
                     params.num_heads,
                     mlp_ratio=params.mlp_ratio,
-                    gate_type=params.gate_type,
                 )
                 for _ in range(params.depth_single_blocks)
             ]
