@@ -2000,9 +2000,7 @@ class LatentCachingFileItemDTOMixin:
             if 'waveform' in state_dict:
                 self._cached_waveform_int16 = state_dict['waveform']
                 self._cached_waveform_sample_rate = int(state_dict['waveform_sample_rate'].item())
-        if self._cached_tensor_uint8 is not None and getattr(self, 'tensor', None) is None:
-            # rebuild the pixel tensor as it would be if loaded without caching
-            self.tensor = _latent_from_uint8(self._cached_tensor_uint8)
+        # the pixel tensor is rebuilt from _cached_tensor_uint8 by FileItemDTO.tensor on first read
         if self._cached_waveform_int16 is not None and self.audio_data is None:
             # rebuild the audio waveform as it would be if loaded without caching
             waveform = _waveform_from_int16(self._cached_waveform_int16)
