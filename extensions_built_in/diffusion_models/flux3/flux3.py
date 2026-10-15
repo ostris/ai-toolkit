@@ -32,6 +32,7 @@ target = noise - clean), so no time flips anywhere.
 import json
 import math
 import os
+import shutil
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
@@ -194,14 +195,17 @@ class Flux3Model(BaseModel):
         self.print_and_status_update(
             f"Downloading {filename} from {repo_id} to {target}"
         )
-        os.makedirs(os.path.dirname(target), exist_ok=True)
+        category_dir = os.path.dirname(target)
+        os.makedirs(category_dir, exist_ok=True)
         path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             token=os.getenv("HF_TOKEN", None),
-            local_dir=os.path.dirname(target),
+            local_dir=category_dir,
         )
         os.replace(path, target)
+        # the hub leaves download metadata under <local_dir>/.cache/huggingface
+        shutil.rmtree(os.path.join(category_dir, ".cache"), ignore_errors=True)
         return target
 
     def _load_package_config(self) -> Optional[dict]:
