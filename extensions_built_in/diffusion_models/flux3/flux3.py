@@ -48,6 +48,7 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.paths import MODELS_PATH
+from toolkit.unloader import FakeTextEncoder
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -367,8 +368,14 @@ class Flux3Model(BaseModel):
 
         # cond and uncond were encoded separately, so their pad-to-80 windows
         # can differ. The DiT attends to real pad-token states, not zeros, so
-        # re-encode the shorter prompt at the longer window when the TE is up.
-        if unconditional_embeds is not None and self.text_encoder is not None:
+        # re-encode the shorter prompt at the longer window when the TE is up
+        # (cached embeddings: the TE is an unloaded stub; the shorter side is
+        # zero-padded in build_text_conditioning instead)
+        if (
+            unconditional_embeds is not None
+            and self.text_encoder is not None
+            and not isinstance(self.text_encoder, FakeTextEncoder)
+        ):
             cond_len = conditional_embeds.text_embeds[0].shape[0]
             uncond_len = unconditional_embeds.text_embeds[0].shape[0]
             if cond_len != uncond_len:
