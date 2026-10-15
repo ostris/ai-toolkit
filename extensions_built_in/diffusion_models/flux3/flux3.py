@@ -10,20 +10,23 @@ t2i and i2i (reference images as clean conditioning tokens).
     in an ``AdvancedPromptEmbeds`` (padded to a multiple of 80 tokens -- the
     DiT has no text mask, pad tokens are part of the trained context).
 
-``model.name_or_path`` is the model package (hub repo id, default
-``black-forest-labs/flux-3-image-klein-base``, or a local dir):
+``model.name_or_path`` defaults to the vendor package
+``black-forest-labs/flux-3-image-klein-base`` (or a local dir):
 
     config.json  model.safetensors  ae.safetensors  text_encoder/
 
-Only the DiT and the image VAE come from the package, and they live in the
-ComfyUI layout under MODELS_PATH: ``diffusion_models/flux_3_image_klein_base.safetensors``
-and ``vae/flux_3_vae.safetensors``. A file already there (or anywhere under its
-category folder) is used in place; only a missing one is downloaded from the
-package repo and renamed to that path. The package's
-text_encoder/ and tokenizer/ are byte-identical to Qwen/Qwen3-VL-4B-Instruct,
-so the text encoder loads from the Comfy-Org single file under
-MODELS_PATH/text_encoders/ (downloaded there once when missing) with config
-and tokenizer from the public Qwen repo.
+The DiT and VAE live in the ComfyUI layout under MODELS_PATH, under the names
+of BFL's ComfyUI repack ``black-forest-labs/flux-3-image-klein-comfy``
+(``src/checkpoints.py``): a repack file already there (the best precision
+variant for the requested qtype -- int8_convrot attaches straight onto the
+convrot8 backend; bf16; nvfp4 -- or anywhere under its category folder) is
+used in place; only a missing one is downloaded from the package and renamed
+to that spot (the package files are byte-identical to the repack's bf16
+ones). Naming the repack itself as ``name_or_path`` downloads its files
+instead. The package's text_encoder/ and tokenizer/ are byte-identical to
+Qwen/Qwen3-VL-4B-Instruct, so the text encoder loads from the Comfy-Org
+single file under MODELS_PATH/text_encoders/ (downloaded there once when
+missing) with config and tokenizer from the public Qwen repo.
 
 Flow convention matches ai-toolkit exactly (t=1 noise -> t=0 clean,
 target = noise - clean), so no time flips anywhere.
@@ -47,6 +50,7 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
+from toolkit.models.v2.resolver import resolve_comfy_file
 from toolkit.paths import MODELS_PATH
 from toolkit.unloader import FakeTextEncoder
 from toolkit.samplers.custom_flowmatch_sampler import (
@@ -61,6 +65,7 @@ from .src.pipeline import (
     pack_i2i_image_condition,
     pack_image_latents,
 )
+from .src.checkpoints import BASE_REPO, COMFY_REPO, PACKAGE_TO_COMFY
 from .src.text_encoder import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_PAD_MULTIPLE,
@@ -74,12 +79,7 @@ if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
 
-DEFAULT_REPO = "black-forest-labs/flux-3-image-klein-base"
-# package file -> ComfyUI-layout location under MODELS_PATH
-COMFY_FILES = {
-    "model.safetensors": "diffusion_models/flux_3_image_klein_base.safetensors",
-    "ae.safetensors": "vae/flux_3_vae.safetensors",
-}
+DEFAULT_REPO = BASE_REPO
 
 # Static flow-matching timeshift used for the training timestep/noise
 # schedule (the package's sampler alpha).
@@ -161,8 +161,12 @@ class Flux3Model(BaseModel):
             return None
         if os.path.isfile(base) and filename == "model.safetensors":
             return base  # name_or_path points straight at the DiT file
-        if filename in COMFY_FILES:
+        if filename in PACKAGE_TO_COMFY:
             return self._comfy_weight(filename, base)
+        if base == COMFY_REPO:
+            if required:
+                raise FileNotFoundError(f"{COMFY_REPO} carries no {filename}")
+            return None
         from huggingface_hub import hf_hub_download
 
         try:
@@ -176,43 +180,47 @@ class Flux3Model(BaseModel):
             return None
 
     def _comfy_weight(self, filename: str, repo_id: str) -> str:
-        """``MODELS_PATH/<category>/<local name>`` (or the local name anywhere
-        under the category folder); a miss downloads the package file and
-        renames it to that spot."""
-        from toolkit.models.v2.resolver import find_file_recursive
-
-        rel_path = COMFY_FILES[filename]
-        target = os.path.join(MODELS_PATH, rel_path)
-        if os.path.exists(target):
-            return target
-        found = find_file_recursive(
-            os.path.join(MODELS_PATH, os.path.dirname(rel_path)),
-            os.path.basename(rel_path),
+        """The comfy-layout file for a package weight: ``MODELS_PATH/<rel>``
+        (or its name anywhere under the category folder) wins; a miss
+        downloads the repack's file there, or, for the vendor package,
+        downloads the package file and renames it to the same spot."""
+        rel_path = PACKAGE_TO_COMFY[filename]
+        found = resolve_comfy_file(
+            rel_path,
+            COMFY_REPO,
+            hf_token=os.getenv("HF_TOKEN", None),
+            status_fn=self.print_and_status_update,
+            local_only=repo_id != COMFY_REPO,
         )
         if found is not None:
             return found
         from huggingface_hub import hf_hub_download
 
+        target = os.path.join(MODELS_PATH, rel_path)
         self.print_and_status_update(
             f"Downloading {filename} from {repo_id} to {target}"
         )
-        category_dir = os.path.dirname(target)
-        os.makedirs(category_dir, exist_ok=True)
+        # staged in a private subfolder (same filesystem, so the rename is a
+        # move): the package names collide with other models' comfy files
+        # (vae/ae.safetensors is the FLUX.1 VAE) and must never land there
+        staging = os.path.join(os.path.dirname(target), ".flux3_download")
+        os.makedirs(staging, exist_ok=True)
         path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             token=os.getenv("HF_TOKEN", None),
-            local_dir=category_dir,
+            local_dir=staging,
         )
         os.replace(path, target)
-        # the hub leaves download metadata under <local_dir>/.cache/huggingface
-        shutil.rmtree(os.path.join(category_dir, ".cache"), ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         return target
 
     def _load_package_config(self) -> Optional[dict]:
         if not self._package_config_checked:
             self._package_config_checked = True
-            path = self._package_file("config.json", required=False)
+            path = None
+            if self.model_config.name_or_path != COMFY_REPO:  # the repack has none
+                path = self._package_file("config.json", required=False)
             if path is not None:
                 with open(path, "r") as f:
                     self.package_config = json.load(f)
@@ -247,7 +255,6 @@ class Flux3Model(BaseModel):
     def _load_transformer(self) -> Flux3Transformer:
         dtype = self.torch_dtype
         self.print_and_status_update("Loading transformer (Flux3Transformer)")
-        dit_path = self._package_file("model.safetensors")
         params = self._transformer_params()
         cfg = self._load_package_config()
         if cfg is not None and cfg.get("quantization", None):
@@ -262,25 +269,27 @@ class Flux3Model(BaseModel):
                 "use the base package."
             )
 
-        state_dict = load_file(dit_path)
-        state_dict = {
-            k: (v.to(dtype) if v.is_floating_point() else v)
-            for k, v in state_dict.items()
-        }
-        with torch.device("meta"):
-            transformer = Flux3Transformer(params)
-        needed = set(transformer.state_dict().keys())
-        missing = sorted(needed - set(state_dict.keys()))
-        if missing:
-            raise ValueError(f"FLUX.3 checkpoint missing required keys: {missing[:8]}")
-        result = transformer.load_state_dict(state_dict, strict=False, assign=True)
-        if result.unexpected_keys:
-            self.print_and_status_update(
-                f" - ignoring {len(result.unexpected_keys)} unexpected checkpoint "
-                f"keys (e.g. {result.unexpected_keys[:3]})"
+        qtype = self.model_config.qtype if self.model_config.quantize else None
+        base = self.model_config.name_or_path
+        source = None
+        if base in Flux3Transformer.aitk_comfy_weight_names:
+            source = base  # the repack named outright: downloaded when missing
+        elif base == BASE_REPO:
+            # a repack file already on disk (best precision variant for the
+            # qtype) wins over the package's own DiT; nothing is downloaded
+            # from the repack
+            source = Flux3Transformer.resolve_comfy_weights(
+                COMFY_REPO, qtype=qtype, local_only=True
             )
-        del state_dict
-        flush()
+        if source is None:
+            source = self._package_file("model.safetensors")
+        transformer = Flux3Transformer.load_model(
+            source,
+            dtype=dtype,
+            config=params,
+            qtype=qtype,
+            quantize_on_load=False,  # qtype ranks the comfy candidates only
+        )
 
         attn_backend = self.model_config.model_kwargs.get("attention_backend", None)
         if attn_backend is not None:
@@ -314,8 +323,14 @@ class Flux3Model(BaseModel):
 
     def _load_vae(self) -> Flux3ImageVAE:
         self.print_and_status_update("Loading image VAE")
+        from toolkit.models.v2.vae.flux2_kl import convert_diffusers_state_dict
+
         vae = Flux3ImageVAE()
-        vae.load_state_dict(load_file(self._package_file("ae.safetensors")))
+        state_dict = load_file(self._package_file("ae.safetensors"))
+        if any(k.startswith("encoder.down_blocks.") for k in state_dict):
+            # Comfy-Org's FLUX.2 VAE file: same weights, diffusers key layout
+            state_dict = convert_diffusers_state_dict(state_dict)
+        vae.load_state_dict(state_dict)
         vae.to(self.vae_torch_dtype).eval().requires_grad_(False)
         return vae
 

@@ -34,6 +34,8 @@ from torch.utils.checkpoint import checkpoint
 
 from toolkit.models.v2._mixin import OstrisModelMixin
 
+from .checkpoints import COMFY_REPO, COMFY_TRANSFORMER_FILES
+
 try:
     from flash_attn_interface import flash_attn_func
 
@@ -383,7 +385,40 @@ class SingleStreamBlock(nn.Module):
         return ctx + mod_gate_ctx * ctx_out, x + mod_gate_x * x_out
 
 
+_QKV = ("q_proj", "k_proj", "v_proj")
+
+
 class Flux3Transformer(nn.Module, OstrisModelMixin):
+    aitk_comfy_repo = COMFY_REPO
+    aitk_comfy_weight_names = {COMFY_REPO: COMFY_TRANSFORMER_FILES}
+
+    @classmethod
+    def convert_state_dict_on_load(cls, state_dict):
+        if any(k.startswith("ref_time_in.") for k in state_dict):
+            raise ValueError(
+                "this is the step-distilled (flow-map) FLUX.3 checkpoint; use the "
+                "base model (flux3_image_klein_* without _sd_)"
+            )
+        from toolkit.util.comfy_quant_import import split_fused_quantized_keys
+
+        state_dict = dict(state_dict)
+        # the int8 repack fuses every block's q_proj/k_proj/v_proj into one qkv
+        # entry (rows q, k, v); the module (and the bf16/nvfp4 files) keep them
+        # split
+        for marker in [k for k in list(state_dict) if k.endswith(".qkv.comfy_quant")]:
+            base = marker[: -len(".qkv.comfy_quant")]
+            split_fused_quantized_keys(
+                state_dict, f"{base}.qkv", [f"{base}.{p}" for p in _QKV]
+            )
+        for key in [k for k in list(state_dict) if k.endswith(".qkv.weight")]:
+            base = key[: -len(".qkv.weight")]
+            for p, w in zip(_QKV, torch.chunk(state_dict.pop(key), 3, dim=0)):
+                state_dict[f"{base}.{p}.weight"] = w.contiguous()
+        # static activation scales (calibration extras) are unused
+        for k in [k for k in state_dict if k.endswith(".input_scale")]:
+            state_dict.pop(k)
+        return state_dict
+
     @classmethod
     def get_transformer_block_names(cls):
         return [

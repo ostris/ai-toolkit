@@ -42,6 +42,30 @@ class BasicModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMix
     pass
 
 
+def _markers_from_header(
+    file_path: str, state_dict: Dict[str, torch.Tensor]
+) -> Dict[str, torch.Tensor]:
+    """ComfyUI's header-style quantized layout keeps the per-layer configs in
+    the safetensors metadata (``_quantization_metadata``) instead of
+    ``<layer>.comfy_quant`` marker tensors; synthesize the markers so the
+    importer sees one layout."""
+    import json
+
+    from safetensors import safe_open
+
+    with safe_open(file_path, "pt") as f:
+        raw = (f.metadata() or {}).get("_quantization_metadata")
+    if raw is None:
+        return state_dict
+    for name, conf in json.loads(raw).get("layers", {}).items():
+        marker = f"{name}.comfy_quant"
+        if marker not in state_dict and f"{name}.weight" in state_dict:
+            state_dict[marker] = torch.tensor(
+                list(json.dumps(conf).encode("utf-8")), dtype=torch.uint8
+            )
+    return state_dict
+
+
 def adopt_component(module: torch.nn.Module, wrapper_cls: type) -> torch.nn.Module:
     """Rebind an already-loaded component instance onto its v2 wrapper class
     (in-place class swap, like the OstrisLinear conversion). Used when a
@@ -584,7 +608,7 @@ class OstrisModelMixin:
         **kwargs,
     ):
         cls._readahead(file_path)
-        state_dict = load_file(file_path)
+        state_dict = _markers_from_header(file_path, load_file(file_path))
         return cls.load_from_state_dict(
             state_dict,
             dtype,
