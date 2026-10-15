@@ -522,7 +522,7 @@ class TrainConfig:
         self.correct_pred_norm = kwargs.get('correct_pred_norm', False)
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
-        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow, pseudo_huber
+        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, band, pixelspace, mean_flow, pseudo_huber
         
         # do the loss on a timestep to 0 prediction
         self.t0_loss_target = kwargs.get('t0_loss_target', False)
