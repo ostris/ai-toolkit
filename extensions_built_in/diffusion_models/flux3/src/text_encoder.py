@@ -46,13 +46,40 @@ class Flux3TextEncoder(Qwen3VLTextEncoder):
     ]
     aitk_comfy_weight_names = {QWEN3_VL_4B_REPO: _COMFY_FILES}
 
+    # the fp8 repack keeps the language tower directly under ``model.``
+    _COMFY_PREFIXES = (
+        ("model.layers.", "model.language_model.layers."),
+        ("model.embed_tokens.", "model.language_model.embed_tokens."),
+        ("model.norm.", "model.language_model.norm."),
+    )
+
     @classmethod
     def convert_state_dict_on_load(cls, state_dict):
+        if any(k.startswith("model.layers.") for k in state_dict):
+            converted = {}
+            for key, value in state_dict.items():
+                for comfy_prefix, hf_prefix in cls._COMFY_PREFIXES:
+                    if key.startswith(comfy_prefix):
+                        key = hf_prefix + key[len(comfy_prefix) :]
+                        break
+                converted[key] = value
+            state_dict = converted
         # comfy files drop the tied lm_head; strict load wants the key
         embed = state_dict.get("model.language_model.embed_tokens.weight")
         if embed is not None and "lm_head.weight" not in state_dict:
             state_dict["lm_head.weight"] = embed
         return state_dict
+
+    @classmethod
+    def convert_state_dict_on_save(cls, state_dict):
+        converted = {}
+        for key, value in state_dict.items():
+            for comfy_prefix, hf_prefix in cls._COMFY_PREFIXES:
+                if key.startswith(hf_prefix):
+                    key = comfy_prefix + key[len(hf_prefix) :]
+                    break
+            converted[key] = value
+        return converted
 
 
 def padded_token_length(
