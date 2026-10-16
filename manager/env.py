@@ -397,7 +397,7 @@ def _torch_pin_args(spec, dry_run=False):
                 "# replacing the GPU torch build. Do not edit.\n"
             )
             f.write("\n".join(spec.torch_constraints()) + "\n")
-    args = ["--constraint", path]
+    args = ["--constraint", os.path.relpath(path, REPO_ROOT)]
     for url in spec.torch_find_links():
         args += ["--find-links", url]
     return args
