@@ -3,12 +3,14 @@
 Weights live in the ComfyUI layout under MODELS_PATH, named like the
 Comfy-Org/MOSS-Image repack (DiT: the vendor's keys with q/k/v fused).
 
-- ``OpenMOSS-Team/MOSS-Image-SFT`` / ``-Base`` (vendor, the default): a
+- ``OpenMOSS-Team/MOSS-Image-SFT`` / ``-Base`` (vendor, the UI defaults): a
   repack DiT file already on disk wins (best precision for the requested
-  qtype); otherwise the vendor's diffusers shards are downloaded once and
-  merged into ``diffusion_models/moss_image_{sft,base}_bf16.safetensors`` in
-  the Comfy layout. Other hub repos (fine-tunes) merge into a file named
-  after the repo, never substituted.
+  qtype; int8 only for convrot). Otherwise Base downloads the repack's bf16
+  (byte-identical to the vendor shards); SFT, which the repack has no bf16
+  of, downloads the vendor's diffusers shards once and merges them into
+  ``diffusion_models/moss_image_sft_bf16.safetensors`` in the Comfy layout.
+  Other hub repos (fine-tunes) merge into a file named after the repo, never
+  substituted.
 - ``Comfy-Org/MOSS-Image``: the repack's SFT DiT (int8 convrot only; a local
   merged bf16 SFT also counts).
 - ``org/repo/path/file.safetensors``: that file, downloaded to its comfy spot.
@@ -64,6 +66,9 @@ COMFY_TRANSFORMER_FILES = {
     ),
 }
 REPO_VARIANT = {SFT_REPO: "sft", BASE_REPO: "base", COMFY_REPO: "sft"}
+# vendor repo -> the repack's file holding its weights byte-identical (same
+# name and layout the shard merge writes): downloaded instead of merging
+VENDOR_MIRROR = {BASE_REPO: "diffusion_models/moss_image_base_bf16.safetensors"}
 
 # (repo, file) candidates for the Qwen3.5-9B text encoder
 COMFY_TEXT_ENCODER_FILES = [
@@ -130,6 +135,13 @@ def comfy_transformer_file(
                 hf_token=hf_token,
                 status_fn=status_fn,
                 qtype=qtype,
+            )
+        if repo_id in VENDOR_MIRROR:
+            return resolve_comfy_candidates(
+                [VENDOR_MIRROR[repo_id]],
+                repo_id=COMFY_REPO,
+                hf_token=hf_token,
+                status_fn=status_fn,
             )
 
     rel_path = comfy_transformer_rel(repo_id)

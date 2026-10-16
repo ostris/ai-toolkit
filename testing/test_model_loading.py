@@ -226,6 +226,17 @@ MODEL_TESTS = {
         # vendor defaults are 50 steps, CFG 3 (negative branch skips block 22)
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
     },
+    "moss_image:base": {
+        # vendor id; local Comfy-Org base files win, else the repack's bf16
+        "model": {
+            "name_or_path": "OpenMOSS-Team/MOSS-Image-Base",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
     "moss_image:comfy": {
         # the Comfy-Org repack files named outright (a bare repo id prefers any
         # local bf16): int8 convrot SFT DiT + Qwen3.5-9B TE attach as-is

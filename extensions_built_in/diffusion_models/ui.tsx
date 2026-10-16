@@ -1798,6 +1798,50 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     additionalSections: ["model.layer_offloading", "model.low_vram"],
   },
   {
+    name: "moss_image:base",
+    label: "MOSS-Image Base",
+    generateNameOverride: "MOSS-Image Base",
+    group: "image",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      // the vendor repo: Comfy-Org/MOSS-Image base files on disk win, else the
+      // repack's bf16 (identical weights) is downloaded
+      "config.process[0].model.name_or_path": [
+        "OpenMOSS-Team/MOSS-Image-Base",
+        defaultNameOrPath,
+      ],
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      // Qwen3.5-9B text encoder
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].sample.width": [1024, 1024],
+      "config.process[0].sample.height": [1024, 1024],
+      // vendor defaults: CFG 3 with block 22 skipped on the negative branch
+      "config.process[0].sample.guidance_scale": [3, 4],
+      "config.process[0].sample.sample_steps": [30, 25],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      // sampling: the CFG negative branch skips these DiT blocks (zero-based)
+      "config.process[0].model.model_kwargs": [
+        {
+          uncond_skip_layers: [22],
+        },
+        {},
+      ],
+      // keep the LoRA off the block the negative branch skips, so CFG's
+      // skipped-block contrast stays the base model's
+      "config.process[0].network.network_kwargs.ignore_if_contains": [
+        ["layers.22."],
+        [],
+      ],
+    },
+    disableSections: ["network.conv"],
+    additionalSections: ["model.layer_offloading", "model.low_vram"],
+  },
+  {
     name: "flux2_klein_4b",
     label: "FLUX.2-klein-base-4B",
     group: "image",
