@@ -25,6 +25,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file
 from transformers import Qwen2Tokenizer
+from transformers.utils.hub import cached_file
 
 from toolkit.accelerator import unwrap_model
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
@@ -194,9 +195,35 @@ class MossImageModel(BaseModel):
             source = base
         # the tokenizer's declared class: AutoTokenizer also resolves a
         # config.json the folder lacks, which fails offline
-        return Qwen35TextOnlyEncoder._local_first(
-            Qwen2Tokenizer.from_pretrained, source, subfolder="tokenizer"
-        )
+        def load_tokenizer(**kwargs):
+            tokenizer = Qwen2Tokenizer.from_pretrained(
+                source, subfolder="tokenizer", token=HF_TOKEN, **kwargs
+            )
+            # Transformers 5 can silently build a default tokenizer when
+            # its vocabulary is absent from the cache. Reject that result
+            # so _local_first retries online to fetch the actual tokenizer.
+            if not tokenizer.encode("test", add_special_tokens=False):
+                raise ValueError(
+                    "MOSS-Image tokenizer vocabulary is missing or invalid; "
+                    "download the tokenizer files from the model repository."
+                )
+            return tokenizer
+
+        tokenizer = Qwen35TextOnlyEncoder._local_first(load_tokenizer)
+        # from_pretrained treats the separate chat template as optional, so
+        # a partially cached tokenizer can load successfully without it.
+        # MOSS requires the vendor's template, including its thinking prefix.
+        if not tokenizer.chat_template:
+            template_path = Qwen35TextOnlyEncoder._local_first(
+                cached_file,
+                source,
+                "chat_template.jinja",
+                subfolder="tokenizer",
+                token=HF_TOKEN,
+            )
+            with open(template_path, encoding="utf-8") as f:
+                tokenizer.chat_template = f.read()
+        return tokenizer
 
     def _load_vae(self) -> AutoEncoder:
         self.print_and_status_update("Loading VAE")
