@@ -51,6 +51,7 @@ ARCH_LATENT_FORMAT = {
     "cogview4": "Flux",
     "prx_pixel": None,  # pixel space
     "flux3": "Flux3Image",
+    "moss_image": "Flux2",  # FLUX.2 encoder, same packing
     "iris3b": None,  # pixel space
 }
 

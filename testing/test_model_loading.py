@@ -215,6 +215,30 @@ MODEL_TESTS = {
         "sample": {**IMG, "num_inference_steps": 12, "guidance_scale": 1.0},
         "needs_control_image": True,
     },
+    "moss_image": {
+        "model": {
+            "name_or_path": "OpenMOSS-Team/MOSS-Image-SFT",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        # vendor defaults are 50 steps, CFG 3 (negative branch skips block 22)
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
+    "moss_image:comfy": {
+        # the Comfy-Org repack files named outright (a bare repo id prefers any
+        # local bf16): int8 convrot SFT DiT + Qwen3.5-9B TE attach as-is
+        "model": {
+            "name_or_path": "Comfy-Org/MOSS-Image/diffusion_models/moss_image_sft_int8_convrot_attn.safetensors",
+            "te_name_or_path": "Comfy-Org/MOSS-Image/text_encoders/qwen3.5_9b_int8_convrot.safetensors",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
     # ---- legacy monolith archs (components adopted into v2 on load) ----
     "sd1": {
         "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"},
