@@ -76,6 +76,28 @@ def _is_hub_repo(path: str) -> bool:
     )
 
 
+TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
+
+
+def _hub_tokenizer_folder(repo_id: str) -> str:
+    """The repo's tokenizer/ folder in the hub cache, downloaded when any file
+    is missing. Not transformers' local_files_only: on an empty cache 5.5.3
+    returns a 1-token tokenizer without the template instead of raising."""
+    from huggingface_hub import snapshot_download
+
+    patterns = [f"tokenizer/{name}" for name in TOKENIZER_FILES]
+    try:
+        root = snapshot_download(
+            repo_id, allow_patterns=patterns, token=HF_TOKEN, local_files_only=True
+        )
+        if all(os.path.isfile(os.path.join(root, p)) for p in patterns):
+            return os.path.join(root, "tokenizer")
+    except Exception:
+        pass
+    root = snapshot_download(repo_id, allow_patterns=patterns, token=HF_TOKEN)
+    return os.path.join(root, "tokenizer")
+
+
 class MossImageModel(BaseModel):
     arch = "moss_image"
 
@@ -192,11 +214,15 @@ class MossImageModel(BaseModel):
             _is_hub_repo(base) and base != COMFY_REPO
         ):
             source = base
-        # the tokenizer's declared class: AutoTokenizer also resolves a
-        # config.json the folder lacks, which fails offline
-        return Qwen35TextOnlyEncoder._local_first(
-            Qwen2Tokenizer.from_pretrained, source, subfolder="tokenizer"
-        )
+        folder = os.path.join(source, "tokenizer")
+        if not os.path.isdir(folder):
+            folder = _hub_tokenizer_folder(source)
+        # the declared class: AutoTokenizer also resolves a config.json the
+        # folder lacks, which fails offline
+        tokenizer = Qwen2Tokenizer.from_pretrained(folder)
+        if tokenizer.chat_template is None or len(tokenizer) < 1000:
+            raise ValueError(f"incomplete MOSS-Image tokenizer in {folder}")
+        return tokenizer
 
     def _load_vae(self) -> AutoEncoder:
         self.print_and_status_update("Loading VAE")
