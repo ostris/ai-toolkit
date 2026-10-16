@@ -18,13 +18,17 @@ stock Qwen3.5-9B from a comfy file.
 Flow convention matches ai-toolkit (sigma 1 = noise, target = noise - clean).
 """
 
+import math
 import os
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
+import torch.nn.functional as F
+from PIL import Image
 from safetensors import safe_open
 from safetensors.torch import load_file
-from transformers import Qwen2Tokenizer
+from torchvision.transforms.functional import to_tensor
+from transformers import AutoImageProcessor, Qwen2Tokenizer
 
 from toolkit.accelerator import unwrap_model
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
@@ -32,7 +36,10 @@ from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
-from toolkit.models.v2.text_encoders.qwen35 import Qwen35TextOnlyEncoder
+from toolkit.models.v2.text_encoders.qwen35 import (
+    Qwen35TextOnlyEncoder,
+    Qwen35VLEncoder,
+)
 from toolkit.models.v2.vae.flux2_kl import AutoEncoder, convert_diffusers_state_dict
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
@@ -98,6 +105,33 @@ def _hub_tokenizer_folder(repo_id: str) -> str:
     return os.path.join(root, "tokenizer")
 
 
+def _hub_file_folder(repo_id: str, filename: str) -> str:
+    """Folder holding one hub file, cache first (loaded from the folder so no
+    other file of the repo is resolved)."""
+    from huggingface_hub import hf_hub_download
+
+    try:
+        path = hf_hub_download(repo_id, filename, token=HF_TOKEN, local_files_only=True)
+    except Exception:
+        path = hf_hub_download(repo_id, filename, token=HF_TOKEN)
+    return os.path.dirname(path)
+
+
+def _drop_repeats(images):
+    """ctrl_img_1 defaults to ctrl_img, so a single reference can arrive twice."""
+    kept = []
+    for image in images:
+        previous = kept[-1] if kept else None
+        if (
+            previous is not None
+            and previous.shape == image.shape
+            and torch.equal(previous, image)
+        ):
+            continue
+        kept.append(image)
+    return kept
+
+
 class MossImageModel(BaseModel):
     arch = "moss_image"
 
@@ -127,6 +161,18 @@ class MossImageModel(BaseModel):
         self.uncond_skip_layers = tuple(
             kw.get("uncond_skip_layers", DEFAULT_UNCOND_SKIP_LAYERS) or ()
         )
+
+        # model_kwargs.edit: krea2-style reference conditioning for edit LoRAs
+        # (the vendor model is t2i only). References ride in the prompt through
+        # the Qwen3.5 vision tower and as clean t=0 latents after the text.
+        # kv_cache: train with references attending only to themselves so
+        # their K/V are computed once per sample at inference.
+        self.is_edit = bool(kw.get("edit", False))
+        self.kv_cache = bool(kw.get("kv_cache", False))
+        self.encode_control_in_text_embeddings = self.is_edit
+        self.has_multiple_control_images = self.is_edit
+        self.use_raw_control_images = self.is_edit
+        self.image_processor = None
 
     @staticmethod
     def get_train_scheduler():
@@ -194,7 +240,9 @@ class MossImageModel(BaseModel):
         if te_path.endswith(".safetensors"):
             config_path = QWEN35_9B_REPO
         self.print_and_status_update(f"Loading Qwen3.5 text encoder from {te_path}")
-        text_encoder = Qwen35TextOnlyEncoder.load_model(
+        # edit keeps the vision tower for the reference images
+        te_cls = Qwen35VLEncoder if self.is_edit else Qwen35TextOnlyEncoder
+        text_encoder = te_cls.load_model(
             te_path,
             dtype=te_kwargs["dtype"],
             config_path=config_path,
@@ -203,6 +251,12 @@ class MossImageModel(BaseModel):
             quantize_on_load=False,
             use_comfy_weights=te_kwargs["use_comfy_weights"],
         )
+        if self.is_edit:
+            text_encoder.patch_vision_patch_embed()
+            # MOSS ships no image processor; Qwen's (same template + vocab)
+            self.image_processor = AutoImageProcessor.from_pretrained(
+                _hub_file_folder(QWEN35_9B_REPO, "preprocessor_config.json")
+            )
         text_encoder.eval()
         text_encoder.requires_grad_(False)
         return text_encoder
@@ -294,6 +348,27 @@ class MossImageModel(BaseModel):
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
+        # reference latents; the prompt embeds already carry the references
+        # through the vision tower (ctrl_img_1 mirrors ctrl_img when unset)
+        ref_latents = None
+        if self.is_edit:
+            ctrl_paths = []
+            for path in (
+                gen_config.ctrl_img,
+                gen_config.ctrl_img_1,
+                gen_config.ctrl_img_2,
+                gen_config.ctrl_img_3,
+            ):
+                if path is not None and path not in ctrl_paths:
+                    ctrl_paths.append(path)
+            if ctrl_paths:
+                ref_latents = [
+                    self._encode_ref_latents(
+                        [to_tensor(Image.open(p).convert("RGB")) for p in ctrl_paths],
+                        target_pixels=gen_config.width * gen_config.height,
+                    )
+                ]
+
         result = pipeline(
             conditional_embeds=conditional_embeds,
             unconditional_embeds=unconditional_embeds,
@@ -305,8 +380,85 @@ class MossImageModel(BaseModel):
             generator=generator,
             shift=self.sample_shift,
             uncond_skip_layers=self.uncond_skip_layers,
+            ref_latents=ref_latents,
+            isolate_refs=self.kv_cache,
         )
         return result[0]
+
+    # ------------------------------------------------------------------
+    # Reference images (edit)
+    # ------------------------------------------------------------------
+    def _ref_target_pixels(self, target_pixels: Optional[int]) -> int:
+        """Area each reference is fitted to: control_image_max_pixels (1 MP
+        cap, only scales down), or the target's area with match_target_res."""
+        kw = self.model_config.model_kwargs
+        if kw.get("match_target_res", False) and target_pixels:
+            return int(target_pixels)
+        return int(kw.get("control_image_max_pixels", 1024 * 1024))
+
+    def _encode_ref_latents(
+        self, control_tensors, target_pixels: Optional[int] = None
+    ) -> List[torch.Tensor]:
+        """[0, 1] (C, H, W) / (1, C, H, W) references -> (128, h, w) latents,
+        aspect kept, snapped to the 16 px grid."""
+        sc = self.get_bucket_divisibility()
+        budget = self._ref_target_pixels(target_pixels)
+        match = self.model_config.model_kwargs.get("match_target_res", False)
+        latents = []
+        for img in control_tensors:
+            if img.dim() == 3:
+                img = img.unsqueeze(0)
+            img = img.to(self.device_torch, dtype=torch.float32)
+            h, w = img.shape[2], img.shape[3]
+            if match or h * w > budget:
+                ratio = h / w
+                new_h = math.sqrt(budget * ratio)
+                new_w = new_h / ratio
+            else:
+                new_h, new_w = float(h), float(w)
+            new_h = max(sc, int(round(new_h / sc)) * sc)
+            new_w = max(sc, int(round(new_w / sc)) * sc)
+            if (new_h, new_w) != (h, w):
+                img = F.interpolate(img, size=(new_h, new_w), mode="bilinear")
+            latent = self.encode_images(
+                img * 2 - 1, device=self.device_torch, dtype=self.torch_dtype
+            )
+            latents.append(latent[0])
+        return latents
+
+    def _batch_ref_latents(
+        self, batch: "DataLoaderBatchDTO", batch_size: int, target_pixels: int
+    ) -> Optional[List[List[torch.Tensor]]]:
+        control_list = batch.control_tensor_list
+        if control_list is None and batch.control_tensor is not None:
+            control_list = [batch.control_tensor[b : b + 1] for b in range(batch_size)]
+        if control_list is None:
+            return None
+        if len(control_list) != batch_size:
+            raise ValueError("control tensor list length does not match batch size")
+        return [
+            self._encode_ref_latents(controls, target_pixels=target_pixels)
+            for controls in control_list
+        ]
+
+    def _prep_vlm_images(self, images: List[torch.Tensor]) -> List[torch.Tensor]:
+        """References for the vision tower: downscaled (never up) to
+        vlm_max_pixels (384^2 = 144 tokens); detail comes from the latents."""
+        target = int(self.model_config.model_kwargs.get("vlm_max_pixels", 384 * 384))
+        out = []
+        for img in images:
+            if img.dim() == 4:
+                img = img[0]
+            img = img.to(self.device_torch, dtype=torch.float32)
+            h, w = img.shape[1], img.shape[2]
+            scale = min(1.0, math.sqrt(target / (h * w)))
+            nh, nw = max(round(h * scale), 32), max(round(w * scale), 32)
+            if (nh, nw) != (h, w):
+                img = F.interpolate(
+                    img[None], size=(nh, nw), mode="bicubic", antialias=True
+                )[0].clamp(0, 1)
+            out.append(img)
+        return out
 
     # ------------------------------------------------------------------
     # Training hooks
@@ -333,36 +485,95 @@ class MossImageModel(BaseModel):
             t = timestep.to(device, dtype=torch.float32).reshape(-1)
             if t.shape[0] != batch_size:
                 t = t.expand(batch_size)
+            ref_latents = None
+            if self.is_edit and batch is not None:
+                _, _, lh, lw = latent_model_input.shape
+                ref_latents = self._batch_ref_latents(
+                    batch, batch_size, target_pixels=lh * lw * 16 * 16
+                )
 
         return self.transformer(
-            latent_model_input.to(device, dtype), t, embeds, mask
+            latent_model_input.to(device, dtype),
+            t,
+            embeds,
+            mask,
+            ref_latents=ref_latents,
+            isolate_refs=self.kv_cache,
         )
 
+    def _chat(self, content: str) -> str:
+        return self.tokenizer.apply_chat_template(
+            [{"role": "user", "content": content}],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
+
+    def _encode_with_images(self, text: str, images: List[torch.Tensor]) -> torch.Tensor:
+        """Prompt with references ahead of it (``Picture N: <vision>``, the
+        Qwen-Image-Edit-Plus layout) -> (L, 4096) final states."""
+        pixels = self.image_processor(
+            images=self._prep_vlm_images(images), return_tensors="pt", do_rescale=False
+        )
+        grid = pixels["image_grid_thw"]
+        counts = (grid.prod(-1) // self.image_processor.merge_size**2).tolist()
+        content = "".join(
+            f"Picture {i + 1}: <|vision_start|>{'<|image_pad|>' * n}<|vision_end|>"
+            for i, n in enumerate(counts)
+        )
+        # no truncation: the image-pad runs must stay whole
+        input_ids = self.tokenizer(self._chat(content + text), return_tensors="pt")[
+            "input_ids"
+        ].to(self.device_torch)
+        mm_token_type_ids = (input_ids == self.text_encoder.config.image_token_id).int()
+        if int(mm_token_type_ids.sum()) != sum(counts):
+            raise ValueError("image placeholder count does not match the image grids")
+        out = self.text_encoder(
+            input_ids=input_ids,
+            pixel_values=pixels["pixel_values"].to(self.device_torch, self.torch_dtype),
+            image_grid_thw=grid.to(self.device_torch),
+            mm_token_type_ids=mm_token_type_ids,
+            use_cache=False,
+        )
+        return out.last_hidden_state[0]
+
     @torch.no_grad()
-    def get_prompt_embeds(self, prompt) -> AdvancedPromptEmbeds:
+    def get_prompt_embeds(self, prompt, control_images=None) -> AdvancedPromptEmbeds:
         if isinstance(prompt, str):
             prompt = [prompt]
         if self.text_encoder.device == torch.device("cpu"):
             self.text_encoder.to(self.device_torch)
 
+        # control images -> one list per prompt: a (B, C, H, W) batch, a list of
+        # per-sample lists, or a flat list for a single prompt
+        if control_images is not None and self.is_edit:
+            if isinstance(control_images, torch.Tensor):
+                control_images = [[control_images[i]] for i in range(control_images.shape[0])]
+            elif len(control_images) > 0 and not isinstance(control_images[0], list):
+                control_images = [control_images]
+            if len(control_images) == 1 and len(prompt) > 1:
+                control_images = control_images * len(prompt)
+            if len(control_images) != len(prompt):
+                raise ValueError("number of prompts must match number of control image sets")
+            control_images = [_drop_repeats(c) if c else None for c in control_images]
+        else:
+            control_images = [None] * len(prompt)
+
         embeds = []
         # one unpadded forward per prompt, like the vendor (padding would leak
         # into the gated-delta recurrence)
-        for text in prompt:
-            formatted = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": text}],
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=True,
-            )
-            input_ids = self.tokenizer(
-                formatted,
-                return_tensors="pt",
-                truncation=True,
-                max_length=self.max_text_length,
-            )["input_ids"].to(self.device_torch)
-            out = self.text_encoder(input_ids=input_ids, use_cache=False)
-            embeds.append(out.last_hidden_state[0].to(self.torch_dtype))
+        for text, images in zip(prompt, control_images):
+            if images:
+                states = self._encode_with_images(text, images)
+            else:
+                input_ids = self.tokenizer(
+                    self._chat(text),
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.max_text_length,
+                )["input_ids"].to(self.device_torch)
+                states = self.text_encoder(input_ids=input_ids, use_cache=False).last_hidden_state[0]
+            embeds.append(states.to(self.torch_dtype))
         return AdvancedPromptEmbeds(text_embeds=embeds)
 
     def get_loss_target(self, *args, **kwargs):

@@ -1842,6 +1842,59 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     additionalSections: ["model.layer_offloading", "model.low_vram"],
   },
   {
+    name: "moss_image:base_edit",
+    label: "MOSS-Image Base [Edit Training]",
+    generateNameOverride: "MOSS-Image Base Edit",
+    group: "experimental",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      "config.process[0].model.name_or_path": [
+        "OpenMOSS-Team/MOSS-Image-Base",
+        defaultNameOrPath,
+      ],
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      // Qwen3.5-9B text encoder + vision tower (references ride in the prompt)
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      // prompt embeds depend on the control images, so the TE stays loaded
+      "config.process[0].train.unload_text_encoder": [false, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].sample.width": [1024, 1024],
+      "config.process[0].sample.height": [1024, 1024],
+      "config.process[0].sample.guidance_scale": [3, 4],
+      "config.process[0].sample.sample_steps": [30, 25],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      // edit: references as clean t=0 latents + in the prompt; kv_cache:
+      // references attend only to themselves, so sampling computes their K/V
+      // once (must be trained that way)
+      "config.process[0].model.model_kwargs": [
+        {
+          edit: true,
+          kv_cache: true,
+          match_target_res: true,
+          uncond_skip_layers: [22],
+        },
+        {},
+      ],
+      "config.process[0].network.network_kwargs.ignore_if_contains": [
+        ["layers.22."],
+        [],
+      ],
+    },
+    disableSections: ["network.conv", "train.unload_text_encoder"],
+    additionalSections: [
+      "datasets.multi_control_paths",
+      "sample.multi_ctrl_imgs",
+      "model.low_vram",
+      "model.layer_offloading",
+      "model.qie.match_target_res",
+      "model.model_kwargs.kv_cache",
+    ],
+  },
+  {
     name: "flux2_klein_4b",
     label: "FLUX.2-klein-base-4B",
     group: "image",

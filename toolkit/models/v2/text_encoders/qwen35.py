@@ -1,6 +1,7 @@
-from transformers import Qwen3_5TextModel
+from transformers import Qwen3_5Model, Qwen3_5TextModel
 
 from .._mixin import OstrisTransformersMixin
+from .qwen3_vl import patch_qwen_vl_patch_embed
 
 QWEN35_COMFY_REPO = "Comfy-Org/Qwen3.5"
 
@@ -54,3 +55,42 @@ class Qwen35TextOnlyEncoder(Qwen3_5TextModel, OstrisTransformersMixin):
     @classmethod
     def convert_state_dict_on_save(cls, state_dict):
         return {f"model.language_model.{k}": v for k, v in state_dict.items()}
+
+
+class Qwen35VLEncoder(Qwen3_5Model, OstrisTransformersMixin):
+    """Qwen3.5 language tower + vision tower (moss_image edit: reference images
+    ride in the prompt). Same comfy files as Qwen35TextOnlyEncoder; only the
+    lm_head and mtp head are dropped. Text-only inputs give the same states
+    as the text-only class."""
+
+    aitk_subfolder = "text_encoder"
+    aitk_tokenizer_subfolder = "tokenizer"
+    aitk_cast_quantized_load = True
+
+    aitk_comfy_repo = QWEN35_COMFY_REPO
+    aitk_comfy_weight_names = Qwen35TextOnlyEncoder.aitk_comfy_weight_names
+
+    _DROPPED = ("lm_head.", "mtp.")
+
+    @classmethod
+    def get_transformer_block_names(cls):
+        return ["language_model.layers", "visual.blocks"]
+
+    @classmethod
+    def convert_state_dict_on_load(cls, state_dict):
+        out = {}
+        for key, value in state_dict.items():
+            if key.startswith(cls._DROPPED):
+                continue
+            if key.startswith("model."):
+                key = key[len("model.") :]
+            out[key] = value
+        return out
+
+    @classmethod
+    def convert_state_dict_on_save(cls, state_dict):
+        return {f"model.{k}": v for k, v in state_dict.items()}
+
+    def patch_vision_patch_embed(self) -> int:
+        """kernel==stride Conv3d patch_embed has no fast bf16 path; swap for a GEMM."""
+        return patch_qwen_vl_patch_embed(self)

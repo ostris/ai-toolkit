@@ -95,6 +95,8 @@ class MossImagePipeline:
         generator: Optional[torch.Generator] = None,
         shift: float = DEFAULT_SHIFT,
         uncond_skip_layers: Sequence[int] = DEFAULT_UNCOND_SKIP_LAYERS,
+        ref_latents: Optional[List[List[torch.Tensor]]] = None,
+        isolate_refs: bool = False,
         **kwargs,
     ):
         model = self.model
@@ -115,13 +117,27 @@ class MossImagePipeline:
             latents = randn_tensor(shape, generator=generator, device=device, dtype=torch.float32)
         latents = latents.to(device, torch.float32)
 
+        # edit: references ride in both branches. Isolated references get
+        # their K/V computed on the first step and reused after; one cache per
+        # branch (the reference RoPE follows the prompt length, and the
+        # negative branch skips blocks)
+        has_refs = ref_latents is not None and any(len(r) > 0 for r in ref_latents)
+        ref_kwargs = {}
+        cond_cache = uncond_cache = None
+        if has_refs:
+            ref_kwargs = {"ref_latents": ref_latents, "isolate_refs": isolate_refs}
+            if isolate_refs:
+                cond_cache, uncond_cache = {}, {}
+
         sigmas = moss_sigmas(num_inference_steps, shift=shift).to(device)
         num_steps = len(sigmas) - 1
         for step_index in range(num_steps):
             sigma, sigma_next = sigmas[step_index], sigmas[step_index + 1]
             timestep = (sigma * NUM_TRAIN_TIMESTEPS).reshape(1)
             # CFG combines fp32 predictions even though the DiT runs in bf16
-            pred = transformer(latents, timestep, cond, cond_mask).float()
+            pred = transformer(
+                latents, timestep, cond, cond_mask, ref_kv_cache=cond_cache, **ref_kwargs
+            ).float()
             if do_cfg:
                 pred_uncond = transformer(
                     latents,
@@ -129,6 +145,8 @@ class MossImagePipeline:
                     uncond,
                     uncond_mask,
                     skip_layers=uncond_skip_layers,
+                    ref_kv_cache=uncond_cache,
+                    **ref_kwargs,
                 ).float()
                 pred = pred_uncond + guidance_scale * (pred - pred_uncond)
             if getattr(model, "sample_step_hook", None) is not None:
