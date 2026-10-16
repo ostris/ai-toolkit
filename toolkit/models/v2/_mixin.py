@@ -172,20 +172,36 @@ class OstrisModelMixin:
         return cls._local_first(cls.load_config, path, subfolder=subfolder)
 
     @staticmethod
-    def _local_first(loader, *args, **kwargs):
+    def _local_first(loader, *args, validate=None, **kwargs):
         """Serve fully-cached repos without touching the hub. Online
         from_pretrained does an etag HEAD round-trip per file (seconds of pure
         network latency on every warm load); a local_files_only attempt is
         instant when the cache can't satisfy it, so failing over to the
-        online path costs nothing."""
+        online path costs nothing. ``validate`` rejects a cache-only result
+        that loaded without raising but incomplete (falls over to online)."""
         import os as _os
 
         if _os.environ.get("HF_HUB_OFFLINE") == "1":
             return loader(*args, **kwargs)
         try:
-            return loader(*args, local_files_only=True, **kwargs)
+            result = loader(*args, local_files_only=True, **kwargs)
         except Exception:
             return loader(*args, **kwargs)
+        if validate is not None and not validate(result):
+            try:
+                return loader(*args, **kwargs)
+            except Exception:
+                return result  # no hub: keep what the cache had
+        return result
+
+    @staticmethod
+    def _tokenizer_complete(result) -> bool:
+        # transformers 5.5.3 local_files_only on a partially cached repo (e.g.
+        # config.json only) returns a 1-token tokenizer instead of raising
+        tokenizer = getattr(result, "tokenizer", result)
+        if not hasattr(tokenizer, "__len__"):
+            return True
+        return len(tokenizer) >= 1000
 
     @classmethod
     def aitk_from_config(cls, config):
@@ -803,7 +819,11 @@ class OstrisModelMixin:
         ):
             subfolder = None
         return cls._local_first(
-            AutoTokenizer.from_pretrained, source, subfolder=subfolder or "", **kwargs
+            AutoTokenizer.from_pretrained,
+            source,
+            subfolder=subfolder or "",
+            validate=cls._tokenizer_complete,
+            **kwargs,
         )
 
     @classmethod
@@ -825,7 +845,11 @@ class OstrisModelMixin:
         ):
             subfolder = None
         return cls._local_first(
-            AutoProcessor.from_pretrained, source, subfolder=subfolder or "", **kwargs
+            AutoProcessor.from_pretrained,
+            source,
+            subfolder=subfolder or "",
+            validate=cls._tokenizer_complete,
+            **kwargs,
         )
 
     # ------------------------------------------------------------------
