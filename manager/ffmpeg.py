@@ -86,7 +86,10 @@ def _mark_installed(source_url):
 
 
 def _install_btbn(url):
-    tmp = tempfile.mkdtemp(prefix="aitk_ffmpeg_")
+    try:
+        tmp = tempfile.mkdtemp(prefix="aitk_ffmpeg_", dir=REPO_ROOT)
+    except (OSError, FileNotFoundError):
+        tmp = tempfile.mkdtemp(prefix="aitk_ffmpeg_")
     try:
         archive = os.path.join(tmp, os.path.basename(url))
         download(url, archive, label="ffmpeg")
@@ -111,7 +114,10 @@ def _install_btbn(url):
 
 def _install_mac(detection):
     arch = "arm64" if detection["arch"] == "arm64" else "amd64"
-    tmp = tempfile.mkdtemp(prefix="aitk_ffmpeg_")
+    try:
+        tmp = tempfile.mkdtemp(prefix="aitk_ffmpeg_", dir=REPO_ROOT)
+    except (OSError, FileNotFoundError):
+        tmp = tempfile.mkdtemp(prefix="aitk_ffmpeg_")
     try:
         os.makedirs(bin_dir(), exist_ok=True)
         for tool in ("ffmpeg", "ffprobe"):
