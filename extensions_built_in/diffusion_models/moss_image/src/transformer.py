@@ -64,7 +64,9 @@ def _rotate(x, rope):
     return x * cos + torch.cat((-b, a), -1) * sin
 
 
-def _attention(q, k, v, rope, heads, mask, ref_span=None, kv_capture=None, kv_cache=None):
+def _attention(
+    q, k, v, rope, heads, mask, ref_span=None, kv_capture=None, kv_cache=None, isolate_split=None
+):
     shape = (*q.shape[:2], heads, q.shape[-1] // heads)
     q = _rotate(q.reshape(shape), rope).transpose(1, 2)
     k = _rotate(k.reshape(shape), rope).transpose(1, 2)
@@ -82,7 +84,18 @@ def _attention(q, k, v, rope, heads, mask, ref_span=None, kv_capture=None, kv_ca
     if kv_cache is not None:
         k = torch.cat((k, kv_cache[0].to(k.dtype)), 2)
         v = torch.cat((v, kv_cache[1].to(v.dtype)), 2)
-    out = F.scaled_dot_product_attention(q.to(v.dtype), k.to(v.dtype), v, attn_mask=mask)
+    q, k = q.to(v.dtype), k.to(v.dtype)
+    if isolate_split is not None:
+        # reference isolation without a mask (a boolean mask forces SDPA off
+        # flash attention; its backward is ~4x slower): live queries attend
+        # every key, reference queries only reference keys
+        live = F.scaled_dot_product_attention(q[:, :, :isolate_split], k, v)
+        ref = F.scaled_dot_product_attention(
+            q[:, :, isolate_split:], k[:, :, isolate_split:], v[:, :, isolate_split:]
+        )
+        out = torch.cat((live, ref), 2)
+    else:
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
     return out.transpose(1, 2).flatten(2)
 
 
@@ -130,7 +143,9 @@ class _Block(nn.Module):
             }
         )
 
-    def forward(self, x, rope, modulation, mask, ref_span=None, kv_capture=None, kv_cache=None):
+    def forward(
+        self, x, rope, modulation, mask, isolate_split=None, ref_span=None, kv_capture=None, kv_cache=None
+    ):
         # modulation (B, 6, D) [shift_a, scale_a, gate_a, shift_f, scale_f,
         # gate_f], or (mod, ref_mod, split): tokens [split:] are clean
         # references modulated at t=0
@@ -165,7 +180,9 @@ class _Block(nn.Module):
         q, k, v = self.proj["qkv"](y).chunk(3, -1)
         q = self.q_norm(q.unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(k.unflatten(-1, (self.heads, -1))).flatten(2)
-        attn = _attention(q, k, v, rope, self.heads, mask, ref_span, kv_capture, kv_cache)
+        attn = _attention(
+            q, k, v, rope, self.heads, mask, ref_span, kv_capture, kv_cache, isolate_split
+        )
         x = x + gate(self.proj["o"](attn), 2)
         y = affine(self.norm2(x), 4, 3)
         hidden, ffn_gate = self.proj["ffn_up_gate"](y).chunk(2, -1)
@@ -418,14 +435,18 @@ class MossImageTransformer(nn.Module, OstrisModelMixin):
         live_valid = torch.cat(
             (torch.ones(batch, num_image, dtype=torch.bool, device=device), valid), 1
         )
-        joint_mask = None
+        joint_mask = isolate_split = None
         if num_ref and isolate_refs:
             key_valid = torch.cat((live_valid, ref_valid), 1)
-            is_ref = torch.arange(num_live + num_ref, device=device) >= num_live
-            allowed = key_valid[:, None, :] & (~is_ref[:, None] | is_ref[None, :])[None]
-            # every query keeps at least itself (padded rows would be all-masked)
-            allowed = allowed | torch.eye(num_live + num_ref, dtype=torch.bool, device=device)
-            joint_mask = allowed[:, None]
+            if bool(key_valid.all()):
+                # no padding anywhere: isolation as two unmasked flash calls
+                isolate_split = num_live
+            else:
+                is_ref = torch.arange(num_live + num_ref, device=device) >= num_live
+                allowed = key_valid[:, None, :] & (~is_ref[:, None] | is_ref[None, :])[None]
+                # every query keeps at least itself (padded rows would be all-masked)
+                allowed = allowed | torch.eye(num_live + num_ref, dtype=torch.bool, device=device)
+                joint_mask = allowed[:, None]
         elif num_ref or reuse_refs:
             # live queries see every real reference key (cached ones included)
             key_valid = torch.cat((live_valid, ref_valid), 1)
@@ -453,12 +474,15 @@ class MossImageTransformer(nn.Module, OstrisModelMixin):
                 continue
             if capture:
                 slot = []
-                x = layer(x, rope, modulation, joint_mask, (num_live, num_live + num_ref), slot)
+                x = layer(
+                    x, rope, modulation, joint_mask, isolate_split,
+                    (num_live, num_live + num_ref), slot,
+                )
                 captured[index] = slot[0]
             elif reuse_refs:
                 x = layer(x, rope, modulation, joint_mask, kv_cache=ref_kv_cache["kv"][index])
             else:
-                x = self._ckpt(layer, x, rope, modulation, joint_mask)
+                x = self._ckpt(layer, x, rope, modulation, joint_mask, isolate_split)
         if capture:
             ref_kv_cache["kv"] = captured
             ref_kv_cache["mask"] = ref_valid
