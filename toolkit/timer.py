@@ -48,6 +48,9 @@ class Timer:
         timing_dict = {}
         # sort by longest at top
         for timer_name, timings in sorted(self.timers.items(), key=lambda x: sum(x[1]), reverse=True):
+            if not timings:
+                # started but never stopped (e.g. every step failed), nothing to average
+                continue
             avg_time = sum(timings) / len(timings)
             
             if not is_ui:
