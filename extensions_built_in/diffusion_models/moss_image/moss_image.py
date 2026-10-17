@@ -627,6 +627,61 @@ class MossImageModel(BaseModel):
             quantized=False,
         )
 
+    # LoRA keys: the module fuses q/k/v (like the Comfy files), but ComfyUI's
+    # MOSS LoRA convention addresses the separate projections (mapped onto
+    # fused files by row slices, and the only names unfused files have).
+    # Saved as q/k/v, fused back on load.
+    _QKV_SPLIT_ROWS = ("lora_B.weight", "lora_up.weight")
+    _QKV_SHARED = ("lora_A.weight", "lora_down.weight", "alpha")
+
+    def convert_lora_weights_before_save(self, state_dict):
+        state_dict = super().convert_lora_weights_before_save(state_dict)
+        out = {}
+        for key, value in state_dict.items():
+            base, sep, suffix = key.partition(".proj.qkv.")
+            if not sep:
+                out[key] = value
+            elif suffix in self._QKV_SPLIT_ROWS:
+                for name, part in zip(("q", "k", "v"), value.chunk(3, dim=0)):
+                    out[f"{base}.proj.{name}.{suffix}"] = part.contiguous()
+            elif suffix in self._QKV_SHARED:
+                for name in ("q", "k", "v"):
+                    out[f"{base}.proj.{name}.{suffix}"] = value.clone()
+            else:
+                out[key] = value  # e.g. LoKr: kept fused (maps on fused files)
+        return out
+
+    def convert_lora_weights_before_load(self, state_dict):
+        state_dict = super().convert_lora_weights_before_load(state_dict)
+        out = dict(state_dict)
+        down_keys = [
+            k for k in state_dict
+            if k.endswith((".proj.q.lora_A.weight", ".proj.q.lora_down.weight"))
+        ]
+        for q_down in down_keys:
+            base, _, down_suffix = q_down.partition(".proj.q.")
+            up_suffix = "lora_B.weight" if down_suffix == "lora_A.weight" else "lora_up.weight"
+            names = [f"{base}.proj.{p}." for p in ("q", "k", "v")]
+            if not all(n + down_suffix in state_dict and n + up_suffix in state_dict for n in names):
+                continue
+            downs = [out.pop(n + down_suffix) for n in names]
+            ups = [out.pop(n + up_suffix) for n in names]
+            alphas = [out.pop(n + "alpha", None) for n in names]
+            rank = downs[0].shape[0]
+            if all(torch.equal(downs[0], d) for d in downs[1:]):
+                # shared down projection (our saves): the fused rank-r LoRA
+                down, up = downs[0], torch.cat(ups, dim=0)
+            else:
+                # independent q/k/v LoRAs: exact rank-3r block form
+                down = torch.cat(downs, dim=0)
+                up = torch.block_diag(*ups)
+            out[f"{base}.proj.qkv.{down_suffix}"] = down
+            out[f"{base}.proj.qkv.{up_suffix}"] = up
+            if alphas[0] is not None:
+                # keep alpha / rank, the per-projection scale
+                out[f"{base}.proj.qkv.alpha"] = alphas[0] * (down.shape[0] / rank)
+        return out
+
     def get_base_model_version(self):
         return "moss_image"
 
