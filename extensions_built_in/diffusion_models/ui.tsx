@@ -12,6 +12,22 @@ import {
 const defaultNameOrPath = "";
 const defaultLinearRank = 32;
 
+// MOSS-Image edit LoRAs need the companion custom nodes in ComfyUI
+const mossImageEditNotes = (
+  <p>
+    Using these LoRAs in ComfyUI requires{" "}
+    <a
+      href="https://github.com/ostris/ComfyUI-MOSS-Image-Ostris-Edit"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-blue-400 hover:text-blue-300 underline"
+    >
+      ComfyUI-MOSS-Image-Ostris-Edit
+    </a>
+    .
+  </p>
+);
+
 // Qwen-Image-2.1 and its turbo distill share the RGBA VAE, so both entries
 // carry this option
 const qwenImage21TransparencyOption: CustomModelOption[] = [
@@ -1846,6 +1862,7 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     label: "MOSS-Image SFT [Edit Training]",
     generateNameOverride: "MOSS-Image SFT Edit",
     group: "experimental",
+    modelNotes: mossImageEditNotes,
     defaults: {
       // default updates when [selected, unselected] in the UI
       "config.process[0].model.name_or_path": [
@@ -1899,6 +1916,7 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     label: "MOSS-Image Base [Edit Training]",
     generateNameOverride: "MOSS-Image Base Edit",
     group: "experimental",
+    modelNotes: mossImageEditNotes,
     defaults: {
       // default updates when [selected, unselected] in the UI
       "config.process[0].model.name_or_path": [
