@@ -151,6 +151,7 @@ export const quantizationOptions: SelectOption[] = [
   { value: 'uint4', label: '4 bit' },
   { value: 'uint3', label: '3 bit' },
   { value: 'uint2', label: '2 bit' },
+  { value: 'convrotw4a8', label: '4bit convrot W4A8 (int4 weights, int8 activations)' },
 ];
 
 export const defaultQtype = 'qfloat8';

@@ -349,6 +349,13 @@ export interface CaptionProcessConfig {
     layer_offloading?: boolean;
     layer_offloading_percent?: number;
     loras?: CaptionLora[];
+    // Qwen3.8 captioner
+    mtp?: boolean;
+    mtp_depth?: number;
+    cuda_graph?: boolean;
+    vision_bf16?: boolean;
+    video_fps?: number;
+    system_prompt?: string;
   }
 }
 

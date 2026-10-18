@@ -1,7 +1,7 @@
 import { CloudLora, GroupedSelectOption, SelectOption } from "@/types";
 
-type CaptionGroup = 'image' | 'music' | 'video' | 'image/video/sound';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.extract_vocals_before_transcribe' | 'caption.keep_timestamps' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
+type CaptionGroup = 'image' | 'music' | 'video' | 'image/video' | 'image/video/sound';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.extract_vocals_before_transcribe' | 'caption.keep_timestamps' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading' | 'caption.mtp' | 'caption.cuda_graph' | 'caption.vision_bf16' | 'caption.video_fps' | 'caption.system_prompt';
 
 export interface CaptionOption {
     name: string;
@@ -25,6 +25,8 @@ export interface CaptionOption {
 }
 
 const defaultNameOrPath = '';
+
+export const defaultQtype = 'convrot8';
 
 const extensionsAudio = ['mp3', 'wav', 'flac', 'ogg'];
 const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
@@ -248,6 +250,51 @@ export const captionerTypes: CaptionOption[] = [
         ],
     },
     {
+        name: 'Qwen38Captioner',
+        label: 'Qwen3.8 27B',
+        group: 'image/video',
+        supportsLoras: true,
+        defaults: {
+            'config.process[0].caption.loras': [[], undefined],
+            'config.process[0].caption.model_name_or_path': ['Comfy-Org/Qwen3.8-27B/text_encoders/qwen3.8_27b_w4a8.safetensors', defaultNameOrPath],
+            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage], defaultExtensions],
+            'config.process[0].caption.caption_prompt': [defaultImageCaptionPrompt, undefined],
+            'config.process[0].caption.max_res': [1024, undefined],
+            'config.process[0].caption.max_new_tokens': [512, undefined],
+            'config.process[0].caption.mtp': [true, undefined],
+            'config.process[0].caption.mtp_depth': [3, undefined],
+            'config.process[0].caption.cuda_graph': [true, undefined],
+            'config.process[0].caption.vision_bf16': [true, undefined],
+            'config.process[0].caption.video_fps': [2, undefined],
+            'config.process[0].caption.thinking': [false, undefined],
+            // the ComfyUI file is already W4A8; quantize only applies to the HF repo
+            'config.process[0].caption.quantize': [true, true],
+            'config.process[0].caption.qtype': ['convrotw4a8', defaultQtype],
+            'config.process[0].caption.compile': [false, false],
+        },
+        name_or_path_options: [
+            { value: 'Comfy-Org/Qwen3.8-27B/text_encoders/qwen3.8_27b_w4a8.safetensors', label: 'Comfy-Org/Qwen3.8-27B (W4A8)' },
+            { value: 'Qwen/Qwen3.8-27B', label: 'Qwen/Qwen3.8-27B (bf16, quantized on load)' },
+        ],
+        captionPrompts: {
+            'General (image)': defaultImageCaptionPrompt,
+            'General (video)': defaultVideoCaptionPrompt,
+            'MiniMax H4 T2V': minimaxT2VCaptionPrompt,
+            'MiniMax H4 Image': minimaxImageCaptionPrompt,
+        },
+        additionalSections: [
+            'caption.caption_prompt',
+            'caption.system_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
+            'caption.video_fps',
+            'caption.thinking',
+            'caption.mtp',
+            'caption.cuda_graph',
+            'caption.vision_bf16',
+        ],
+    },
+    {
         name: 'Ideogram4Captioner',
         label: 'Ideogram 4 Captioner',
         group: 'image',
@@ -310,6 +357,7 @@ export const quantizationOptions: SelectOption[] = [
     { value: 'uint4', label: '4 bit' },
     { value: 'uint3', label: '3 bit' },
     { value: 'uint2', label: '2 bit' },
+    { value: 'convrotw4a8', label: '4bit convrot W4A8 (int4 weights, int8 activations)' },
 ];
 
 // AceStepCaptioner output layouts (caption.caption_format)
@@ -347,4 +395,17 @@ export const maxNewTokensOptions: SelectOption[] = [
     { value: '8192', label: '8192' },
 ];
 
-export const defaultQtype = 'convrot8';
+export const videoFpsOptions: SelectOption[] = [
+    { value: '1', label: '1' },
+    { value: '2', label: '2 (default)' },
+    { value: '4', label: '4' },
+    { value: '8', label: '8' },
+];
+
+export const mtpDepthOptions: SelectOption[] = [
+    { value: '1', label: '1' },
+    { value: '2', label: '2' },
+    { value: '3', label: '3 (default)' },
+    { value: '4', label: '4' },
+    { value: '5', label: '5' },
+];

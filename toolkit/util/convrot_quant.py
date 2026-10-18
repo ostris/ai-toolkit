@@ -51,7 +51,7 @@ import torch.nn.functional as F
 from toolkit.print import print_acc
 from toolkit.util.ostris_quant import OstrisQuantizer
 
-CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet", "convrotcomfyw4a4") + tuple(
+CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet", "convrotcomfyw4a4", "convrotw4a8") + tuple(
     f"convrotint{b}" for b in range(2, 9)
 )
 
@@ -65,6 +65,11 @@ def get_convrot_quantizer(qtype: str):
         return ConvRotBitNetQuantizer(rot_size=256)
     if qtype == "convrotcomfyw4a4":
         return ConvRotComfyW4A4Quantizer()
+    if qtype == "convrotw4a8":
+        # comfy_kitchen asym_w4a8_int8 storage (toolkit/util/convrot_w4a8_quant.py)
+        from toolkit.util.convrot_w4a8_quant import ConvRotW4A8Quantizer
+
+        return ConvRotW4A8Quantizer(rot_size=256)
     if qtype.startswith("convrotint"):
         bits = int(qtype[len("convrotint") :])
         if 2 <= bits <= 8:

@@ -34,6 +34,7 @@ from toolkit.util.nvfp4_quant import (
     unswizzle_nvfp4_scales,
 )
 from toolkit.util.ostris_quant import OstrisLinear, get_ostris_quantizer
+from toolkit.util.convrot_quant import rotate
 
 
 def parse_comfy_quant_blob(blob: torch.Tensor) -> dict:
@@ -68,6 +69,35 @@ class Int8Embedding(torch.nn.Module):
         rows = self.qweight.index_select(0, flat).float()
         scales = self.scales.view(torch.float32).index_select(0, flat)
         out = (rows * scales.unsqueeze(1)).to(self.output_dtype)
+        return out.to(input_ids.device).reshape(*input_ids.shape, self.embedding_dim)
+
+
+class ConvRotInt8Embedding(torch.nn.Module):
+    """Per-row int8 embedding whose rows are stored in the ConvRot-rotated basis (the
+    storage of a comfy convrot int8 linear). Rows are gathered, dequantized and rotated
+    back per lookup, so neither the full table nor an unrotated copy materializes."""
+
+    def __init__(self, qweight: torch.Tensor, scales: torch.Tensor, rot_size: int, dtype: torch.dtype):
+        super().__init__()
+        self.num_embeddings, self.embedding_dim = qweight.shape
+        self.output_dtype = dtype
+        self.rot_size = int(rot_size)
+        self.register_buffer("qweight", qweight.contiguous(), persistent=False)
+        self.register_buffer(
+            "scales",
+            scales.detach().float().reshape(-1).contiguous().view(torch.uint8),
+            persistent=False,
+        )
+
+    @property
+    def weight(self):
+        return self.forward(torch.arange(self.num_embeddings, device=self.qweight.device))
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        flat = input_ids.reshape(-1).to(self.qweight.device)
+        rows = self.qweight.index_select(0, flat).float()
+        scales = self.scales.view(torch.float32).index_select(0, flat)
+        out = rotate(rows * scales.unsqueeze(1), self.rot_size).to(self.output_dtype)
         return out.to(input_ids.device).reshape(*input_ids.shape, self.embedding_dim)
 
 
@@ -217,6 +247,7 @@ def import_comfy_quantized_layers(
     state_dict: Dict[str, torch.Tensor],
     orig_dtype: torch.dtype = torch.bfloat16,
     key_map=None,
+    rotated_embedding_rows: bool = False,
 ) -> Tuple[Dict[str, torch.Tensor], int]:
     """Convert every module a ``comfy_quant`` marker points at and attach its
     quantized tensors. Consumes the quantized entries from ``state_dict`` and
@@ -225,6 +256,9 @@ def import_comfy_quantized_layers(
 
     ``key_map`` optionally maps a checkpoint prefix to the module path in
     ``root`` (e.g. comfy text encoder keys onto transformers module paths).
+    ``rotated_embedding_rows`` keeps a convrot int8 embedding table as int8 rows
+    (:class:`ConvRotInt8Embedding`, rotated back per lookup) instead of
+    materializing the full dequantized table.
     """
     state_dict = dict(state_dict)
     converted = 0
@@ -247,7 +281,15 @@ def import_comfy_quantized_layers(
                 )
             parent_path, _, attr = module_path.rpartition(".")
             parent = root.get_submodule(parent_path) if parent_path else root
-            if conf.get("convrot"):
+            if conf.get("convrot") and rotated_embedding_rows:
+                setattr(
+                    parent,
+                    attr,
+                    ConvRotInt8Embedding(
+                        weight, weight_scale, int(conf.get("convrot_groupsize", 256)), orig_dtype
+                    ),
+                )
+            elif conf.get("convrot"):
                 # rows are stored rotated like a linear's weight: attach to a stand-in linear
                 # (same shape) so the convrot backend undoes the rotation, then keep the table
                 # as a plain embedding (per-row lookups cannot apply the group rotation)
@@ -320,10 +362,27 @@ def import_comfy_quantized_layers(
                 pts=state_dict.pop(f"{prefix}.weight_scale_2"),
                 pre_scale=state_dict.pop(f"{prefix}.pre_quant_scale", None),
             )
+        elif fmt == "asym_w4a8_int8":
+            # int4 codebook codes + fp8 group scales + fp32 channel scales on a convrot
+            # basis: the exact storage of the toolkit's convrotw4a8 backend
+            from toolkit.util.convrot_w4a8_quant import ConvRotW4A8Quantizer
+
+            if f"{prefix}.weight_correction" in state_dict:
+                raise ValueError(f"asymmetric W4A8 (weight_correction) on {prefix} is not supported")
+            quantizer = get_ostris_quantizer("convrotw4a8")
+            ConvRotW4A8Quantizer.attach_(
+                module,
+                qdata=weight,
+                srel=state_dict.pop(f"{prefix}.weight_s_rel"),
+                s_channel=state_dict.pop(f"{prefix}.weight_s_channel"),
+                codebook=state_dict.pop(f"{prefix}.weight_codebook", None),
+                rot_size=int(conf.get("convrot_groupsize", 256)) if conf.get("convrot") else 1,
+                group_size=int(conf.get("group_size", 16)),
+            )
         else:
             raise ValueError(
                 f"Unsupported comfy quant format {fmt!r} on {prefix} "
-                "(supported: int8_tensorwise, nvfp4, float8_e4m3fn)"
+                "(supported: int8_tensorwise, nvfp4, float8_e4m3fn, asym_w4a8_int8)"
             )
 
         # drop unused calibration extras if present
