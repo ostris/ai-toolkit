@@ -407,6 +407,25 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'config.process[0].caption.caption_prompt': {
+    title: 'Caption Prompt',
+    description: (
+      <>
+        The instruction sent to the captioning model for every file. It can contain special tokens that are replaced
+        per file before the prompt is sent:
+        <br />
+        <br />
+        <code>&lt;caption.ext&gt;</code> — inserts the text of the file next to the media file that has the same name
+        and the given extension. For <code>/data/subfolder/img01.webp</code>, <code>&lt;caption.json&gt;</code> inserts
+        the contents of <code>/data/subfolder/img01.json</code> and <code>&lt;caption.txt&gt;</code> inserts{' '}
+        <code>img01.txt</code>. The file is inserted as plain text exactly as it is on disk (json included). If the file
+        does not exist, the token is replaced with nothing.
+        <br />
+        <br />
+        Example: <code>Rewrite this caption as a single sentence: &lt;caption.txt&gt;</code>
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

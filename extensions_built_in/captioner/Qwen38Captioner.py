@@ -93,7 +93,7 @@ class Qwen38Captioner(BaseCaptioner):
     def _prep_media(self, file_path: str) -> dict:
         """CPU side of one file (image decode / frame extraction, processor); runs in a
         worker thread ahead of the GPU."""
-        item = self.llm.prepare_caption_inputs(file_path, self.caption_config.caption_prompt)
+        item = self.llm.prepare_caption_inputs(file_path, self.resolve_prompt(self.caption_config.caption_prompt, file_path))
         item["file"] = file_path
         return item
 
