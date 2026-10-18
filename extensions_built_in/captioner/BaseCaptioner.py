@@ -19,8 +19,9 @@ from toolkit.train_tools import get_torch_dtype
 
 AITK_Status = Literal["running", "stopped", "error", "completed"]
 
-# prompt special token: <caption.ext> -> contents of the media file's sibling <stem>.ext
-_CAPTION_TOKEN_RE = re.compile(r"<caption\.([A-Za-z0-9_.-]+)>")
+# prompt special token: <caption.ext> -> contents of the media file's sibling <stem>.ext.
+# ext is dot-separated alphanumeric segments only: no separators, no empty segments (..)
+_CAPTION_TOKEN_RE = re.compile(r"<caption\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)>")
 
 
 class CaptionConfig:
@@ -162,11 +163,16 @@ class BaseCaptioner(BaseExtensionProcess):
         or blank when that file does not exist."""
         if not prompt or "<caption." not in prompt:
             return prompt
-        stem = os.path.splitext(file_path)[0]
+        media_dir = os.path.dirname(os.path.abspath(file_path))
+        stem = os.path.splitext(os.path.basename(file_path))[0]
 
         def sub(m):
+            target = os.path.join(media_dir, f"{stem}.{m.group(1)}")
+            # only a file sitting next to the media file is ever read
+            if os.path.dirname(os.path.abspath(target)) != media_dir:
+                return ""
             try:
-                with open(f"{stem}.{m.group(1)}", "r", encoding="utf-8") as f:
+                with open(target, "r", encoding="utf-8") as f:
                     return f.read().strip()
             except OSError:
                 return ""
