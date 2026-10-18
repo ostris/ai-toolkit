@@ -11,6 +11,8 @@ export interface CaptionOption {
     minNewTokens?: number;
     // captioner can run LoRAs on its model (applied as sidechains, never merged)
     supportsLoras?: boolean;
+    // compile is a no-op for this captioner (its decode is already CUDA-graphed)
+    noCompile?: boolean;
     // LoRAs published for this model, offered in the LoRA browser alongside
     // local files. Paths are 'org/repo/path_to/file.safetensors'; the captioner
     // searches the models folder for the file before downloading it to loras/.
@@ -254,6 +256,7 @@ export const captionerTypes: CaptionOption[] = [
         label: 'Qwen3.8 27B',
         group: 'image/video',
         supportsLoras: true,
+        noCompile: true,
         defaults: {
             'config.process[0].caption.loras': [[], undefined],
             'config.process[0].caption.model_name_or_path': ['Comfy-Org/Qwen3.8-27B/text_encoders/qwen3.8_27b_w4a8.safetensors', defaultNameOrPath],

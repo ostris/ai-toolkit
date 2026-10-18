@@ -288,11 +288,13 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               checked={jobConfig.config.process[0].caption.recaption}
               onChange={value => setJobConfig(value, 'config.process[0].caption.recaption')}
             />
-            <Checkbox
-              label="Compile Models"
-              checked={jobConfig.config.process[0].caption.compile || false}
-              onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
-            />
+            {!selectedCaptionOption?.noCompile && (
+              <Checkbox
+                label="Compile Models"
+                checked={jobConfig.config.process[0].caption.compile || false}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
+              />
+            )}
             {additionalSections.includes('caption.extract_vocals_before_transcribe') && (
               <Checkbox
                 label="Extract Vocals Before Transcribing"
