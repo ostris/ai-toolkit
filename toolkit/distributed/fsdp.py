@@ -22,16 +22,14 @@ _BLOCK_LIST_ATTRS = (
 
 
 def _find_block_lists(model: nn.Module):
-    """Yield (parent_module, attr_name) for every child block-list found."""
+    """Find top-level child block-lists (e.g. transformer_blocks), skipping
+    lists nested inside another list's blocks."""
     found = []
     for mod in [model] + list(model.modules()):
         for attr in _BLOCK_LIST_ATTRS:
             lst = getattr(mod, attr, None)
             if isinstance(lst, (nn.ModuleList, list)) and len(lst) > 0 and isinstance(lst[0], nn.Module):
-                # only take the deepest lists (a block itself may contain "layers")
-                if not any(lst[0] is f[0][0] for f in found):
-                    found.append((mod, attr, lst))
-    # keep only top-level lists: drop lists whose parent is inside another list's block
+                found.append((mod, attr, lst))
     keep = []
     for parent, attr, lst in found:
         inside_other = False
