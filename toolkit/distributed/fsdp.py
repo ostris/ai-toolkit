@@ -25,7 +25,7 @@ def _find_block_lists(model: nn.Module):
     """Find top-level child block-lists (e.g. transformer_blocks), skipping
     lists nested inside another list's blocks."""
     found = []
-    for mod in [model] + list(model.modules()):
+    for mod in model.modules():
         for attr in _BLOCK_LIST_ATTRS:
             lst = getattr(mod, attr, None)
             if isinstance(lst, (nn.ModuleList, list)) and len(lst) > 0 and isinstance(lst[0], nn.Module):
