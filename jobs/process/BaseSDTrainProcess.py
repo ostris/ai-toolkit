@@ -280,10 +280,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return generate_image_config_list
 
     def sample(self, step=None, is_first=False):
-        if not self.accelerator.is_main_process:
+        if not self.accelerator.is_main_process and not getattr(self, '_fsdp_active', False):
             return
         flush()
         sample_folder = os.path.join(self.save_root, 'samples')
+        if getattr(self, '_fsdp_active', False) and not self.accelerator.is_main_process:
+            # FSDP2: all ranks must run the sampling forward (all-gather
+            # collectives); non-main ranks write to a scratch dir instead.
+            from toolkit.distributed import get_rank
+            sample_folder = os.path.join(self.save_root, f'samples_rank{get_rank()}')
         gen_img_config_list = []
 
         sample_config = self.first_sample_config if is_first else self.sample_config
@@ -504,6 +509,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
         pass
 
     def save(self, step=None):
+        if getattr(self, '_fsdp_active', False) and not self.accelerator.is_main_process:
+            # FSDP2: the LoRA state dict gather (DTensor full_tensor) is a
+            # collective issued inside get_state_dict - all ranks must join.
+            if self.network is not None:
+                self.network.get_state_dict(dtype=get_torch_dtype(self.save_config.dtype))
+            return
         if not self.accelerator.is_main_process:
             return
         flush()
@@ -700,7 +711,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         print_acc(f"Saved checkpoint to {file_path}")
 
         # save optimizer
-        if self.optimizer is not None:
+        if self.optimizer is not None and not getattr(self, '_fsdp_active', False):
             try:
                 filename = f'optimizer.pt'
                 file_path = os.path.join(self.save_root, filename)
@@ -758,7 +769,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
         if self.sd.vae is not None:
             self.sd.vae = self.accelerator.prepare(self.sd.vae)
-        if self.sd.unet is not None:
+        fsdp = getattr(self, '_fsdp_active', False)
+        if self.sd.unet is not None and not fsdp:
             self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
@@ -773,10 +785,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.refiner_unet = self.accelerator.prepare(self.sd.refiner_unet)
             self.modules_being_trained.append(self.sd.refiner_unet)
         # todo, do we need to do the network or will "unet" get it?
-        if self.sd.network is not None:
+        if self.sd.network is not None and not fsdp:
             self.sd.network = self.accelerator.prepare(self.sd.network)
             self.modules_being_trained.append(self.sd.network)
-        if self.adapter is not None and self.adapter_config.train:
+        if self.adapter is not None and self.adapter_config.train and not fsdp:
             # todo adapters may not be a module. need to check
             self.adapter = self.accelerator.prepare(self.adapter)
             self.modules_being_trained.append(self.adapter)
@@ -1752,6 +1764,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
         BaseTrainProcess.run(self)
         params = []
 
+        # FSDP2 multi-GPU: bring up the process group when launched via torchrun
+        from toolkit.distributed import init_process_group_if_needed, is_distributed
+        init_process_group_if_needed()
+        self._fsdp_active = bool(getattr(self.model_config, 'fsdp', False)) and is_distributed()
+        if self._fsdp_active:
+            if self.train_config.gradient_accumulation_steps != 1:
+                raise NotImplementedError("fsdp: gradient accumulation not supported yet")
+            if getattr(self.train_config, 'ema_config', None) is not None:
+                raise NotImplementedError("fsdp: EMA not supported yet")
+
         ### HOOK ###
         self.hook_before_model_load()
         model_config_to_load = copy.deepcopy(self.model_config)
@@ -1998,6 +2020,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_unet
                 )
 
+                # FSDP2: shard the denoiser (frozen mxfp8 weights + LoRA params
+                # inside blocks) now that LoRA is attached but BEFORE any
+                # optimizer-param collection - fully_shard replaces the param
+                # objects with sharded DTensors.
+                if self._fsdp_active:
+                    from toolkit.distributed.fsdp import apply_fsdp2
+                    apply_fsdp2(self.sd.unet)
+
                 # we cannot merge in if quantized or offloading. note: torchao quantized weights can
                 # still be force merged at save time for the merge-and-reset method (see save logic),
                 # but we keep can_merge_in False here so sampling never merges in/out.
@@ -2180,7 +2210,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.start_step = self.step_num
 
         optimizer_type = self.train_config.optimizer.lower()
-        
+
         # esure params require grad
         self.ensure_params_requires_grad(force=True)
         optimizer = get_optimizer(self.params, optimizer_type, learning_rate=self.train_config.lr,
@@ -2195,7 +2225,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # check if it exists
         optimizer_state_filename = f'optimizer.pt'
         optimizer_state_file_path = os.path.join(self.save_root, optimizer_state_filename)
-        if os.path.exists(optimizer_state_file_path):
+        if os.path.exists(optimizer_state_file_path) and not self._fsdp_active:
             # try to load
             # previous param groups
             # previous_params = copy.deepcopy(optimizer.param_groups)

@@ -690,6 +690,7 @@ class ModelConfig:
 
         # only for flux for now
         self.quantize = kwargs.get("quantize", False)
+        self.fsdp: bool = kwargs.get("fsdp", False)  # FSDP2 fully_shard of the denoiser (launch with torchrun)
         self.quantize_te = kwargs.get("quantize_te", self.quantize)
         self.qtype = kwargs.get("qtype", "qfloat8")
         self.qtype_te = kwargs.get("qtype_te", "qfloat8")
