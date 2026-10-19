@@ -24,13 +24,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
-from fla.modules import FusedRMSNormGated
-from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5VisionModel
 
 from toolkit.util.convrot_w4a8_quant import apply_forward_hooks, module_hooks_only, w4a8_grouped_linear
 
 from .qwen38_kernels import _conv_step_op, _decode_attn_op, add_rmsnorm, decode_attention_fused_ok, rmsnorm, swiglu
+
+try:
+    from fla.modules import FusedRMSNormGated
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
+
+    _FLA_AVAILABLE = True
+except ImportError:  # fla is only needed to build / run the Gated DeltaNet layers
+    FusedRMSNormGated = None
+    chunk_gated_delta_rule = fused_recurrent_gated_delta_rule = None
+    _FLA_AVAILABLE = False
+
+
+def _require_fla():
+    if not _FLA_AVAILABLE:
+        raise ImportError(
+            "qwen38 needs the fla (flash-linear-attention) kernels for its Gated DeltaNet layers. "
+            "Install with: pip install flash-linear-attention  (on Windows, triton comes from "
+            "pip install triton-windows)"
+        )
+
 
 # ------------------------------------------------------------------ norms / rope
 
@@ -156,6 +174,7 @@ class Qwen38Cache:
 
 class GatedDeltaNet(nn.Module):
     def __init__(self, cfg, layer_idx: int):
+        _require_fla()
         super().__init__()
         self.layer_idx = layer_idx
         self.hidden_size = cfg.hidden_size
