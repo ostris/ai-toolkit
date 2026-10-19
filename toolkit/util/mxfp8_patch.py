@@ -419,6 +419,66 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
         mode = "rt" if self._sf_rt is not None else ("d1" if self._w_dim1 is not None else "d0")
         return f"MXFp8StaticFrozenWeight({tuple(self.shape)}, {mode})"
 
+    # ---- FSDP2 all-gather extension (official subclass hook) ----
+    # The sharded local tensor reports its compressed components as the gather
+    # payload (uint8 views: collectives reject fp8 dtypes), so FSDP2 ships fp8
+    # bytes instead of a bf16 dequant. _sf_rt is replicated and rides along in
+    # the (rank-local) metadata - a transposed-layout frame cannot be
+    # dim0-gathered.
+    def fsdp_pre_all_gather(self, mesh, outer_size=None, outer_stride=None,
+                            module=None, mp_policy=None):
+        comps = [self._w_dim0.qdata.view(torch.uint8).reshape(-1),
+                 self._w_dim0.scale.view(torch.uint8).reshape(-1)]
+        if self._w_dim1 is not None:
+            comps += [self._w_dim1.qdata.view(torch.uint8).reshape(-1),
+                      self._w_dim1.scale.view(torch.uint8).reshape(-1)]
+        meta = {
+            "shape": tuple(outer_size) if outer_size is not None else tuple(self.shape),
+            "dtype": self._orig_dtype,
+            "qdata_shape": tuple(self._w_dim0.qdata.shape),
+            "scale_shape": tuple(self._w_dim0.scale.shape),
+            "elem_dtype": self._w_dim0.elem_dtype,
+            "block_size": self._w_dim0.block_size,
+            "kernel_preference": self._w_dim0.kernel_preference,
+            "is_swizzled": self._w_dim0.is_swizzled_scales,
+            "has_dim1": self._w_dim1 is not None,
+            "sf_rt": self._sf_rt,
+            "device": self._w_dim0.qdata.device,
+        }
+        if self._w_dim1 is not None:
+            meta["qdata1_shape"] = tuple(self._w_dim1.qdata.shape)
+            meta["scale1_shape"] = tuple(self._w_dim1.scale.shape)
+        return tuple(comps), meta
+
+    def fsdp_post_all_gather(self, all_gather_outputs, metadata, param_dtype, *, out=None):
+        from torchao.prototype.mx_formats.mx_tensor import MXTensor
+
+        def rebuild(qd_flat, sc_flat, qd_shape, sc_shape):
+            qd = qd_flat.view(metadata["elem_dtype"]).view(qd_shape)
+            sc = sc_flat.view(torch.float8_e8m0fnu).view(sc_shape)
+            return MXTensor(qd, sc, metadata["elem_dtype"], metadata["block_size"],
+                            metadata["dtype"], metadata["kernel_preference"], None,
+                            metadata["is_swizzled"])
+
+        M, K = metadata["shape"]
+        world_qd = (M, K)
+        world_sc = metadata["scale_shape"]
+        # scale frames were sharded along the same row dim: restore full shape
+        if metadata["is_swizzled"]:
+            from torchao.prototype.mx_formats.utils import hp_data_dims_to_swizzled_scale_dims_mx
+            world_sc = tuple(hp_data_dims_to_swizzled_scale_dims_mx(M, K))
+        else:
+            world_sc = (M, K // metadata["block_size"])
+        w0 = rebuild(all_gather_outputs[0], all_gather_outputs[1], world_qd, world_sc)
+        w1 = None
+        if metadata["has_dim1"]:
+            w1 = rebuild(all_gather_outputs[2], all_gather_outputs[3],
+                         metadata["qdata1_shape"], metadata["scale1_shape"])
+        w = MXFp8StaticFrozenWeight(w0, w1, torch.Size(metadata["shape"]),
+                                    metadata["dtype"], metadata["device"],
+                                    sf_rt=metadata["sf_rt"])
+        return w, list(all_gather_outputs)
+
     def dequantize(self):
         return self._w_dim0.dequantize().to(self._orig_dtype)
 
@@ -473,6 +533,14 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
             if step != 1:
                 raise ValueError("MXFp8StaticFrozenWeight slice: only step=1 supported")
             rows = end - start
+            if s.ndim == 1:
+                # flat (view(-1)) form from FSDP2's shard dance: only full-range
+                # narrows are meaningful (scale frame stays whole).
+                if start != 0 or rows != s.numel():
+                    raise ValueError(
+                        f"MXFp8StaticFrozenWeight flat view: only full-range narrow, "
+                        f"got start={start} rows={rows} numel={s.numel()}")
+                return s
             if dim != 0 or start % 128 or rows % 128:
                 raise ValueError(
                     f"MXFp8StaticFrozenWeight sharding needs dim0 128-row granularity, "
@@ -481,6 +549,100 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
             w1 = s._w_dim1[start:end] if s._w_dim1 is not None else None
             return cls(w0, w1, torch.Size((rows, *s.shape[1:])), s._orig_dtype,
                        s._w_dim0.device, sf_rt=s._sf_rt)
+        if func is aten.split.Tensor:
+            # FSDP2 shards via split (composite decomp does not reach subclass
+            # dispatch). Return per-chunk subclass shards; granularity checked
+            # in the slice path.
+            s, split_size = args[0], args[1]
+            dim = args[2] if len(args) > 2 else kwargs.get("dim", 0)
+            if isinstance(split_size, (list, tuple)):
+                bounds, pos = [], 0
+                for sz in split_size:
+                    bounds.append((pos, pos + sz))
+                    pos += sz
+            else:
+                bounds = [(i, min(i + split_size, s.shape[dim]))
+                          for i in range(0, s.shape[dim], split_size)]
+            out = []
+            for st, en in bounds:
+                sl = [slice(None)] * len(s.shape)
+                sl[dim] = slice(st, en)
+                out.append(s[tuple(sl)])
+            return tuple(out)
+        if func is aten.new_zeros.default:
+            # FSDP2 padded shard buffer: must stay a subclass (it becomes the
+            # persistent sharded param storage), with real zeroed fp8 components.
+            # fp8 0.0 = byte 0; e8m0 scale 0 -> dequantizes to exact zeros.
+            s = args[0]
+            size = args[1] if len(args) > 1 else kwargs.get("size", tuple(s.shape))
+            size = torch.Size(size)
+            if len(size) != 2:
+                raise RuntimeError(f"MXFp8StaticFrozenWeight new_zeros: only 2D, got {size}")
+            from torchao.prototype.mx_formats.mx_tensor import MXTensor
+            from torchao.prototype.mx_formats.utils import hp_data_dims_to_swizzled_scale_dims_mx
+            M, K = size
+            m0 = s._w_dim0
+            qd = torch.zeros((M, K), dtype=m0.qdata.dtype, device=m0.qdata.device)
+            if m0.is_swizzled_scales:
+                sc = torch.zeros(hp_data_dims_to_swizzled_scale_dims_mx(M, K),
+                                 dtype=torch.float8_e8m0fnu, device=m0.qdata.device)
+            else:
+                sc = torch.zeros((M, K // 32), dtype=torch.float8_e8m0fnu,
+                                 device=m0.qdata.device)
+            z0 = MXTensor(qd, sc, m0.elem_dtype, m0.block_size, m0.orig_dtype,
+                          m0.kernel_preference, m0.act_quant_kwargs, m0.is_swizzled_scales)
+            z1 = None
+            if s._w_dim1 is not None:
+                m1 = s._w_dim1
+                qd1 = torch.zeros((K, M), dtype=m1.qdata.dtype, device=m1.qdata.device)
+                if m1.is_swizzled_scales:
+                    sc1 = torch.zeros(hp_data_dims_to_swizzled_scale_dims_mx(K, M),
+                                      dtype=torch.float8_e8m0fnu, device=m1.qdata.device)
+                else:
+                    sc1 = torch.zeros((K, M // 32), dtype=torch.float8_e8m0fnu,
+                                      device=m1.qdata.device)
+                z1 = MXTensor(qd1, sc1, m1.elem_dtype, m1.block_size, m1.orig_dtype,
+                              m1.kernel_preference, m1.act_quant_kwargs, m1.is_swizzled_scales)
+            return cls(z0, z1, size, s._orig_dtype, s._w_dim0.qdata.device,
+                       sf_rt=s._sf_rt)
+        if func in (aten.view.default, aten.reshape.default):
+            # FSDP2 flattens the shard buffer (view(-1)) and views the gathered
+            # result back to the logical shape. MXTensor.view reshapes qdata and
+            # keeps the scale frame object, which round-trips correctly for this
+            # 2D -> 1D -> 2D dance; arbitrary reshapes would be numerically wrong.
+            s = args[0]
+            shape = args[1] if len(args) > 1 else args[1:]
+            if isinstance(shape, (int, torch.SymInt)):
+                shape = (shape,)
+            shape = list(shape)
+            if -1 in shape:
+                known = 1
+                for d in shape:
+                    if d != -1:
+                        known *= d
+                shape[shape.index(-1)] = s.numel() // known
+            shape = torch.Size(shape)
+            if shape == s.shape:
+                return s
+            w0 = s._w_dim0.view(shape)
+            w1 = s._w_dim1.view((shape[1], shape[0])) if (s._w_dim1 is not None and len(shape) == 2) else None
+            return cls(w0, w1, shape, s._orig_dtype, s._w_dim0.qdata.device,
+                       sf_rt=s._sf_rt)
+        if func is aten.copy_.default:
+            dst, src = args[0], args[1]
+            if isinstance(dst, cls) and isinstance(src, cls) and tuple(dst.shape) == tuple(src.shape):
+                dst._w_dim0.qdata.copy_(src._w_dim0.qdata)
+                dst._w_dim0.scale.copy_(src._w_dim0.scale)
+                if dst._w_dim1 is not None or src._w_dim1 is not None:
+                    dst._w_dim1.qdata.copy_(src._w_dim1.qdata)
+                    dst._w_dim1.scale.copy_(src._w_dim1.scale)
+                if src._sf_rt is not None:
+                    if dst._sf_rt is not src._sf_rt:
+                        dst._sf_rt = src._sf_rt
+                return dst
+            raise RuntimeError(
+                f"MXFp8StaticFrozenWeight copy_: unsupported src/dst "
+                f"({type(src).__name__} -> {type(dst).__name__})")
         # FSDP2 / collectives (torchao MXTensor pattern, but gathering the raw
         # bytes ourselves: torchao's MXTensor-level dispatch segfaults on gloo).
         # Ships compressed bytes (qdata uint8 + scale frames), never a
@@ -517,6 +679,16 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
         if func in (aten.detach.default, aten.alias.default, aten.clone.default):
             s = args[0]
             return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype, s._w_dim0.device, sf_rt=s._sf_rt)
+        if func is aten.as_strided.default:
+            # FSDP2 init_unsharded_param re-wraps the post-all-gather tensor via
+            # as_strided with the original size/stride - identity for us.
+            s = args[0]
+            size = tuple(args[1])
+            if size == tuple(s.shape):
+                return cls(s._w_dim0, s._w_dim1, s.shape, s._orig_dtype,
+                           s._w_dim0.device, sf_rt=s._sf_rt)
+            raise RuntimeError(
+                f"MXFp8StaticFrozenWeight as_strided: only identity, got {size} vs {tuple(s.shape)}")
         if func is aten._to_copy.default:
             s = args[0]
             tgt = kwargs.get("device")
@@ -530,6 +702,10 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
             return cls(d0, d1, s.shape, s._orig_dtype, d, sf_rt=sf)
         def uw(a):
             return a.dequantize() if isinstance(a, cls) else a
+        import os as _os
+        if _os.environ.get("AITK_MXFP8_DEBUG_DISPATCH"):
+            import sys as _sys
+            print(f"[mxfp8 dispatch fallback] {func} -> dequantize", file=_sys.stderr, flush=True)
         return func(*[uw(a) for a in args], **{k: uw(v) for k, v in kwargs.items()})
 
 def make_mxfp8_static_frozen_weight(weight: torch.Tensor, store_dim1: bool = False,
