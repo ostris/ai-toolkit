@@ -451,6 +451,36 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
         kwargs = kwargs or {}
         aten = torch.ops.aten
         c10d = torch.ops._c10d_functional
+        # FSDP2 initial sharding: chunk/slice along dim0. Slice the qdata+scale
+        # components (MXTensor.slice handles its own scale frame; the 128-row
+        # swizzle atom forces 128-row shard granularity). _sf_rt is the scale
+        # frame of the *transposed* layout - a dim0 row-shard of W does not map
+        # to a dim0 slice of that frame, so it is kept replicated (it is 1/32 of
+        # the weight size) and passed through ungathered in collectives below.
+        if func in (aten.slice.Tensor, aten.narrow.Tensor):
+            s = args[0]
+            if func is aten.slice.Tensor:
+                dim, start, end = args[1], args[2], args[3]
+                step = args[4] if len(args) > 4 else kwargs.get("step", 1)
+            else:
+                dim, start = args[1], args[2]
+                length = args[3]
+                end = start + length
+                step = 1
+            dim = dim if dim >= 0 else dim + len(s.shape)
+            start = max(int(start), 0)
+            end = min(int(end), s.shape[dim])
+            if step != 1:
+                raise ValueError("MXFp8StaticFrozenWeight slice: only step=1 supported")
+            rows = end - start
+            if dim != 0 or start % 128 or rows % 128:
+                raise ValueError(
+                    f"MXFp8StaticFrozenWeight sharding needs dim0 128-row granularity, "
+                    f"got dim={dim} start={start} rows={rows} shape={tuple(s.shape)}")
+            w0 = s._w_dim0[start:end]
+            w1 = s._w_dim1[start:end] if s._w_dim1 is not None else None
+            return cls(w0, w1, torch.Size((rows, *s.shape[1:])), s._orig_dtype,
+                       s._w_dim0.device, sf_rt=s._sf_rt)
         # FSDP2 / collectives (torchao MXTensor pattern, but gathering the raw
         # bytes ourselves: torchao's MXTensor-level dispatch segfaults on gloo).
         # Ships compressed bytes (qdata uint8 + scale frames), never a
@@ -471,10 +501,9 @@ class MXFp8StaticFrozenWeight(torch.Tensor):
             s = args[0]
 
             def run_sf(sf):
-                if sf is None:
-                    return None
-                # e8m0 scale frame: gather as raw bytes (collectives reject fp8 dtypes)
-                return func(sf.view(torch.uint8), *args[1:], **kwargs).view(sf.dtype)
+                # _sf_rt is replicated (never dim0-sharded - the transposed-layout
+                # frame cannot be row-sliced), so collectives pass it through.
+                return sf
 
             g = {"_w_dim0": run_comp(s._w_dim0),
                  "_w_dim1": run_comp(s._w_dim1),
