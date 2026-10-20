@@ -1267,7 +1267,146 @@ class SDTrainer(BaseSDTrainProcess):
         self.accelerator.backward(loss)
         return pure_loss
 
+    # ------------------------------------------------------------------
+    #  OPD (On-Policy Distillation) — DiffSynth-Studio-style step distillation.
+    #
+    #  Per training step:
+    #    1. Sample fresh noise and run the student's full (short) sigma
+    #       schedule under no_grad with the LoRA active, recording the latent
+    #       at every step  ->  trajectory[i].
+    #    2. Pick a random start index idx in
+    #       [opd_min_distill_idx, len(student_sigmas)).
+    #    3. Run ONE grad-enabled student forward at trajectory[idx] /
+    #       student_timesteps[idx]  ->  student velocity v_s.
+    #    4. Disable the LoRA (teacher = base weights) and, under no_grad,
+    #       Euler-walk the teacher's aligned sub-schedule from sigma_start
+    #       down to 0  ->  teacher_final.
+    #    5. Regression target = (trajectory[idx] - teacher_final) / sigma_start
+    #       (the "effective velocity" that would jump straight to the teacher's
+    #       clean image in a single step).
+    #    6. MSE(v_s, target). Backward happens in the caller.
+    #
+    #  FSDP2 notes: every rank runs this same sequence of forward passes on its
+    #  own data shard, so all fully_shard collectives line up. The LoRA params
+    #  stay sharded whether the network is active or not (is_active is a pure
+    #  Python-side compute switch) — toggling it mid-step is collective-safe.
+    # ------------------------------------------------------------------
+    def get_opd_loss(
+            self,
+            conditional_embeds: PromptEmbeds,
+            batch: 'DataLoaderBatchDTO',
+            unconditional_embeds: Optional[PromptEmbeds] = None,
+            **kwargs,
+    ):
+        dtype = get_torch_dtype(self.train_config.dtype)
+        device = self.device_torch
 
+        if self.network is None:
+            raise ValueError("OPD requires a LoRA/network (teacher = base weights via network.is_active=False)")
+        if not self.sd.is_flow_matching:
+            raise ValueError("OPD currently requires a flow-matching model (Euler / sigma schedule)")
+
+        tc = self.train_config
+        student_sigmas = [float(s) for s in tc.opd_student_sigmas]
+        student_timesteps = [float(t) for t in tc.opd_student_timesteps]
+        teacher_sigmas = [float(s) for s in tc.opd_teacher_sigmas]
+        teacher_timesteps = [float(t) for t in tc.opd_teacher_timesteps]
+        student_cfg = float(tc.opd_student_cfg)
+        teacher_cfg = float(tc.opd_teacher_cfg)
+        num_distill_steps = int(tc.opd_num_distill_steps)
+        min_distill_idx = int(tc.opd_min_distill_idx)
+
+        batch_size = batch.latents.shape[0]
+
+        # resolve unconditional embeds for CFG if either side needs it
+        if (teacher_cfg != 1.0 or student_cfg != 1.0) and unconditional_embeds is None:
+            if self.unconditional_embeds is not None:
+                unconditional_embeds = concat_prompt_embeds([self.unconditional_embeds] * batch_size)
+
+        def _predict(latents, timestep_value, cfg_scale):
+            ts = torch.tensor([timestep_value], device=device, dtype=dtype)
+            return self.sd.predict_noise(
+                latents=latents,
+                conditional_embeddings=conditional_embeds,
+                unconditional_embeddings=unconditional_embeds if cfg_scale != 1.0 else None,
+                timestep=ts,
+                guidance_scale=cfg_scale,
+                guidance_embedding_scale=cfg_scale,
+                batch=batch,
+            )
+
+        def _euler(latents, velocity, sigma_curr, sigma_next):
+            return latents + (float(sigma_next) - float(sigma_curr)) * velocity
+
+        def _align_sigmas(idx):
+            """Teacher sub-schedule covering (sigma_end, sigma_start]."""
+            sigma_start = student_sigmas[idx]
+            sigma_end = student_sigmas[idx + 1] if idx + 1 < len(student_sigmas) else 0.0
+            aligned = [(sigma_start, student_timesteps[idx])]
+            for s, t in zip(teacher_sigmas, teacher_timesteps):
+                if sigma_end < s < sigma_start:
+                    aligned.append((s, t))
+                elif s <= sigma_end:
+                    break
+            return aligned, sigma_start
+
+        # 1. Fresh noise as trajectory start (per-rank independent under FSDP2)
+        latents = torch.randn(
+            batch.latents.shape, device=device, dtype=dtype,
+        )
+
+        # 2. Student trajectory (no grad) — collect latents at every step
+        trajectory = [latents]
+        was_active = self.network.is_active
+        self.network.is_active = True
+        with torch.no_grad():
+            for i in range(len(student_timesteps)):
+                noise_pred = _predict(latents, student_timesteps[i], student_cfg)
+                sigma_curr = student_sigmas[i]
+                sigma_next = student_sigmas[i + 1] if i + 1 < len(student_sigmas) else 0.0
+                latents = _euler(latents, noise_pred, sigma_curr, sigma_next)
+                trajectory.append(latents)
+
+        # 3. Sample-distill steps (per-rank idx is fine: data shards are disjoint)
+        pool = list(range(min_distill_idx, len(student_sigmas)))
+        random.shuffle(pool)
+        loss = None
+        for idx in pool[:num_distill_steps]:
+            latents_at_idx = trajectory[idx]
+            aligned, sigma_start = _align_sigmas(idx)
+
+            # 4. Student grad forward (leave grads on; backward happens in caller)
+            self.network.is_active = True
+            student_output = _predict(latents_at_idx, student_timesteps[idx], student_cfg)
+
+            # 5. Teacher multi-step (no grad, LoRA off)
+            self.network.is_active = False
+            with torch.no_grad():
+                teacher_latents = latents_at_idx
+                for j in range(len(aligned)):
+                    s_curr, t_curr = aligned[j]
+                    s_next = aligned[j + 1][0] if j + 1 < len(aligned) else 0.0
+                    t_noise_pred = _predict(teacher_latents, t_curr, teacher_cfg)
+                    teacher_latents = _euler(teacher_latents, t_noise_pred, s_curr, s_next)
+                # effective velocity that jumps straight to the teacher's final latent
+                teacher_output = (latents_at_idx - teacher_latents) / max(sigma_start, 1e-8)
+                teacher_output = teacher_output.detach()
+
+            # 6. MSE
+            step_loss = torch.nn.functional.mse_loss(
+                student_output.float(), teacher_output.float()
+            )
+            loss = step_loss if loss is None else loss + step_loss
+
+        # restore network state for the outer `with network:` exit path
+        self.network.is_active = was_active
+
+        self.additional_logs['loss/opd'] = loss.item()
+        with torch.no_grad():
+            pure_loss = loss.detach()
+            pure_loss.requires_grad_(True)
+        self.accelerator.backward(loss)
+        return pure_loss
 
     def get_prior_prediction(
             self,
@@ -2219,7 +2358,13 @@ class SDTrainer(BaseSDTrainProcess):
                             noise = next_sample_noise
                             timesteps = stepped_timesteps
                 # do a prior pred if we have an unconditional image, we will swap out the giadance later
-                if batch.unconditional_latents is not None or self.do_guided_loss:
+                if self.train_config.opd:
+                    loss = self.get_opd_loss(
+                        conditional_embeds=conditional_embeds,
+                        unconditional_embeds=unconditional_embeds,
+                        batch=batch,
+                    )
+                elif batch.unconditional_latents is not None or self.do_guided_loss:
                     # do guided loss
                     loss = self.get_guided_loss(
                         noisy_latents=noisy_latents,

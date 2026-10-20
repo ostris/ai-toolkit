@@ -609,6 +609,21 @@ class TrainConfig:
         self.do_differential_guidance = kwargs.get('do_differential_guidance', False)
         self.differential_guidance_scale = kwargs.get('differential_guidance_scale', 3.0)
 
+        # OPD (On-Policy Distillation) - DiffSynth-Studio-style step distillation.
+        # Student runs N denoise steps (no grad) to build a trajectory, picks a random
+        # start idx, does 1 grad-enabled step, teacher walks the remaining sigmas
+        # (no grad) to produce a regression target in noise-pred space. LoRA only
+        # for now (teacher = base weights via network.is_active=False).
+        self.opd: bool = kwargs.get('opd', False)
+        self.opd_teacher_sigmas: Optional[List[float]] = kwargs.get('opd_teacher_sigmas', None)
+        self.opd_teacher_timesteps: Optional[List[float]] = kwargs.get('opd_teacher_timesteps', None)
+        self.opd_student_sigmas: Optional[List[float]] = kwargs.get('opd_student_sigmas', None)
+        self.opd_student_timesteps: Optional[List[float]] = kwargs.get('opd_student_timesteps', None)
+        self.opd_teacher_cfg: float = float(kwargs.get('opd_teacher_cfg', 4.0))
+        self.opd_student_cfg: float = float(kwargs.get('opd_student_cfg', 1.0))
+        self.opd_num_distill_steps: int = int(kwargs.get('opd_num_distill_steps', 1))
+        self.opd_min_distill_idx: int = int(kwargs.get('opd_min_distill_idx', 0))
+
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
@@ -1602,3 +1617,17 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
+
+    if train_config.opd:
+        if train_config.opd_teacher_sigmas is None or train_config.opd_teacher_timesteps is None:
+            raise ValueError("opd=True requires opd_teacher_sigmas and opd_teacher_timesteps")
+        if train_config.opd_student_sigmas is None or train_config.opd_student_timesteps is None:
+            raise ValueError("opd=True requires opd_student_sigmas and opd_student_timesteps")
+        if len(train_config.opd_teacher_sigmas) != len(train_config.opd_teacher_timesteps):
+            raise ValueError("opd_teacher_sigmas and opd_teacher_timesteps must have the same length")
+        if len(train_config.opd_student_sigmas) != len(train_config.opd_student_timesteps):
+            raise ValueError("opd_student_sigmas and opd_student_timesteps must have the same length")
+        if train_config.opd_num_distill_steps + train_config.opd_min_distill_idx > len(train_config.opd_student_sigmas):
+            raise ValueError(
+                "opd_num_distill_steps + opd_min_distill_idx must be <= len(opd_student_sigmas)"
+            )
