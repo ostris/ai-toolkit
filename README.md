@@ -136,7 +136,7 @@ python3 -m manager doctor    # diagnose problems
 
 Requirements:
 - python >=3.10 (3.12 recommended)
-- Nvidia GPU with enough ram to do what you need
+- Nvidia or AMD GPU with enough ram to do what you need
 - python venv
 - git
 
@@ -167,6 +167,26 @@ python -m venv venv
 pip install --no-cache-dir torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 pip install -r requirements.txt
 ```
+
+
+AMD GPUs (Windows and Linux):
+
+The manager installs AMD's ROCm PyTorch wheels automatically. To install by hand, use the
+commands above but replace the torch line with the one below. Replace `device-all` with your
+GPU's target to download only its kernels (e.g. `device-gfx1201` for RX 9070 / R9700,
+`device-gfx1200` for RX 9060, `device-gfx1100` for RX 7900, `device-gfx1151` for Strix Halo).
+No separate ROCm or HIP SDK install is needed, only a current AMD GPU driver.
+
+```bash
+pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "torch[device-all]==2.13.0+rocm10.1.0" "torchvision[device-all]==0.28.0+rocm10.1.0" "torchaudio==2.11.0+rocm10.1.0"
+# after requirements.txt: the pinned optimum-quanto predates ROCm support
+pip install --no-deps optimum-quanto==0.2.7
+# Windows only, for GPU stats in the UI
+pip install amd-adlx
+```
+
+On Linux there is also a ROCm Docker image: `docker compose -f docker-compose.rocm.yml up --build`
+(set `ROCM_DEVICES=device-gfx1100` or similar to build it for your GPU only).
 
 
 # AI Toolkit UI

@@ -61,18 +61,92 @@ def detect_nvidia():
     return {"gpus": gpus, "driver": driver, "cuda_version": cuda_version}
 
 
-def detect_rocm():
-    """Returns dict if an AMD ROCm stack is present, else None."""
-    if not IS_LINUX:
-        return None
-    smi = which("rocm-smi")
-    if not smi and not os.path.isdir("/opt/rocm"):
-        return None
+KFD_NODES = "/sys/class/kfd/kfd/topology/nodes"
+
+
+def _gfx_from_target_version(value):
+    # KFD packs the ISA as major*10000 + minor*100 + stepping, and the
+    # stepping is printed in hex: 110501 -> gfx1151, 90010 -> gfx90a
+    return "gfx%d%d%x" % (value // 10000, (value // 100) % 100, value % 100)
+
+
+def _rocm_gpus_linux():
+    """[{name, gfx}] from the amdgpu KFD topology; needs only the kernel driver."""
     gpus = []
+    try:
+        nodes = sorted(os.listdir(KFD_NODES), key=lambda n: int(n) if n.isdigit() else 0)
+    except OSError:
+        return gpus
+    for node in nodes:
+        props = {}
+        try:
+            with open(os.path.join(KFD_NODES, node, "properties")) as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) == 2 and parts[1].isdigit():
+                        props[parts[0]] = int(parts[1])
+        except OSError:
+            continue
+        # CPU nodes have no SIMDs
+        if not props.get("simd_count") or not props.get("gfx_target_version"):
+            continue
+        gfx = _gfx_from_target_version(props["gfx_target_version"])
+        gpus.append({"name": "AMD GPU (%s)" % gfx, "gfx": gfx})
+    smi = which("rocm-smi")
     out = _run_quiet([smi, "--showproductname"]) if smi else None
-    if out:
-        for m in re.finditer(r"Card [Ss]eries:\s*(.+)", out):
-            gpus.append({"name": m.group(1).strip()})
+    names = re.findall(r"Card [Ss]eries:\s*(.+)", out or "")
+    if names and len(names) == len(gpus):
+        for gpu, name in zip(gpus, names):
+            gpu["name"] = name.strip()
+    elif names and not gpus:
+        gpus = [{"name": name.strip()} for name in names]
+    return gpus
+
+
+def _rocm_gpus_windows():
+    """[{name, gfx, memory}] from clinfo, which the AMD display driver installs."""
+    smi = which("clinfo")
+    out = _run_quiet([smi]) if smi else None
+    gpus = []
+    if not out:
+        return gpus
+    # one block per device; each starts at its "Device Type:" line
+    for block in re.split(r"\n\s*Device Type:", out)[1:]:
+        if not block.lstrip().startswith("CL_DEVICE_TYPE_GPU"):
+            continue
+        if "Advanced Micro Devices" not in block:
+            continue
+        gfx = re.search(r"^\s*Name:\s*(gfx[0-9a-f]+)", block, re.M)
+        if not gfx:
+            continue
+        board = re.search(r"^\s*Board name:\s*(.+)$", block, re.M)
+        mem = re.search(r"^\s*Global memory size:\s*(\d+)", block, re.M)
+        gpu = {
+            "name": board.group(1).strip() if board else "AMD GPU",
+            "gfx": gfx.group(1),
+        }
+        if mem:
+            gpu["memory"] = "%d MiB" % (int(mem.group(1)) // (1024 * 1024))
+        gpus.append(gpu)
+    return gpus
+
+
+def detect_rocm():
+    """Returns dict if an AMD GPU usable by ROCm PyTorch is present, else None.
+
+    ROCm PyTorch wheels bundle the runtime, so only the GPU driver is needed:
+    the amdgpu KFD topology on Linux, the Adrenalin driver's clinfo on Windows.
+    """
+    if IS_LINUX:
+        gpus = _rocm_gpus_linux()
+        if not gpus and os.path.isdir("/opt/rocm"):
+            return {"gpus": []}
+    elif IS_WINDOWS:
+        gpus = _rocm_gpus_windows()
+    else:
+        return None
+    if not gpus:
+        return None
     return {"gpus": gpus}
 
 
