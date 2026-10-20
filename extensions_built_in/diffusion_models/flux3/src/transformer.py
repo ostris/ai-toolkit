@@ -585,6 +585,11 @@ class Flux3Transformer(nn.Module, OstrisModelMixin):
             )
         if backend == "cudnn" and not torch.cuda.is_available():
             raise RuntimeError("attention backend 'cudnn' requires CUDA")
+        if backend == "cudnn" and torch.version.hip is not None:
+            # ROCm builds have no cuDNN SDPA backend; native SDPA uses AOTriton
+            # (TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 on experimental targets)
+            print("attention backend 'cudnn' is unavailable on ROCm, using 'native'")
+            backend = "native"
         self.attn_mode = backend
         for module in self.modules():
             if hasattr(module, "attn_mode"):
