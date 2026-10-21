@@ -93,6 +93,7 @@ class TrainVAEProcess(BaseTrainProcess):
         self.epochs = self.get_conf('epochs', None, as_type=int)
         self.max_steps = self.get_conf('max_steps', None, as_type=int)
         self.save_every = self.get_conf('save_every', None)
+        self.max_step_saves_to_keep = self.get_conf('max_step_saves_to_keep', 4, as_type=int)
         self.dtype = self.get_conf('dtype', 'float32')
         self.sample_sources = self.get_conf('sample_sources', None)
         self.log_every = self.get_conf('log_every', 100, as_type=int)
@@ -215,7 +216,11 @@ class TrainVAEProcess(BaseTrainProcess):
             )
 
     def remove_oldest_checkpoint(self):
-        max_to_keep = 4
+        # If max_step_saves_to_keep is -1 or None, keep all checkpoints
+        if self.max_step_saves_to_keep == -1 or self.max_step_saves_to_keep is None:
+            return
+        
+        max_to_keep = self.max_step_saves_to_keep
         folders = glob.glob(os.path.join(self.save_root, f"{self.job.name}*_diffusers"))
         if len(folders) > max_to_keep:
             folders.sort(key=os.path.getmtime)

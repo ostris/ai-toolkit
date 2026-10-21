@@ -90,7 +90,8 @@ config:
         prompts:
           # you can add [trigger] to the prompts here and it will be replaced with the trigger word
 #          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
-          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "dog playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "a dog playing with a ball"
         neg: ""  
         seed: 42
         walk_seed: true
