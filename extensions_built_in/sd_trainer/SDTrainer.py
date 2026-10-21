@@ -919,10 +919,7 @@ class SDTrainer(BaseSDTrainProcess):
                         tv = torch.clamp(tv, min=0.001)
                 
                 # step latent, use here or with do_fft_loss
-                if self.sd.x0_pred:
-                    t0 = noise_pred
-                else:
-                    t0 = noisy_latents - tv * noise_pred
+                t0 = self.sd.get_x0_prediction(noise_pred, noisy_latents, tv)
                 
                 if self.train_config.t0_loss_target:
                     # replace the loss targets and pred

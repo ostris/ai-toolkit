@@ -1783,3 +1783,11 @@ class BaseModel:
     def scale_loss(self, loss):
         # called to get the loss scaler for the model. Can be overridden in child classes
         return loss
+    
+    def get_x0_prediction(self, model_output: torch.Tensor, model_input: torch.Tensor, sigma: torch.Tensor):
+        # can be overridden in child classes to get the x0 prediction from model output
+        # step latent, use here or with do_fft_loss
+        if self.x0_pred:
+            return model_output
+        else:
+            return model_input - sigma * model_output
