@@ -536,6 +536,49 @@ def shift_sigma(sigma, shift: float):
     return shift * sigma / (1.0 + (shift - 1.0) * sigma)
 
 
+def pdd_span(sigma_v: float, n: int, video_shift: float, sigma_v_next=None):
+    """Head interval [start, stop) on the unshifted n-interval grid. A sampling
+    step spans sigma -> sigma_next (ComfyUI's rounding); a single training
+    sigma uses the one interval containing it."""
+    base_t = 1.0 - float(shift_sigma(sigma_v, 1.0 / video_shift))
+    if sigma_v_next is None:
+        start = min(max(int(math.floor(base_t * n)), 0), n - 1)
+        return start, start + 1
+    base_t_next = 1.0 - float(shift_sigma(sigma_v_next, 1.0 / video_shift))
+    start = min(round(base_t * n), n - 1)
+    stop = max(round(base_t_next * n), start + 1)
+    return start, stop
+
+
+def pdd_head_weights(start: int, stop: int, n: int, flow_shift: float):
+    """(n,) weights over the stacked heads: head 0 (the full head) at 1, the
+    offset heads in [max(start, 1), stop) at their normalized dt share."""
+    grid = torch.linspace(1.0, 0.0, n + 1, dtype=torch.float64)
+    dt = (1.0 - shift_sigma(grid, flow_shift)).diff()[start:stop]
+    w = torch.zeros(n, dtype=torch.float64)
+    w[0] = 1.0
+    first = max(start, 1)
+    w[first:stop] = (dt / dt.sum())[first - start :]
+    return w
+
+
+def build_pdd_weights(
+    sigma_v,  # (B,) video sigmas
+    n: int,
+    video_shift: float,
+    audio_shift: float = AUDIO_SIGMA_SHIFT,
+    sigma_v_next=None,  # (B,) or None for single-sigma training
+):
+    """Per-sample (video, audio) head weights, each (B, n) float32."""
+    wv, wa = [], []
+    for i in range(len(sigma_v)):
+        nxt = None if sigma_v_next is None else float(sigma_v_next[i])
+        start, stop = pdd_span(float(sigma_v[i]), n, video_shift, nxt)
+        wv.append(pdd_head_weights(start, stop, n, video_shift))
+        wa.append(pdd_head_weights(start, stop, n, audio_shift))
+    return torch.stack(wv).float(), torch.stack(wa).float()
+
+
 def remap_sigma(
     sigma, from_shift: float = VIDEO_SIGMA_SHIFT, to_shift: float = AUDIO_SIGMA_SHIFT
 ):

@@ -1473,6 +1473,218 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     ),
   },
   {
+    name: "minimax_h3_omni",
+    label: "FastH3 Omni",
+    group: "video",
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      "config.process[0].model.name_or_path": [
+        "FastVideo/FastH3-Omni-Comfy",
+        defaultNameOrPath,
+      ],
+      // pre-quantized weights: matching qtypes keep the load unchanged
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.qtype_te": ["nvfp4", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.cache_text_embeddings": [true, false],
+      "config.process[0].model.assistant_lora_path": [
+        "ostris/minimax_h3_training_adapter/fastvideo_fasth3_omni_training_adapter_v1.safetensors",
+        undefined,
+      ],
+      "config.process[0].network.linear": [16, defaultLinearRank],
+      "config.process[0].network.linear_alpha": [16, defaultLinearRank],
+      "config.process[0].network.network_kwargs.ignore_if_contains": [
+        ["adaln_proj"],
+        [],
+      ],
+      "config.process[0].sample.num_frames": [107, 1],
+      "config.process[0].sample.fps": [24, 1],
+      "config.process[0].sample.width": [768, 1024],
+      "config.process[0].sample.height": [768, 1024],
+      "config.process[0].sample.guidance_scale": [1, 4],
+      "config.process[0].sample.sample_steps": [8, 25],
+      "config.process[0].train.audio_loss_multiplier": [1.0, undefined],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      "config.process[0].datasets[x].do_audio": [true, undefined],
+      "config.process[0].datasets[x].cache_latents_to_disk": [true, false],
+      "config.process[0].datasets[x].fps": [24, undefined],
+      "config.process[0].datasets[x].num_frames": [39, undefined],
+      "config.process[0].datasets[x].auto_frame_count": [true, undefined],
+    },
+    disableSections: ["network.conv"],
+    additionalSections: [
+      "sample.multi_ctrl_imgs",
+      "datasets.multi_control_paths",
+      "datasets.num_frames",
+      "model.layer_offloading",
+      "model.low_vram",
+      "datasets.do_audio",
+      "datasets.audio_normalize",
+      "datasets.audio_preserve_pitch",
+      "train.audio_loss_multiplier",
+      "datasets.auto_frame_count",
+      "model.assistant_lora_path",
+    ],
+    customModelSelectOptions: [
+      {
+        label: "Distillation Handling Method",
+        options: [
+          { value: "ta", label: "Training Adapter (default)" },
+          { value: "dopsd", label: "D-OPSD" },
+          { value: "none", label: "None" },
+        ],
+        getValue: (config: JobConfig) => {
+          if (config?.config?.process?.[0]?.model?.model_kwargs?.dopsd) {
+            return "dopsd";
+          }
+          const assistantLoraPath =
+            config?.config?.process?.[0]?.model?.assistant_lora_path;
+          return assistantLoraPath && assistantLoraPath.trim() !== ""
+            ? "ta"
+            : "none";
+        },
+        onChange: (
+          value: string,
+          config: JobConfig,
+          setJobConfig: (value: any, key: string) => void,
+        ) => {
+          const kwargs = {
+            ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}),
+          };
+          if (value === "dopsd") {
+            kwargs.dopsd = true;
+            kwargs.dopsd_bleed_strength = 1.0;
+          } else {
+            delete kwargs.dopsd;
+            delete kwargs.dopsd_bleed_strength;
+          }
+          setJobConfig(kwargs, "config.process[0].model.model_kwargs");
+          setJobConfig(
+            value === "ta"
+              ? "ostris/minimax_h3_training_adapter/fastvideo_fasth3_omni_training_adapter_v1.safetensors"
+              : undefined,
+            "config.process[0].model.assistant_lora_path",
+          );
+        },
+        doc: {
+          title: "FastH3 Omni Distillation Handling",
+          description: (
+            <div>
+              FastH3 Omni is a step-distilled model, so training on it directly
+              will make the distillation break down. The Training Adapter (the
+              MiniMax-H3 Ref2V adapter) absorbs that drift during training and
+              is removed at inference, but can still break down over a long
+              run. D-OPSD instead self-distills: a no-grad teacher pass sees the
+              training target as its own reference and its prediction becomes
+              the training target for a reference-free pass, baking the
+              reference into your trigger word (or the caption itself when no
+              trigger word is set). Re-caches latents with pixel tensors.
+            </div>
+          ),
+        },
+      },
+      {
+        label: "Image Reference Presentation",
+        options: [
+          { value: "picture", label: "Picture (default)" },
+          { value: "video", label: "Static video clip" },
+        ],
+        getValue: (config: JobConfig) => {
+          return config?.config?.process?.[0]?.model?.model_kwargs
+            ?.image_refs_as_video
+            ? "video"
+            : "picture";
+        },
+        onChange: (
+          value: string,
+          config: JobConfig,
+          setJobConfig: (value: any, key: string) => void,
+        ) => {
+          const kwargs = {
+            ...(config?.config?.process?.[0]?.model?.model_kwargs ?? {}),
+          };
+          if (value === "video") {
+            kwargs.image_refs_as_video = true;
+          } else {
+            delete kwargs.image_refs_as_video;
+            delete kwargs.image_ref_video_frames;
+          }
+          setJobConfig(kwargs, "config.process[0].model.model_kwargs");
+        },
+        doc: {
+          title: "MiniMax-H3 Image Reference Presentation",
+          description: (
+            <div className="space-y-2">
+              <p>
+                How still-image references (dataset control images and sample
+                ctrl images) are shown to the model. Video references always use
+                the video path.
+              </p>
+              <p>
+                <strong>Picture</strong>: the native ref2va recipe — a
+                single-frame reference block, shown to Qwen3-VL as a{" "}
+                <code>&lt;Picture i&gt;</code> block, scaled down only.
+              </p>
+              <p>
+                <strong>Static video clip</strong>: the image is held for 5
+                frames (2 latent frames) and routed through the exact path a
+                reference VIDEO takes — video sizing (matched to the target's
+                pixel area), multi-frame reference block,{" "}
+                <code>&lt;Video k&gt;</code> timestamped presentation. Use this
+                when training on image references but sampling with video
+                references, so the LoRA learns the pathway it will be used
+                through. Adds a handful of rows per reference. Frame count is
+                adjustable with <code>model_kwargs.image_ref_video_frames</code>{" "}
+                (17n+5). Changing this re-caches text embeddings.
+              </p>
+            </div>
+          ),
+        },
+      },
+    ],
+    modelNotes: (
+      <div className="space-y-2">
+        <p>
+          FastVideo&apos;s FastH3 Omni: MiniMax-H3 Ref2V distilled to 8 steps.
+          References work exactly like MiniMax-H3 Ref2V: control images and
+          videos condition the output as subject/style references (never as a
+          first frame), from the dataset control path(s) in training and the
+          sample ctrl images in sampling.
+        </p>
+        <p>
+          Weights load from the{" "}
+          <Link href="/settings" className="text-blue-400 hover:underline">
+            Models Folder Path
+          </Link>{" "}
+          set in settings. Anything missing is downloaded there from{" "}
+          <code>FastVideo/FastH3-Omni-Comfy</code> on first load. The text
+          encoder and VAEs are the same files MiniMax-H3 uses, so an existing
+          MiniMax-H3 setup only needs the new DiT. Files used:
+        </p>
+        <pre className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs overflow-x-auto">
+          <code>{`<MODELS_PATH>/
+├── diffusion_models/
+│   └── fasth3_omniref_8step_pruned_int8_convrot.safetensors
+├── text_encoders/
+│   └── qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+└── vae/
+    ├── minimax_h3_video_vae_fp16.safetensors
+    └── minimax_h3_audio_vae_fp32.safetensors`}</code>
+        </pre>
+        <p>
+          Sample with 8 steps and guidance scale 1 (the trained schedule).
+          Attention runs dense, like native ComfyUI. Video is fixed 24 fps and
+          frame counts snap down to the 17n+5 grid.
+        </p>
+      </div>
+    ),
+  },
+  {
     name: "minimax_h3_vsa",
     label: "FastH3 8-Step V2",
     group: "video",
