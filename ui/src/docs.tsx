@@ -288,6 +288,30 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.pool_datasets': {
+    title: 'Pool Datasets',
+    description: (
+      <>
+        Off by default. Only useful when you have numerous datasets.
+        <br />
+        <br />
+        Normally every dataset is loaded as its own unit with its own buckets, so each batch is built from a single
+        dataset and each dataset keeps its own loader threads. With many datasets this means batches never mix images
+        from different folders and the number of loader threads grows with the dataset count.
+        <br />
+        <br />
+        Pooling merges all of your datasets into one shared set of buckets. Images from different folders that land in
+        the same bucket are mixed together in the same batch, and only one set of loader threads is used for the whole
+        pool. Regularization datasets are pooled separately from your training datasets, never together.
+        <br />
+        <br />
+        Each dataset keeps its own settings (captions, control images, repeats, flips, scale, resolution). Datasets whose
+        settings would not collate into one batch (for example a different number of control images, video vs image,
+        or different caching) are automatically kept in separate buckets within the pool. All pooled datasets must use
+        the same batch size.
+      </>
+    ),
+  },
   'train.do_differential_guidance': {
     title: 'Differential Guidance',
     description: (
@@ -340,24 +364,30 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'model.model_kwargs.instruction': {
+    title: 'LLM Prompt',
+    description: (
+      <>
+        The instruction the model is asked for every training item, as the user turn of the chat. The item's caption
+        file is the answer it learns to give. Use the same wording when running the trained LoRA, and it is also what
+        samples use when their own prompt is left blank.
+      </>
+    ),
+  },
   'model.model_kwargs.kv_cache': {
     title: 'KV Cache',
     description: (
       <>
-        This will enable KV Cache for control images in a model that supports it. LoRAs trained with this on
-        need to also be inferenced with it, and vice versa. This does not speed up or slow down training, but on inference,
-        the control images only need to be processed once for the entire generation, vs being processed for every step.
+        This will enable KV Cache for control images in a model that supports it. LoRAs trained with this on need to
+        also be inferenced with it, and vice versa. This does not speed up or slow down training, but on inference, the
+        control images only need to be processed once for the entire generation, vs being processed for every step.
         Which leads to a significant speedup on inference.
       </>
     ),
   },
   'train.guidance_loss_target': {
     title: 'Guidance Loss Target',
-    description: (
-      <>
-        For contrastive guidance loss, this is the target CGF to amplify predictions to. 
-      </>
-    ),
+    description: <>For contrastive guidance loss, this is the target CGF to amplify predictions to.</>,
   },
   'datasets.caption_dropout_rate': {
     title: 'Caption Dropout Rate',
@@ -365,15 +395,34 @@ const docs: { [key: string]: ConfigDoc } = {
       <>
         Caption dropout rate is the probability that the caption for an image will be dropped (replaced with a blank
         caption) for any given training step. For example, a value of 0.05 will drop the caption around 5% of the time.
-        Dropping captions helps the model learn the concept being trained without relying entirely on the caption,
-        and helps preserve the model&apos;s ability to generate without a prompt. If a trigger word is set, the trigger
-        word is still used when the caption is dropped, so the model still associates the dropped samples with your
-        trigger word. Regularization images, or images without a trigger word, drop to a fully blank caption.
+        Dropping captions helps the model learn the concept being trained without relying entirely on the caption, and
+        helps preserve the model&apos;s ability to generate without a prompt. If a trigger word is set, the trigger word
+        is still used when the caption is dropped, so the model still associates the dropped samples with your trigger
+        word. Regularization images, or images without a trigger word, drop to a fully blank caption.
         <br />
         <br />
-        Caption dropout also works when caching text embeddings. An additional embedding for the dropout caption
-        (blank, or the trigger word alone) is cached to disk alongside the normal one, and it is randomly swapped in
-        at train time at this rate.
+        Caption dropout also works when caching text embeddings. An additional embedding for the dropout caption (blank,
+        or the trigger word alone) is cached to disk alongside the normal one, and it is randomly swapped in at train
+        time at this rate.
+      </>
+    ),
+  },
+  'config.process[0].caption.caption_prompt': {
+    title: 'Caption Prompt',
+    description: (
+      <>
+        The instruction sent to the captioning model for every file. It can contain special tokens that are replaced
+        per file before the prompt is sent:
+        <br />
+        <br />
+        <code>&lt;caption.ext&gt;</code> — inserts the text of the file next to the media file that has the same name
+        and the given extension. For <code>/data/subfolder/img01.webp</code>, <code>&lt;caption.json&gt;</code> inserts
+        the contents of <code>/data/subfolder/img01.json</code> and <code>&lt;caption.txt&gt;</code> inserts{' '}
+        <code>img01.txt</code>. The file is inserted as plain text exactly as it is on disk (json included). If the file
+        does not exist, the token is replaced with nothing.
+        <br />
+        <br />
+        Example: <code>Rewrite this caption as a single sentence: &lt;caption.txt&gt;</code>
       </>
     ),
   },

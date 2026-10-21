@@ -108,7 +108,4 @@ def detect():
 
     if IS_MAC:
         result["backend"] = "mps" if arch == "arm64" else "cpu"
-
-    # DGX OS / Grace (GB10, DGX Spark): NVIDIA GPU on aarch64 Linux
-    result["is_dgx"] = bool(result["os"] == "linux" and arch == "aarch64" and nvidia)
     return result

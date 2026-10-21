@@ -176,8 +176,15 @@ class QwenImageEditPlusModel(QwenImageModel):
             
         if control_images is None:
             raise ValueError("Missing control images for QwenImageEditPlusModel")
-        
-        if not isinstance(control_images, list):
+
+        if isinstance(control_images, torch.Tensor):
+            # training with one control image per item hands us the batch-stacked
+            # tensor (bs, ch, h, w); one set per prompt, not one set of bs images
+            if control_images.dim() == 4 and control_images.shape[0] == len(prompt):
+                control_images = [[img] for img in control_images]
+            else:
+                control_images = [control_images]
+        elif not isinstance(control_images, list):
             control_images = [control_images]
         
         # expects a list of list of control images List[List[Tensor]] where each item corresponds to a batch item, 
@@ -193,7 +200,7 @@ class QwenImageEditPlusModel(QwenImageModel):
         prompt_embeds_mask_list = []
         
         for b in range(len(prompt)):
-            batch_control_images = control_images[b]
+            batch_control_images = list(control_images[b])  # copy so we don't mutate the caller's list
 
             for i in range(len(batch_control_images)):
                 if len(batch_control_images[i].shape) == 3:
@@ -211,7 +218,7 @@ class QwenImageEditPlusModel(QwenImageModel):
                 )
 
             prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
-                prompt,
+                [prompt[b]],
                 image=batch_control_images,
                 device=self.device_torch,
                 num_images_per_prompt=1,
@@ -223,6 +230,20 @@ class QwenImageEditPlusModel(QwenImageModel):
                 )
             prompt_embeds_list.append(prompt_embeds)
             prompt_embeds_mask_list.append(prompt_embeds_mask)
+
+        # each sample is encoded separately, so sequence lengths differ.
+        # pad on the right before concatenating, same as diffusers does internally.
+        max_seq_len = max(e.shape[1] for e in prompt_embeds_list)
+        for i, (e, m) in enumerate(zip(prompt_embeds_list, prompt_embeds_mask_list)):
+            pad_len = max_seq_len - e.shape[1]
+            if pad_len > 0:
+                prompt_embeds_list[i] = torch.cat(
+                    [e, e.new_zeros(e.shape[0], pad_len, e.shape[2])], dim=1
+                )
+                prompt_embeds_mask_list[i] = torch.cat(
+                    [m, m.new_zeros(m.shape[0], pad_len)], dim=1
+                )
+
         pe = PromptEmbeds(torch.cat(prompt_embeds_list, dim=0))
         pe.attention_mask = torch.cat(prompt_embeds_mask_list, dim=0)
         return pe

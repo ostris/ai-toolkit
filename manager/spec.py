@@ -306,16 +306,6 @@ def _cuda_spec(detection):
     arch = detection["arch"]
     flavor, notes = _cuda_flavor(detection)
     python_version = "3.12"
-    requirements = (
-        "dgx_requirements.txt" if detection.get("is_dgx") else "requirements.txt"
-    )
-    if detection.get("is_dgx"):
-        # the old "Python 3.11 on DGX OS" constraint was for conda/system
-        # installs; uv provisions 3.12 and all aarch64 cp312 wheels exist now
-        notes = notes + [
-            "DGX OS / Grace detected: using %s wheels and dgx_requirements.txt."
-            % flavor
-        ]
 
     extras = [TORCHCODEC]
     optional = [FLA]
@@ -340,7 +330,6 @@ def _cuda_spec(detection):
         TORCH,
         torch_index=PYTORCH_INDEX + flavor,
         python_version=python_version,
-        requirements_file=requirements,
         extra_packages=extras,
         optional_packages=optional,
         find_links=find_links,

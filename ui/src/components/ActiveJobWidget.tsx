@@ -26,6 +26,10 @@ export default function ActiveJobWidget() {
 
             let label = job.name;
             let href = `/jobs/${job.id}`;
+            if (job.job_type === 'inference') {
+              label = 'Inference Engine';
+              href = `/generate?job=${job.id}`;
+            }
             if (job.job_type === 'caption') {
               const splits = (job.job_ref ?? '').split(/[/\\]/);
               label = splits[splits.length - 1] || job.name;

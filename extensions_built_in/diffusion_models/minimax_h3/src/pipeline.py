@@ -225,14 +225,15 @@ class MiniMaxH3Pipeline:
         audio_rows = pack_audio_latents(audio_noise)  # (1, 2*A, 32)
 
         # --- schedules -----------------------------------------------------
+        video_shift = getattr(model, "video_sigma_shift", VIDEO_SIGMA_SHIFT)
         sigmas_v = build_sigma_schedule(
             num_inference_steps,
-            VIDEO_SIGMA_SHIFT,
+            video_shift,
             t1000_ladder=getattr(model, "t1000_sample_ladder", False),
         ).to(device)
         # the audio schedule follows the video grid through the closed-form
         # shift remap so both streams sit at the same underlying position
-        sigmas_a = remap_sigma(sigmas_v, VIDEO_SIGMA_SHIFT, AUDIO_SIGMA_SHIFT)
+        sigmas_a = remap_sigma(sigmas_v, video_shift, AUDIO_SIGMA_SHIFT)
 
         # --- denoise loop --------------------------------------------------
         num_steps = sigmas_v.shape[0] - 1
@@ -281,6 +282,11 @@ class MiniMaxH3Pipeline:
                 v_audio = vu_audio + g * (v_audio - vu_audio)
 
             denoised_v = video_rows + sv * v_video
+            # inference engine preview: the video x0 estimate as (1, C, T, H, W);
+            # the audio stream is not previewed
+            emit = getattr(model, "_emit_sample_step", None)
+            if emit is not None and getattr(model, "sample_step_hook", None) is not None:
+                emit(unpatchify_video_tokens(denoised_v, t_lat, h_lat, w_lat), i, num_steps)
             ratio_v = sv_next / sv
             video_rows = ratio_v * video_rows + (1.0 - ratio_v) * denoised_v
 

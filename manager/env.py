@@ -81,6 +81,34 @@ def _venv_platform():
         return None
 
 
+def _venv_has_headers():
+    """True if the venv's base interpreter ships Python.h.
+
+    triton JIT-compiles a small C launcher (cuda_utils.c) on first GPU use and
+    needs the headers; a venv built on a distro Python without the -dev
+    package fails there with "Python.h: No such file or directory".
+    """
+    if not venv_exists():
+        return False
+    try:
+        out = subprocess.run(
+            [
+                venv_python(),
+                "-c",
+                "import os, sysconfig; print(os.path.isfile(os.path.join("
+                "sysconfig.get_paths()['include'], 'Python.h')))",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            env=clean_env(),
+        )
+        # unknown -> assume fine rather than recreate on a flaky probe
+        return out.returncode != 0 or out.stdout.decode().strip() == "True"
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
 def _uv_python_platform(uv_python):
     """'win-arm64' / 'win-amd64' expected for a pinned uv interpreter request."""
     if not uv_python:
@@ -114,6 +142,21 @@ def ensure_venv(spec, dry_run=False):
             import shutil
 
             shutil.rmtree(venv_dir(), ignore_errors=True)
+        elif find_uv() and not _venv_has_headers():
+            if dry_run:
+                info(
+                    "[dry-run] venv Python has no C headers — would recreate "
+                    "it on a uv-managed Python."
+                )
+                return venv_python()
+            warn(
+                "Existing venv is built on a Python without C headers "
+                "(Python.h), which triton needs — recreating it on a "
+                "uv-managed Python (all packages will be reinstalled)."
+            )
+            import shutil
+
+            shutil.rmtree(venv_dir(), ignore_errors=True)
         else:
             return venv_python()
     if venv_exists():
@@ -134,7 +177,17 @@ def ensure_venv(spec, dry_run=False):
     if uv:
         info("Creating venv with uv (python %s) at %s" % (python_request, target))
         run(
-            [uv, "venv", target, "--python", python_request, "--seed"],
+            # --managed-python: never build on a distro Python, which may
+            # lack the C headers triton needs (see _venv_has_headers)
+            [
+                uv,
+                "venv",
+                target,
+                "--python",
+                python_request,
+                "--managed-python",
+                "--seed",
+            ],
             env=clean_env(),
         )
     else:
@@ -382,7 +435,6 @@ def requirements_hash(spec):
         for f in os.listdir(REPO_ROOT)
         if f.startswith("requirements") and f.endswith(".txt")
     ]
-    req_files.append(os.path.join(REPO_ROOT, "dgx_requirements.txt"))
     base = file_hash(req_files)
     import hashlib
 

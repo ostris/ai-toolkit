@@ -51,7 +51,7 @@ import torch.nn.functional as F
 from toolkit.print import print_acc
 from toolkit.util.ostris_quant import OstrisQuantizer
 
-CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet", "convrotcomfyw4a4") + tuple(
+CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet", "convrotcomfyw4a4", "convrotw4a8") + tuple(
     f"convrotint{b}" for b in range(2, 9)
 )
 
@@ -65,6 +65,11 @@ def get_convrot_quantizer(qtype: str):
         return ConvRotBitNetQuantizer(rot_size=256)
     if qtype == "convrotcomfyw4a4":
         return ConvRotComfyW4A4Quantizer()
+    if qtype == "convrotw4a8":
+        # comfy_kitchen asym_w4a8_int8 storage (toolkit/util/convrot_w4a8_quant.py)
+        from toolkit.util.convrot_w4a8_quant import ConvRotW4A8Quantizer
+
+        return ConvRotW4A8Quantizer(rot_size=256)
     if qtype.startswith("convrotint"):
         bits = int(qtype[len("convrotint") :])
         if 2 <= bits <= 8:
@@ -293,13 +298,16 @@ def _import_triton():
     variables through ``fn.__globals__`` only (no closure capture), so ``tl``
     referenced inside a kernel defined in a builder function must exist at
     module scope or those versions die with ``NameError: 'tl' is not defined``
-    at first compile."""
+    at first compile. ``libdevice`` is published the same way for the kernels
+    that call ``libdevice.rint``."""
     import triton as _triton
     import triton.language as _tl
+    from triton.language.extra import libdevice as _libdevice
 
     globals()["triton"] = _triton
     globals()["tl"] = _tl
-    return _triton, _tl
+    globals()["libdevice"] = _libdevice
+    return _triton, _tl, _libdevice
 
 
 _kernel = None
@@ -309,7 +317,7 @@ def _get_kernel():
     global _kernel
     if _kernel is not None:
         return _kernel
-    triton, tl = _import_triton()
+    triton, tl, _ = _import_triton()
 
     @triton.jit
     def nvfp4_act_quant_kernel(
@@ -481,7 +489,7 @@ def _get_dequant_kernel():
     global _dequant_kernel
     if _dequant_kernel is not None:
         return _dequant_kernel
-    triton, tl = _import_triton()
+    triton, tl, _ = _import_triton()
 
     @triton.jit
     def nvfp4_dequant_kernel(
@@ -848,8 +856,7 @@ def _get_int8_kernels():
     global _int8_kernels
     if _int8_kernels is not None:
         return _int8_kernels
-    triton, tl = _import_triton()
-    from triton.language.extra import libdevice
+    triton, tl, libdevice = _import_triton()
 
     @triton.jit
     def int8_act_quant_kernel(
@@ -1419,13 +1426,20 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         module.cr8_scales = scales.view(torch.uint8)
 
     @torch.no_grad()
-    def requantize_codes_(self, module, fp_weight: torch.Tensor) -> None:
+    def requantize_codes_(self, module, fp_weight: torch.Tensor, stochastic: bool = False) -> None:
         """Re-quantize only the codes on the module's STORED scales — the grid a
-        QAT run trains against (see ConvRotQuantizer.requantize_codes_)."""
+        QAT run trains against (see ConvRotQuantizer.requantize_codes_).
+        stochastic: floor(z + u) instead of round(z) — unbiased, so a small
+        delta (a merged LoRA) survives instead of rounding away."""
         w = fp_weight.to(device=module.cr8_qdata.device, dtype=torch.float32)
         w_rot = rotate(w, self._rot(module))
         s = self._scales(module).unsqueeze(1)
-        module.cr8_qdata = torch.round(w_rot / s).clamp_(-127, 127).to(torch.int8)
+        z = w_rot / s
+        if stochastic:
+            z = torch.floor(z + torch.rand_like(z))
+        else:
+            z = torch.round(z)
+        module.cr8_qdata = z.clamp_(-127, 127).to(torch.int8)
 
     def _gemv_args(self, module):
         """(qdata, gratio fp32 or None, bits) for the fused decode gemv, or None
@@ -1679,7 +1693,7 @@ def _get_intn_kernel():
     global _intn_kernel
     if _intn_kernel is not None:
         return _intn_kernel
-    triton, tl = _import_triton()
+    triton, tl, _ = _import_triton()
 
     @triton.jit
     def intn_unpack_kernel(
@@ -1722,8 +1736,7 @@ def _get_intn_grouped_kernel():
     global _intn_grouped_kernel
     if _intn_grouped_kernel is not None:
         return _intn_grouped_kernel
-    triton, tl = _import_triton()
-    from triton.language.extra import libdevice
+    triton, tl, libdevice = _import_triton()
 
     @triton.jit
     def intn_unpack_grouped_kernel(
@@ -1774,8 +1787,7 @@ def _get_bitnet_kernel():
     global _bitnet_kernel
     if _bitnet_kernel is not None:
         return _bitnet_kernel
-    triton, tl = _import_triton()
-    from triton.language.extra import libdevice
+    triton, tl, libdevice = _import_triton()
 
     @triton.jit
     def bitnet_unpack_kernel(
@@ -1905,8 +1917,7 @@ def _get_int_gemv_kernel():
     global _int_gemv_kernel
     if _int_gemv_kernel is not None:
         return _int_gemv_kernel
-    triton, tl = _import_triton()
-    from triton.language.extra import libdevice
+    triton, tl, libdevice = _import_triton()
 
     @triton.jit
     def _unpack_lane(

@@ -48,6 +48,10 @@ if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
 # attention and are what these models trained on before torch 2.13.
 torch.backends.cuda.enable_cudnn_sdp(False)
 
+# on unified memory devices (DGX Spark), offloading modules to cpu is useless and very slow
+from toolkit.util.unified_memory import apply_unified_memory_patches
+apply_unified_memory_patches()
+
 if seed is not None:
     import random
     import numpy as np

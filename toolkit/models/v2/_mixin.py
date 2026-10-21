@@ -42,6 +42,30 @@ class BasicModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMix
     pass
 
 
+def _markers_from_header(
+    file_path: str, state_dict: Dict[str, torch.Tensor]
+) -> Dict[str, torch.Tensor]:
+    """ComfyUI's header-style quantized layout keeps the per-layer configs in
+    the safetensors metadata (``_quantization_metadata``) instead of
+    ``<layer>.comfy_quant`` marker tensors; synthesize the markers so the
+    importer sees one layout."""
+    import json
+
+    from safetensors import safe_open
+
+    with safe_open(file_path, "pt") as f:
+        raw = (f.metadata() or {}).get("_quantization_metadata")
+    if raw is None:
+        return state_dict
+    for name, conf in json.loads(raw).get("layers", {}).items():
+        marker = f"{name}.comfy_quant"
+        if marker not in state_dict and f"{name}.weight" in state_dict:
+            state_dict[marker] = torch.tensor(
+                list(json.dumps(conf).encode("utf-8")), dtype=torch.uint8
+            )
+    return state_dict
+
+
 def adopt_component(module: torch.nn.Module, wrapper_cls: type) -> torch.nn.Module:
     """Rebind an already-loaded component instance onto its v2 wrapper class
     (in-place class swap, like the OstrisLinear conversion). Used when a
@@ -148,20 +172,36 @@ class OstrisModelMixin:
         return cls._local_first(cls.load_config, path, subfolder=subfolder)
 
     @staticmethod
-    def _local_first(loader, *args, **kwargs):
+    def _local_first(loader, *args, validate=None, **kwargs):
         """Serve fully-cached repos without touching the hub. Online
         from_pretrained does an etag HEAD round-trip per file (seconds of pure
         network latency on every warm load); a local_files_only attempt is
         instant when the cache can't satisfy it, so failing over to the
-        online path costs nothing."""
+        online path costs nothing. ``validate`` rejects a cache-only result
+        that loaded without raising but incomplete (falls over to online)."""
         import os as _os
 
         if _os.environ.get("HF_HUB_OFFLINE") == "1":
             return loader(*args, **kwargs)
         try:
-            return loader(*args, local_files_only=True, **kwargs)
+            result = loader(*args, local_files_only=True, **kwargs)
         except Exception:
             return loader(*args, **kwargs)
+        if validate is not None and not validate(result):
+            try:
+                return loader(*args, **kwargs)
+            except Exception:
+                return result  # no hub: keep what the cache had
+        return result
+
+    @staticmethod
+    def _tokenizer_complete(result) -> bool:
+        # transformers 5.5.3 local_files_only on a partially cached repo (e.g.
+        # config.json only) returns a 1-token tokenizer instead of raising
+        tokenizer = getattr(result, "tokenizer", result)
+        if not hasattr(tokenizer, "__len__"):
+            return True
+        return len(tokenizer) >= 1000
 
     @classmethod
     def aitk_from_config(cls, config):
@@ -254,6 +294,31 @@ class OstrisModelMixin:
         status_fn = (
             base_model.print_and_status_update if base_model is not None else print_acc
         )
+
+        # live server: a pooled module already carrying this exact policy is
+        # done; a different policy re-applies on top (requantize / dequantize
+        # paths below handle the weights, offloading is detached first)
+        from toolkit.models.v2.pool import ComponentPool, _stable
+
+        policy = _stable(
+            dict(
+                qtype=qtype,
+                offload=offload,
+                dtype=dtype,
+                device=device,
+                quantize_device=quantize_device,
+                exclude=exclude_quant_modules,
+            )
+        )
+        if ComponentPool.current is not None:
+            if getattr(self, "_aitk_policy", None) == policy:
+                ComponentPool.current.touch_module(self)
+                return self
+            if hasattr(self, "_memory_manager"):
+                from toolkit.memory_management import MemoryManager
+
+                MemoryManager.detach(self)
+        self._aitk_policy = policy
 
         ara_path = None
         if qtype is not None and "|" in qtype:
@@ -428,6 +493,27 @@ class OstrisModelMixin:
         elif subfolder == "":
             subfolder = None
 
+        # live server: an identical source request returns the resident module
+        from toolkit.models.v2.pool import ComponentPool
+
+        pool = ComponentPool.current
+        pool_key = None
+        if pool is not None:
+            pool_key = ComponentPool.make_key(
+                cls,
+                name_or_path,
+                dtype=dtype,
+                config_path=config_path,
+                config=config,
+                subfolder=subfolder,
+                use_comfy_weights=use_comfy_weights,
+                qtype=qtype if quantize_on_load else None,
+                kwargs=kwargs,
+            )
+            resident = pool.get(pool_key)
+            if resident is not None:
+                return resident
+
         if (
             use_comfy_weights
             and not name_or_path.endswith(".safetensors")
@@ -473,6 +559,8 @@ class OstrisModelMixin:
 
         if device is not None:
             model.to(device)
+        if pool is not None and pool_key is not None:
+            pool.put(pool_key, model)
         return model
 
     @staticmethod
@@ -536,7 +624,7 @@ class OstrisModelMixin:
         **kwargs,
     ):
         cls._readahead(file_path)
-        state_dict = load_file(file_path)
+        state_dict = _markers_from_header(file_path, load_file(file_path))
         return cls.load_from_state_dict(
             state_dict,
             dtype,
@@ -568,6 +656,12 @@ class OstrisModelMixin:
         checkpoints read from non-safetensors sources). ``config``, when
         given, is used directly (for models whose config comes from the
         holder, e.g. model_kwargs-driven archs)."""
+        # comfy repacks can carry ``<attn>.comfy_attention.config`` uint8 JSON
+        # blobs (e.g. {"attention": "comfy_kitchen_int8"}): ComfyUI runtime
+        # attention hints, not weights
+        state_dict = {
+            k: v for k, v in state_dict.items() if not k.endswith(".comfy_attention.config")
+        }
         state_dict = cls.convert_state_dict_on_load(state_dict)
         has_quant_markers = "scaled_fp8" in state_dict or any(
             k.endswith(".comfy_quant") for k in state_dict
@@ -624,6 +718,11 @@ class OstrisModelMixin:
         (and importer-assigned bias) legitimately report as missing keys."""
         from toolkit.util.ostris_quant import OstrisLinear
 
+        # Anything the importer already materialized is not missing, it is
+        # done: a convrot embedding becomes a plain nn.Embedding holding the
+        # unrotated table, so its key is gone from the state dict on purpose.
+        # Taken before the load, while everything else is still on meta.
+        preloaded = {n for n, p in model.named_parameters() if not p.is_meta}
         result = model.load_state_dict(state_dict, assign=True, strict=False)
         quantized_param_keys = set()
         for name, m in model.named_modules():
@@ -631,7 +730,11 @@ class OstrisModelMixin:
                 quantized_param_keys.add(f"{name}.weight")
                 if m.bias is not None:
                     quantized_param_keys.add(f"{name}.bias")
-        bad_missing = [k for k in result.missing_keys if k not in quantized_param_keys]
+        bad_missing = [
+            k
+            for k in result.missing_keys
+            if k not in quantized_param_keys and k not in preloaded
+        ]
         if bad_missing or result.unexpected_keys:
             raise ValueError(
                 f"{type(model).__name__} load mismatch: missing {bad_missing[:8]}, "
@@ -716,7 +819,11 @@ class OstrisModelMixin:
         ):
             subfolder = None
         return cls._local_first(
-            AutoTokenizer.from_pretrained, source, subfolder=subfolder or "", **kwargs
+            AutoTokenizer.from_pretrained,
+            source,
+            subfolder=subfolder or "",
+            validate=cls._tokenizer_complete,
+            **kwargs,
         )
 
     @classmethod
@@ -738,7 +845,11 @@ class OstrisModelMixin:
         ):
             subfolder = None
         return cls._local_first(
-            AutoProcessor.from_pretrained, source, subfolder=subfolder or "", **kwargs
+            AutoProcessor.from_pretrained,
+            source,
+            subfolder=subfolder or "",
+            validate=cls._tokenizer_complete,
+            **kwargs,
         )
 
     # ------------------------------------------------------------------

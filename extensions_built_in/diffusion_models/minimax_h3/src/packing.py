@@ -556,7 +556,7 @@ def build_sigma_schedule(
     `steps`; we don't, so sample_steps means model evals).
 
     ``t1000_ladder`` uses FastH3's trained ladder instead: rounded indices on
-    the shared 1000-step grid ([999, 749, 500, 250] at 4 steps), one forward
+    the shared 1000-step grid ([999, 874, ..., 250, 125] at 8 steps), one forward
     per entry, each scheduler applying its own shift."""
     if t1000_ladder:
         base = (

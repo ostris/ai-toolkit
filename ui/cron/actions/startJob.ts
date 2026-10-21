@@ -217,6 +217,14 @@ const startAndWatchJob = (job: Job) => {
     // update the config dataset path
     const jobConfig = JSON.parse(job.job_config);
     jobConfig.config.process[0].sqlite_db_path = path.join(TOOLKIT_ROOT, 'aitk_db.db');
+    if (job.job_type === 'inference') {
+      // the engine publishes engine.json (endpoint + token) and writes its
+      // outputs under the job folder, which the UI proxy/file routes know
+      jobConfig.config.process[0].engine = {
+        ...(jobConfig.config.process[0].engine || {}),
+        job_folder: trainingFolder,
+      };
+    }
 
     // write the config file
     fs.writeFileSync(configPath, JSON.stringify(jobConfig, null, 2));
