@@ -280,11 +280,24 @@ distillation in a controlled way*. Mechanics at train time (the pattern
 
 MiniMaxAI released no undistilled teacher (both partitions on
 `MiniMaxAI/MiniMax-H3` are CFG-distilled), so the adapter must be *made* by
-deliberate un-distillation. Ostris released an official alpha
-(`ostris/minimax_h3_training_adapter/minimax_h3_training_adapter_alpha.safetensors`),
-now the default training method upstream and in this fork: it produces better
-results than contrastive guidance loss and is faster (no extra blank-prompt
-forward per step). The recipe below produces your own.
+deliberate un-distillation. Ostris publishes official adapters under
+`ostris/minimax_h3_training_adapter`, one per checkpoint family, and the
+adapter alone is the default training method upstream and in this fork: it
+produces better results than contrastive guidance loss and is faster (no
+extra blank-prompt forward per step). As of upstream 2026-09-24 the defaults
+are:
+
+| arch | default adapter |
+|---|---|
+| `minimax_h3` (fl2va) | `minimax_h3_training_adapter_v3.safetensors` |
+| `minimax_h3_ref2va` | `minimax_h3_ref2va_training_adapter_v2.safetensors` |
+| `minimax_h3_vsa` (FastH3 8-Step V2) | `fastvideo_fasth3_8step_v2_training_adapter_v1.safetensors` |
+
+Older files (`_alpha`, `_v1`, `_v2`, ref2va `_v1`/`_v3`) stay on the hub and
+can be pointed at explicitly. The v3 adapters no longer need contrastive
+guidance alongside them; "adapter + contrastive guidance" remains available
+for long runs where the adapter alone starts to break down. The recipe below
+produces your own.
 
 ### Dataset
 
@@ -353,16 +366,34 @@ active during training, so your LoRA trains against the un-distilled
 behavior. The sampler deactivates it for previews, so samples reflect the
 distilled model your LoRA will actually serve against.
 
+## The other checkpoint families
+
+Upstream now trains two more H3 variants with the same machinery:
+
+- **ref2va** (`arch: minimax_h3_ref2va`, reference-to-video): dataset control
+  images/videos ride into the packed sequence as reference blocks (and into
+  the Qwen3-VL conditioning as `<Picture i>` / `<Video k>` blocks) instead of
+  anchoring a first frame. `control_path` takes one directory per reference;
+  samples use `ctrl_img`, `ctrl_img_2`, ... as references. Options:
+  `model_kwargs.image_refs_as_video` (present stills as short static clips so
+  the LoRA learns the video-reference path) with
+  `model_kwargs.image_ref_video_frames` (17n+5, default 5), and
+  `model_kwargs.dopsd` — **D-OPSD** self-distillation, a fourth distillation
+  handling method: a no-grad teacher pass sees the training target as its own
+  reference and its prediction becomes the training target for a
+  reference-free pass, baking the reference into the trigger word. It uses no
+  adapter and re-caches latents with pixel tensors
+  (`model_kwargs.dopsd_bleed_strength`, default 1.0).
+- **FastH3 8-Step V2** (`arch: minimax_h3_vsa`, base
+  `FastVideo/FastVideo-FastH3-Comfy`): FastVideo's DMD2-distilled 8-step
+  model trained with Video Sparse Attention at 80% sparsity and a video flow
+  shift of 10. Text-to-video(+audio) only. Attention runs the trained VSA
+  policy via FlexAttention in training and sampling (`model_kwargs.vsa`,
+  `model_kwargs.vsa_sparsity`); sample with 8 steps at guidance 1. Only the
+  training adapter (or nothing) is offered as distillation handling.
+
 ## What is still out of scope
 
-- **ref2va training** (reference-to-video: audio→video, video→video): the
-  ref2va DiT checkpoint can be loaded (`model_kwargs.partition: ref2va`), but
-  the trainer only builds fl2va-shaped packed sequences — no reference
-  segment, no dataset plumbing for reference video/audio. Implementing it
-  means extending `packing.build_packed_sequence` with a reference segment
-  (rotary coords, clean-pinned row timesteps, prediction slicing) and adding
-  reference media to the dataloader, mirroring the layout in MiniMax's
-  reference implementation. Sized as its own 1–2 week project.
 - **Audio anchoring** in the preservation loss (see caveat above).
 - W&B logging of video+audio previews is stubbed out
   (`blank_log_image_function`); previews land on disk only.
