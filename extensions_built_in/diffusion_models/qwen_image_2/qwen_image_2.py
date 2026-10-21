@@ -43,6 +43,7 @@ from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.lora_special import LoRASpecialNetwork
+from toolkit.metadata import lora_alpha_from_safetensors
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.samplers.custom_flowmatch_sampler import (
@@ -281,12 +282,18 @@ class QwenImage2Model(BaseModel):
         lora_state_dict = load_file(lora_path)
         dim_key = next(k for k in lora_state_dict if k.endswith("lora_A.weight"))
         dim = int(lora_state_dict[dim_key].shape[0])
+        # the peft layout stores no alpha: take the trained one from the file's
+        # metadata when it is there, else alpha == rank (scale 1.0)
+        alpha = lora_alpha_from_safetensors(lora_path)
+        if alpha is None:
+            alpha = dim
+        self.print_and_status_update(f"Assistant LoRA rank {dim}, alpha {alpha:g}")
         lora_state_dict = {
             key.replace("diffusion_model.", "transformer."): value
             for key, value in lora_state_dict.items()
         }
 
-        network_config = NetworkConfig(type="lora", linear=dim, linear_alpha=dim, transformer_only=True)
+        network_config = NetworkConfig(type="lora", linear=dim, linear_alpha=alpha, transformer_only=True)
         LoRASpecialNetwork.LORA_PREFIX_UNET = "lora_transformer"
         network = LoRASpecialNetwork(
             text_encoder=None,

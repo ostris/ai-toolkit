@@ -1,6 +1,7 @@
 import json
 from collections import OrderedDict
 from io import BytesIO
+from typing import Optional
 
 import safetensors
 from safetensors import safe_open
@@ -86,3 +87,37 @@ def load_metadata_from_safetensors(file_path: str) -> OrderedDict:
     except Exception as e:
         print(f"Error loading metadata from {file_path}: {e}")
         return OrderedDict()
+
+
+# kohya's keys for a LoRA's rank and alpha. ai-toolkit saves LoRAs in the peft
+# layout (lora_A / lora_B, no alpha tensors), so the training-time scale
+# alpha / rank lives nowhere in the weights; these keys carry it so a loader can
+# rebuild it instead of assuming alpha == rank.
+NETWORK_DIM_KEY = "ss_network_dim"
+NETWORK_ALPHA_KEY = "ss_network_alpha"
+
+
+def add_network_info_to_meta(meta: OrderedDict, network_config) -> OrderedDict:
+    """Record the network's linear rank and alpha on the save metadata."""
+    if network_config is None:
+        return meta
+    rank = getattr(network_config, "linear", None)
+    alpha = getattr(network_config, "linear_alpha", None)
+    if rank is None:
+        return meta
+    meta[NETWORK_DIM_KEY] = str(rank)
+    meta[NETWORK_ALPHA_KEY] = str(alpha if alpha is not None else rank)
+    return meta
+
+
+def lora_alpha_from_safetensors(file_path: str) -> Optional[float]:
+    """The alpha a LoRA file was trained with, from its metadata, or None when
+    the file carries no record (older files, other tools): the caller falls
+    back to alpha == rank, which is what every peft-format consumer assumes."""
+    try:
+        with safe_open(file_path, framework="pt") as f:
+            metadata = f.metadata() or {}
+        value = metadata.get(NETWORK_ALPHA_KEY)
+        return float(value) if value is not None else None
+    except Exception:
+        return None

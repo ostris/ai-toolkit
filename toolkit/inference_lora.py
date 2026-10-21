@@ -170,6 +170,11 @@ class InferenceLoRA:
             status_fn(f"Loading LoRA {self.name} from {self.local_path}")
         sd = load_file(self.local_path)
         self.num_keys = len(sd)
+        # peft-layout files carry no per-key alpha; ai-toolkit records the
+        # trained alpha in the metadata instead
+        from toolkit.metadata import lora_alpha_from_safetensors
+
+        file_alpha = lora_alpha_from_safetensors(self.local_path)
         convert = getattr(holder, "convert_lora_weights_before_load", None)
         if callable(convert):
             try:
@@ -208,6 +213,8 @@ class InferenceLoRA:
             alpha = parts.get("alpha")
             if alpha is not None:
                 e.alpha = float(alpha.flatten()[0])
+            elif file_alpha is not None:
+                e.alpha = file_alpha
             w_shape = getattr(getattr(module, "weight", None), "shape", None)
             if e.A is not None and e.B is not None and e.A.dim() == 2:
                 if w_shape is not None and (e.B.shape[0] != w_shape[0] or e.A.shape[1] != w_shape[1]):
