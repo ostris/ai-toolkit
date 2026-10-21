@@ -117,7 +117,7 @@ class MossMusicCaptioner(AceStepCaptioner):
             item["language_inputs"] = self._make_inputs(audio_data, LANGUAGE_PROMPT)
         if self.caption_config.fixed_caption is None:
             item["caption_inputs"] = self._make_inputs(
-                audio_data, self.caption_config.caption_prompt
+                audio_data, self.resolve_prompt(self.caption_config.caption_prompt, file_path)
             )
         return item
 

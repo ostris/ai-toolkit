@@ -288,6 +288,30 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.pool_datasets': {
+    title: 'Pool Datasets',
+    description: (
+      <>
+        Off by default. Only useful when you have numerous datasets.
+        <br />
+        <br />
+        Normally every dataset is loaded as its own unit with its own buckets, so each batch is built from a single
+        dataset and each dataset keeps its own loader threads. With many datasets this means batches never mix images
+        from different folders and the number of loader threads grows with the dataset count.
+        <br />
+        <br />
+        Pooling merges all of your datasets into one shared set of buckets. Images from different folders that land in
+        the same bucket are mixed together in the same batch, and only one set of loader threads is used for the whole
+        pool. Regularization datasets are pooled separately from your training datasets, never together.
+        <br />
+        <br />
+        Each dataset keeps its own settings (captions, control images, repeats, flips, scale, resolution). Datasets whose
+        settings would not collate into one batch (for example a different number of control images, video vs image,
+        or different caching) are automatically kept in separate buckets within the pool. All pooled datasets must use
+        the same batch size.
+      </>
+    ),
+  },
   'train.do_differential_guidance': {
     title: 'Differential Guidance',
     description: (
@@ -380,6 +404,25 @@ const docs: { [key: string]: ConfigDoc } = {
         Caption dropout also works when caching text embeddings. An additional embedding for the dropout caption (blank,
         or the trigger word alone) is cached to disk alongside the normal one, and it is randomly swapped in at train
         time at this rate.
+      </>
+    ),
+  },
+  'config.process[0].caption.caption_prompt': {
+    title: 'Caption Prompt',
+    description: (
+      <>
+        The instruction sent to the captioning model for every file. It can contain special tokens that are replaced
+        per file before the prompt is sent:
+        <br />
+        <br />
+        <code>&lt;caption.ext&gt;</code> — inserts the text of the file next to the media file that has the same name
+        and the given extension. For <code>/data/subfolder/img01.webp</code>, <code>&lt;caption.json&gt;</code> inserts
+        the contents of <code>/data/subfolder/img01.json</code> and <code>&lt;caption.txt&gt;</code> inserts{' '}
+        <code>img01.txt</code>. The file is inserted as plain text exactly as it is on disk (json included). If the file
+        does not exist, the token is replaced with nothing.
+        <br />
+        <br />
+        Example: <code>Rewrite this caption as a single sentence: &lt;caption.txt&gt;</code>
       </>
     ),
   },

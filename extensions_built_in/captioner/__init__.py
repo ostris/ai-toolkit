@@ -61,6 +61,18 @@ class Qwen25OmniCaptionerExtension(Extension):
         return Qwen25OmniCaptioner
 
 
+class Qwen38CaptionerExtension(Extension):
+    uid = "Qwen38Captioner"
+    name = "Qwen 3.8 Captioner"
+
+    @classmethod
+    def get_process(cls):
+        # import your process class here so it is only loaded when needed and return it
+        from .Qwen38Captioner import Qwen38Captioner
+
+        return Qwen38Captioner
+
+
 class Ideogram4CaptionerExtension(Extension):
     uid = "Ideogram4Captioner"
     name = "Ideogram4 Captioner"
@@ -79,5 +91,6 @@ AI_TOOLKIT_EXTENSIONS = [
     Qwen3VLCaptionerExtension,
     Qwen3OmniCaptionerExtension,
     Qwen25OmniCaptionerExtension,
+    Qwen38CaptionerExtension,
     Ideogram4CaptionerExtension,
 ]

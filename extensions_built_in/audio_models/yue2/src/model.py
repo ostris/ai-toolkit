@@ -402,13 +402,36 @@ class YuE2Model(nn.Module, OstrisModelMixin):
 
 
 @torch.no_grad()
+def _nar_lora_from_safetensors(path: str) -> dict:
+    """The ``.safetensors`` releases of the community NAR adapter name every tensor
+    (``layers.N.nar_self_attn.q_proj.lora_A`` ..., ``vae2llm.*``, ``llm2vae.*``); rebuild the
+    ``.pt`` layout (``lora``: layer-major A/B list, ``io``: full projection weights) that the merge walks.
+    The ``_comfyui`` files use ComfyUI's fused layout and are not handled here."""
+    from safetensors.torch import load_file
+
+    tensors = load_file(path, device="cpu")
+    if not any(".nar_self_attn." in k and k.endswith(".lora_A") for k in tensors):
+        raise ValueError(f"{path}: not an unmerged NAR LoRA release (the _comfyui layout is not supported for merging)")
+    modules = [("nar_self_attn", n) for n in ("q_proj", "k_proj", "v_proj", "o_proj")]
+    modules += [("nar_mlp", n) for n in ("gate_proj", "up_proj", "down_proj")]
+    lora = []
+    for layer in sorted({int(k.split(".")[1]) for k in tensors if k.startswith("layers.")}):
+        for block, proj in modules:
+            lora += [tensors[f"layers.{layer}.{block}.{proj}.lora_A"], tensors[f"layers.{layer}.{block}.{proj}.lora_B"]]
+    io = {m: {k.split(".", 1)[1]: v for k, v in tensors.items() if k.startswith(m + ".")} for m in ("vae2llm", "llm2vae")}
+    return {"lora": lora, "io": {m: sd for m, sd in io.items() if sd}}
+
+
 def merge_nar_lora(model: YuE2Model, ckpt_path: str, scale: float = 1.0):
     """Fold the community NAR adapter (unmerged q/k/v + gate/up LoRA pairs,
     plus full vae2llm/llm2vae weights) into the merged-projection base."""
-    try:
-        ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-    except Exception:
-        ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if str(ckpt_path).endswith(".safetensors"):
+        ck = _nar_lora_from_safetensors(ckpt_path)
+    else:
+        try:
+            ck = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        except Exception:
+            ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if getattr(model, "aitk_is_quantized", False):
         raise ValueError("merge_nar_lora needs the bf16 checkpoint; the int8 convrot repack cannot take merged weights")
     tensors = iter(ck["lora"])

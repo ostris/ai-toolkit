@@ -1157,6 +1157,17 @@ export default function SimpleJob({
                     </>
                   )}
                 </div>
+                <div>
+                  <Checkbox
+                    label="Pool Datasets"
+                    docKey={'train.pool_datasets'}
+                    className="pt-1"
+                    checked={jobConfig.config.process[0].train.pool_datasets || false}
+                    onChange={value => {
+                      setJobConfig(value ? true : undefined, 'config.process[0].train.pool_datasets');
+                    }}
+                  />
+                </div>
               </div>
             </Card>
           )}

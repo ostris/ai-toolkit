@@ -26,7 +26,7 @@ from .util import (
 )
 
 NODE_DIR = os.path.join(REPO_ROOT, ".node")
-# Node 24 is the current LTS line and matches the dgx_instructions.md guidance.
+# Node 24 is the current LTS line.
 NODE_VERSION = "24.11.1"
 MIN_NODE_MAJOR = 20
 

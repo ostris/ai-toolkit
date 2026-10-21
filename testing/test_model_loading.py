@@ -160,6 +160,10 @@ MODEL_TESTS = {
         "model": {"name_or_path": "Photoroom/prxpixel-t2i", "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
     },
+    "iris3b": {
+        "model": {"name_or_path": "speridlabs/iris-3b", "quantize_te": True},
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
     "zeta_chroma": {
         "model": {"name_or_path": "lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors", "extras_name_or_path": "Tongyi-MAI/Z-Image-Turbo", "quantize": True, "quantize_te": True},
         "sample": {**IMG, "num_inference_steps": 25, "guidance_scale": 4.0},
@@ -184,6 +188,95 @@ MODEL_TESTS = {
         # image exercises the reference path, which plain t2i is a subset of
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 1.0},
         "needs_control_image": True,
+    },
+    "qwen_image_2:turbo": {
+        # model_kwargs.turbo samples with the checkpoint's fixed 8-step
+        # schedule at CFG 1
+        "model": {
+            "name_or_path": "Comfy-Org/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+            "quantize": True,
+            "quantize_te": True,
+            "model_kwargs": {"turbo": True},
+        },
+        "sample": {**IMG, "num_inference_steps": 8, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
+    "ming_image": {
+        "model": {
+            "name_or_path": "Comfy-Org/Ming-Image",
+            "quantize": True,
+            "quantize_te": True,
+            # the repack's int8 convrot files attach as-is at convrot8
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        # recommended settings: 12 steps, no guidance; the control image
+        # exercises the single-reference editing path
+        "sample": {**IMG, "num_inference_steps": 12, "guidance_scale": 1.0},
+        "needs_control_image": True,
+    },
+    "moss_image": {
+        "model": {
+            "name_or_path": "OpenMOSS-Team/MOSS-Image-SFT",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        # vendor defaults are 50 steps, CFG 3 (negative branch skips block 22)
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
+    "moss_image:base": {
+        # vendor id; local Comfy-Org base files win, else the repack's bf16
+        "model": {
+            "name_or_path": "OpenMOSS-Team/MOSS-Image-Base",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+    },
+    "moss_image:edit": {
+        # edit LoRA path: vision-tower prompt + t=0 reference latents, isolated
+        # references with their K/V cached across sampling steps
+        "model": {
+            "name_or_path": "OpenMOSS-Team/MOSS-Image-SFT",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+            "model_kwargs": {"edit": True, "kv_cache": True, "match_target_res": True},
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+        "needs_control_image": True,
+    },
+    "moss_image:base_edit": {
+        # edit LoRA path: vision-tower prompt + t=0 reference latents, isolated
+        # references with their K/V cached across sampling steps
+        "model": {
+            "name_or_path": "OpenMOSS-Team/MOSS-Image-Base",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+            "model_kwargs": {"edit": True, "kv_cache": True, "match_target_res": True},
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
+        "needs_control_image": True,
+    },
+    "moss_image:comfy": {
+        # the Comfy-Org repack files named outright (a bare repo id prefers any
+        # local bf16): int8 convrot SFT DiT + Qwen3.5-9B TE attach as-is
+        "model": {
+            "name_or_path": "Comfy-Org/MOSS-Image/diffusion_models/moss_image_sft_int8_convrot_attn.safetensors",
+            "te_name_or_path": "Comfy-Org/MOSS-Image/text_encoders/qwen3.5_9b_int8_convrot.safetensors",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
     },
     # ---- legacy monolith archs (components adopted into v2 on load) ----
     "sd1": {

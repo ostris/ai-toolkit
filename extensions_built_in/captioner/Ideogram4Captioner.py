@@ -58,10 +58,13 @@ class Ideogram4Captioner(Qwen3VLCaptioner):
                 best = (err, p, q)
         return f"{best[1]}:{best[2]}"
 
-    def build_prompt(self, aspect_ratio: str) -> str:
+    def build_prompt(self, aspect_ratio: str, file_path: Optional[str] = None) -> str:
         # caption_prompt is the user-editable ADDITIONAL INSTRUCTIONS block,
         # injected into the fixed system prompt (not the whole prompt).
-        user_instructions = (self.caption_config.caption_prompt or "").strip()
+        user_instructions = self.caption_config.caption_prompt or ""
+        if file_path is not None:
+            user_instructions = self.resolve_prompt(user_instructions, file_path)
+        user_instructions = user_instructions.strip()
         if not user_instructions:
             user_instructions = "None."
         prompt = ideogram4_caption_prompt.replace("{{aspect_ratio}}", aspect_ratio)
@@ -131,7 +134,7 @@ class Ideogram4Captioner(Qwen3VLCaptioner):
             aspect_ratio = self.compute_aspect_ratio(width, height)
 
             img = self.load_pil_image(file_path, max_res=self.caption_config.max_res)
-            prompt = self.build_prompt(aspect_ratio)
+            prompt = self.build_prompt(aspect_ratio, file_path)
 
             messages = [
                 {

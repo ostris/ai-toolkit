@@ -42,6 +42,30 @@ class BasicModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMix
     pass
 
 
+def _markers_from_header(
+    file_path: str, state_dict: Dict[str, torch.Tensor]
+) -> Dict[str, torch.Tensor]:
+    """ComfyUI's header-style quantized layout keeps the per-layer configs in
+    the safetensors metadata (``_quantization_metadata``) instead of
+    ``<layer>.comfy_quant`` marker tensors; synthesize the markers so the
+    importer sees one layout."""
+    import json
+
+    from safetensors import safe_open
+
+    with safe_open(file_path, "pt") as f:
+        raw = (f.metadata() or {}).get("_quantization_metadata")
+    if raw is None:
+        return state_dict
+    for name, conf in json.loads(raw).get("layers", {}).items():
+        marker = f"{name}.comfy_quant"
+        if marker not in state_dict and f"{name}.weight" in state_dict:
+            state_dict[marker] = torch.tensor(
+                list(json.dumps(conf).encode("utf-8")), dtype=torch.uint8
+            )
+    return state_dict
+
+
 def adopt_component(module: torch.nn.Module, wrapper_cls: type) -> torch.nn.Module:
     """Rebind an already-loaded component instance onto its v2 wrapper class
     (in-place class swap, like the OstrisLinear conversion). Used when a
@@ -148,20 +172,36 @@ class OstrisModelMixin:
         return cls._local_first(cls.load_config, path, subfolder=subfolder)
 
     @staticmethod
-    def _local_first(loader, *args, **kwargs):
+    def _local_first(loader, *args, validate=None, **kwargs):
         """Serve fully-cached repos without touching the hub. Online
         from_pretrained does an etag HEAD round-trip per file (seconds of pure
         network latency on every warm load); a local_files_only attempt is
         instant when the cache can't satisfy it, so failing over to the
-        online path costs nothing."""
+        online path costs nothing. ``validate`` rejects a cache-only result
+        that loaded without raising but incomplete (falls over to online)."""
         import os as _os
 
         if _os.environ.get("HF_HUB_OFFLINE") == "1":
             return loader(*args, **kwargs)
         try:
-            return loader(*args, local_files_only=True, **kwargs)
+            result = loader(*args, local_files_only=True, **kwargs)
         except Exception:
             return loader(*args, **kwargs)
+        if validate is not None and not validate(result):
+            try:
+                return loader(*args, **kwargs)
+            except Exception:
+                return result  # no hub: keep what the cache had
+        return result
+
+    @staticmethod
+    def _tokenizer_complete(result) -> bool:
+        # transformers 5.5.3 local_files_only on a partially cached repo (e.g.
+        # config.json only) returns a 1-token tokenizer instead of raising
+        tokenizer = getattr(result, "tokenizer", result)
+        if not hasattr(tokenizer, "__len__"):
+            return True
+        return len(tokenizer) >= 1000
 
     @classmethod
     def aitk_from_config(cls, config):
@@ -584,7 +624,7 @@ class OstrisModelMixin:
         **kwargs,
     ):
         cls._readahead(file_path)
-        state_dict = load_file(file_path)
+        state_dict = _markers_from_header(file_path, load_file(file_path))
         return cls.load_from_state_dict(
             state_dict,
             dtype,
@@ -616,6 +656,12 @@ class OstrisModelMixin:
         checkpoints read from non-safetensors sources). ``config``, when
         given, is used directly (for models whose config comes from the
         holder, e.g. model_kwargs-driven archs)."""
+        # comfy repacks can carry ``<attn>.comfy_attention.config`` uint8 JSON
+        # blobs (e.g. {"attention": "comfy_kitchen_int8"}): ComfyUI runtime
+        # attention hints, not weights
+        state_dict = {
+            k: v for k, v in state_dict.items() if not k.endswith(".comfy_attention.config")
+        }
         state_dict = cls.convert_state_dict_on_load(state_dict)
         has_quant_markers = "scaled_fp8" in state_dict or any(
             k.endswith(".comfy_quant") for k in state_dict
@@ -773,7 +819,11 @@ class OstrisModelMixin:
         ):
             subfolder = None
         return cls._local_first(
-            AutoTokenizer.from_pretrained, source, subfolder=subfolder or "", **kwargs
+            AutoTokenizer.from_pretrained,
+            source,
+            subfolder=subfolder or "",
+            validate=cls._tokenizer_complete,
+            **kwargs,
         )
 
     @classmethod
@@ -795,7 +845,11 @@ class OstrisModelMixin:
         ):
             subfolder = None
         return cls._local_first(
-            AutoProcessor.from_pretrained, source, subfolder=subfolder or "", **kwargs
+            AutoProcessor.from_pretrained,
+            source,
+            subfolder=subfolder or "",
+            validate=cls._tokenizer_complete,
+            **kwargs,
         )
 
     # ------------------------------------------------------------------

@@ -2485,6 +2485,7 @@ class StableDiffusion:
             max_length=None,
             dropout_prob=0.0,
             control_images=None,
+            target_size=None,  # accepted for parity with BaseModel; legacy archs ignore it
     ) -> PromptEmbeds:
         # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt

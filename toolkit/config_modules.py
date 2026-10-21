@@ -534,7 +534,7 @@ class TrainConfig:
         self.correct_pred_norm = kwargs.get('correct_pred_norm', False)
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
-        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow, pseudo_huber
+        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, band, pixelspace, mean_flow, pseudo_huber
         
         # do the loss on a timestep to 0 prediction
         self.t0_loss_target = kwargs.get('t0_loss_target', False)
@@ -580,6 +580,9 @@ class TrainConfig:
         self.unload_text_encoder = kwargs.get('unload_text_encoder', False)
         # will toggle all datasets to cache text embeddings
         self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
+        # merge all datasets into one file list so buckets/batches mix across folders;
+        # reg datasets pool separately from non-reg ones
+        self.pool_datasets: bool = kwargs.get('pool_datasets', False)
         # for swapping which parameters are trained during training
         self.do_paramiter_swapping = kwargs.get('do_paramiter_swapping', False)
         # 0.1 is 10% of the parameters active at a time lower is less vram, higher is more
@@ -1067,6 +1070,9 @@ class DatasetConfig:
         # which can cause severe PCIe thrashing for users at the VRAM ceiling.
         # Opt in if you have stable VRAM headroom and want the transfer speedup.
         self.pin_memory: bool = kwargs.get('pin_memory', False)
+        # threads that decode/resize the images of one bucketed batch concurrently inside a
+        # dataloader worker; 0 or 1 loads the batch serially
+        self.batch_load_threads: int = kwargs.get('batch_load_threads', min(8, os.cpu_count() or 1))
         # threads used to prep (decode/resize) items ahead of the VAE while caching latents
         self.cache_latents_num_workers: int = kwargs.get('cache_latents_num_workers', min(6, os.cpu_count() or 1))
         self.extra_values: List[float] = kwargs.get('extra_values', [])
@@ -1118,10 +1124,28 @@ class DatasetConfig:
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
     """
-    This just splits up the datasets by resolutions so you dont have to do it manually
+    This just splits up the datasets by paths and resolutions so you dont have to do it manually
     :param raw_config:
     :return:
     """
+    # split up datasets by folder_path / dataset_path lists: one dataset per path,
+    # all other settings shared (pair with train.pool_datasets to mix them)
+    path_split_config = []
+    for dataset in raw_config:
+        split = False
+        for path_key in ['folder_path', 'dataset_path']:
+            paths = dataset.get(path_key, None)
+            if isinstance(paths, (list, tuple)):
+                for path in paths:
+                    dataset_copy = dataset.copy()
+                    dataset_copy[path_key] = path
+                    path_split_config.append(dataset_copy)
+                split = True
+                break
+        if not split:
+            path_split_config.append(dataset)
+    raw_config = path_split_config
+
     # split up datasets by resolutions
     new_config = []
     for dataset in raw_config:

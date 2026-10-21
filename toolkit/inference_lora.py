@@ -303,20 +303,37 @@ class InferenceLoRA:
                     x = inputs[0] if inputs else None
                     if x is None:
                         return output
-                    key = (x.device, x.dtype)
+                    key = (x.device, x.dtype, lora.strength)
                     if key not in cache:
                         cache.clear()
+                        # A^T stored [in, r] contiguous: cuBLAS runs x @ A^T 2.5x faster in that
+                        # layout for a few rows; B^T carries scale * strength so the hook is two GEMMs
+                        A = entry.A.to(device=x.device, dtype=x.dtype).t().contiguous() if entry.A is not None and entry.A.dim() == 2 else None
+                        B = entry.B.to(device=x.device, dtype=x.dtype) if entry.B is not None and entry.B.dim() == 2 else None
+                        BT = (B.t() * (entry.scale * lora.strength)).contiguous() if B is not None else None
                         cache[key] = (
-                            entry.A.to(device=x.device, dtype=x.dtype) if entry.A is not None and entry.A.dim() == 2 else None,
-                            entry.B.to(device=x.device, dtype=x.dtype) if entry.B is not None and entry.B.dim() == 2 else None,
+                            A,
+                            BT,
                             entry.diff.to(device=x.device, dtype=x.dtype) if entry.diff is not None and entry.diff.dim() == 2 else None,
                             entry.diff_b.to(device=x.device, dtype=x.dtype) if entry.diff_b is not None else None,
                             {n: t.to(device=x.device, dtype=x.dtype) for n, t in entry.kron.items()} if entry.kron_is_linear else None,
                         )
-                    A, B, diff, diff_b, kron = cache[key]
+                    A, BT, diff, diff_b, kron = cache[key]
+                    out = output[0] if isinstance(output, tuple) else output
+                    if A is not None and BT is not None and kron is None and diff is None and diff_b is None \
+                            and out.dtype == x.dtype and out.shape[-1] == BT.shape[1]:
+                        # lora-only fast path: out + (x A^T) B^T as one addmm, in place on the
+                        # fresh module output when no graph is being recorded
+                        xa = x.reshape(-1, x.shape[-1]) @ A
+                        out2 = out.reshape(-1, out.shape[-1])
+                        if out.is_contiguous() and out.data_ptr() != x.data_ptr() and not torch.is_grad_enabled():
+                            out2.addmm_(xa, BT)
+                            return output
+                        res = torch.addmm(out2, xa, BT).view(out.shape)
+                        return (res,) + tuple(output[1:]) if isinstance(output, tuple) else res
                     add = None
-                    if A is not None and B is not None:
-                        add = ((x @ A.t()) @ B.t()) * (entry.scale * lora.strength)
+                    if A is not None and BT is not None:
+                        add = (x @ A) @ BT
                     if kron is not None:
                         dk = _kron_apply(x, kron) * (entry.scale * lora.strength)
                         add = dk if add is None else add + dk

@@ -20,7 +20,9 @@ import {
   groupedCaptionerTypes,
   maxNewTokensOptions,
   maxResOptions,
+  mtpDepthOptions,
   quantizationOptions,
+  videoFpsOptions,
 } from '@/helpers/captionOptions';
 
 type Props = {
@@ -243,6 +245,21 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               />
             </div>
           )}
+          {additionalSections.includes('caption.video_fps') && (
+            <div className="mt-4">
+              <SelectInput
+                label="Video FPS"
+                value={`${jobConfig.config.process[0].caption.video_fps ?? 2}`}
+                onChange={value => {
+                  const num = parseFloat(value);
+                  if (!isNaN(num)) {
+                    setJobConfig(num, 'config.process[0].caption.video_fps');
+                  }
+                }}
+                options={videoFpsOptions}
+              />
+            </div>
+          )}
           {additionalSections.includes('caption.batch_size') && (
             <div className="mt-4">
               <SelectInput
@@ -271,11 +288,13 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               checked={jobConfig.config.process[0].caption.recaption}
               onChange={value => setJobConfig(value, 'config.process[0].caption.recaption')}
             />
-            <Checkbox
-              label="Compile Models"
-              checked={jobConfig.config.process[0].caption.compile || false}
-              onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
-            />
+            {!selectedCaptionOption?.noCompile && (
+              <Checkbox
+                label="Compile Models"
+                checked={jobConfig.config.process[0].caption.compile || false}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
+              />
+            )}
             {additionalSections.includes('caption.extract_vocals_before_transcribe') && (
               <Checkbox
                 label="Extract Vocals Before Transcribing"
@@ -295,6 +314,44 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
                 label="Thinking"
                 checked={jobConfig.config.process[0].caption.thinking || false}
                 onChange={value => setJobConfig(value, 'config.process[0].caption.thinking')}
+              />
+            )}
+            {additionalSections.includes('caption.mtp') && (
+              <>
+                <Checkbox
+                  label="MTP Speculative Decoding"
+                  checked={jobConfig.config.process[0].caption.mtp ?? true}
+                  onChange={value => setJobConfig(value, 'config.process[0].caption.mtp')}
+                />
+                {(jobConfig.config.process[0].caption.mtp ?? true) && (
+                  <div className="pt-2">
+                    <SelectInput
+                      label="MTP Draft Depth"
+                      value={`${jobConfig.config.process[0].caption.mtp_depth ?? 3}`}
+                      onChange={value => {
+                        const intVal = parseInt(value);
+                        if (!isNaN(intVal)) {
+                          setJobConfig(intVal, 'config.process[0].caption.mtp_depth');
+                        }
+                      }}
+                      options={mtpDepthOptions}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {additionalSections.includes('caption.cuda_graph') && (
+              <Checkbox
+                label="CUDA Graph Decode"
+                checked={jobConfig.config.process[0].caption.cuda_graph ?? true}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.cuda_graph')}
+              />
+            )}
+            {additionalSections.includes('caption.vision_bf16') && (
+              <Checkbox
+                label="Vision Tower bf16"
+                checked={jobConfig.config.process[0].caption.vision_bf16 ?? true}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.vision_bf16')}
               />
             )}
             {additionalSections.includes('caption.layer_offloading') && (
@@ -346,8 +403,21 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               />
             </div>
           )}
+          {additionalSections.includes('caption.system_prompt') && (
+            <div className="mb-4">
+              <TextInput
+                label="System Prompt"
+                value={jobConfig.config.process[0].caption.system_prompt || ''}
+                onChange={value => {
+                  setJobConfig(value?.trim() === '' ? undefined : value, 'config.process[0].caption.system_prompt');
+                }}
+                placeholder="Optional system message"
+              />
+            </div>
+          )}
           <TextAreaInput
             label="Caption Prompt"
+            docKey="config.process[0].caption.caption_prompt"
             value={jobConfig.config.process[0].caption.caption_prompt || ''}
             onChange={value => {
               setJobConfig(value, 'config.process[0].caption.caption_prompt');
