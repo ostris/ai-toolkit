@@ -288,6 +288,7 @@ class MinimaxH3Model(BaseModel):
         """
         from toolkit.config_modules import NetworkConfig
         from toolkit.lora_special import LoRASpecialNetwork
+        from toolkit.metadata import lora_alpha_from_safetensors
 
         self.print_and_status_update("Loading assistant LoRA")
         lora_path = self.model_config.assistant_lora_path
@@ -329,13 +330,19 @@ class MinimaxH3Model(BaseModel):
             if k.endswith("lora_A.weight") or k.endswith("lora_down.weight")
         )
         dim = int(lora_state_dict[dim_key].shape[0])
+        # the peft layout stores no alpha: take the trained one from the file's
+        # metadata when it is there, else alpha == rank (scale 1.0)
+        alpha = lora_alpha_from_safetensors(lora_path)
+        if alpha is None:
+            alpha = dim
+        self.print_and_status_update(f"Assistant LoRA rank {dim}, alpha {alpha:g}")
         lora_state_dict = self.convert_lora_weights_before_load(lora_state_dict)
 
         network_config = NetworkConfig(
             **{
                 "type": "lora",
                 "linear": dim,
-                "linear_alpha": dim,
+                "linear_alpha": alpha,
                 "transformer_only": True,
             }
         )
