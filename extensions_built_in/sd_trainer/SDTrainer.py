@@ -927,7 +927,7 @@ class SDTrainer(BaseSDTrainProcess):
                     pred = t0
                     # handle velocity equiv loss if set. This scales t0 loss to match velocity of flowmatchhing loss
                     if self.train_config.t0_velocity_equiv_weight:
-                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.01) ** 2)
                         local_loss_scale = velocity_equiv_weight
                         
                 if self.train_config.do_fft_loss:
@@ -936,7 +936,7 @@ class SDTrainer(BaseSDTrainProcess):
                     pred_mag = torch.fft.rfft2(t0.float(), norm="ortho").abs()
                     fft_loss = F.mse_loss(pred_mag, target_mag, reduction="none")
                     if self.train_config.do_fft_velocity_equiv_weight:
-                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.01) ** 2)
                         fft_loss = fft_loss * velocity_equiv_weight
                     fft_loss = fft_loss.mean()
                     self.additional_logs['loss/fft'] = fft_loss.item()
