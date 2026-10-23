@@ -629,7 +629,6 @@ class MossImageModel(BaseModel):
         batch = torch.stack([img.to(device, dtype=self.vae.dtype) for img in image_list])
         return self.vae.encode(batch).to(device, dtype=dtype)
 
-    @torch.no_grad()
     def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
         if device is None:
             device = self.vae_device_torch
