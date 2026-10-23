@@ -903,6 +903,8 @@ class OstrisModelMixin:
                 value = value.to(dtype=dtype)
             state_dict[key] = value.detach().to("cpu").contiguous()
         state_dict.update(q_entries)
+        # block_compile wraps blocks in OptimizedModule: drop its "._orig_mod." key segment
+        state_dict = {k.replace("._orig_mod.", "."): v for k, v in state_dict.items()}
         state_dict = self.convert_state_dict_on_save(state_dict)
 
         parent = os.path.dirname(output_path)
