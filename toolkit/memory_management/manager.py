@@ -457,15 +457,18 @@ class MemoryManager:
         gc.collect()
         torch.cuda.empty_cache()
 
-        # torch's pinned-host cache; private API, name varies by torch version
-        for fn_name in ("_accelerator_emptyHostCache", "_host_emptyCache"):
-            fn = getattr(torch._C, fn_name, None)
-            if fn is not None:
-                try:
-                    fn()
-                    break
-                except Exception:
-                    pass
+        # torch's pinned-host cache; private API, name varies by torch version.
+        # Skipped on MPS: it segfaults there (pytorch/pytorch#197561), not catchable
+        on_mps = getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+        if not on_mps:
+            for fn_name in ("_accelerator_emptyHostCache", "_host_emptyCache"):
+                fn = getattr(torch._C, fn_name, None)
+                if fn is not None:
+                    try:
+                        fn()
+                        break
+                    except Exception:
+                        pass
 
         # glibc keeps freed arenas mapped; CDLL(None) resolves malloc_trim in
         # the running process where glibc is present and fails cleanly on
