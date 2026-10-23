@@ -2178,6 +2178,52 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     ],
   },
   {
+    name: "fibo2",
+    label: "Fibo 2.0 Dev",
+    group: "image",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      // the Comfy-Org repack (vendor repo is gated); a comfy-layout
+      // .safetensors path (fine-tune) loads as named
+      "config.process[0].model.name_or_path": [
+        "Comfy-Org/Fibo-2.0",
+        defaultNameOrPath,
+      ],
+      // convrot8 attaches the repack's int8 convrot DiT / Qwen3-VL-4B as-is
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].sample.width": [1024, 1024],
+      "config.process[0].sample.height": [1024, 1024],
+      // vendor defaults: CFG 5 against the null caption, 30 steps
+      "config.process[0].sample.guidance_scale": [5, 4],
+      "config.process[0].sample.sample_steps": [30, 25],
+      "config.process[0].train.timestep_type": ["weighted", "sigmoid"],
+      "config.process[0].train.unload_text_encoder": [false, false],
+      "config.process[0].model.model_kwargs": [
+        {
+          match_target_res: true,
+        },
+        {},
+      ],
+    },
+    disableSections: ["network.conv", "train.unload_text_encoder"],
+    // one model: it edits when the dataset has control paths, and is plain
+    // text to image when it does not
+    additionalSections: [
+      "datasets.multi_control_paths",
+      "sample.multi_ctrl_imgs",
+      "model.qie.match_target_res",
+      "model.layer_offloading",
+      "model.low_vram",
+    ],
+    hasMultiLinePrompts: true,
+  },
+  {
     name: "flux2_klein_4b",
     label: "FLUX.2-klein-base-4B",
     group: "image",

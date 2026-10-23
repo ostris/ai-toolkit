@@ -278,6 +278,29 @@ MODEL_TESTS = {
         },
         "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 3.0},
     },
+    "fibo2": {
+        "model": {
+            "name_or_path": "Comfy-Org/Fibo-2.0",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        # vendor defaults are 30 steps, CFG 5
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 5.0},
+    },
+    "fibo2:edit": {
+        # same arch: a control image makes it an edit
+        "model": {
+            "name_or_path": "Comfy-Org/Fibo-2.0",
+            "quantize": True,
+            "quantize_te": True,
+            "qtype": "convrot8",
+            "qtype_te": "convrot8",
+        },
+        "sample": {**IMG, "num_inference_steps": 20, "guidance_scale": 5.0},
+        "needs_control_image": True,
+    },
     # ---- legacy monolith archs (components adopted into v2 on load) ----
     "sd1": {
         "model": {"name_or_path": "stable-diffusion-v1-5/stable-diffusion-v1-5"},
