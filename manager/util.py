@@ -179,6 +179,26 @@ def clean_env(extra=None):
     for var in _SCRUB_VARS:
         env.pop(var, None)
     env.setdefault("UV_PYTHON_INSTALL_DIR", os.path.join(REPO_ROOT, ".uv", "python"))
+    # Launchers (e.g. Stability Matrix) sometimes scrub PATH down to node/venv
+    # only. Put standard Unix utilities back so /bin/sh, nvidia-smi helpers, and
+    # npm script shells keep working. Skip on Windows — System32 is already on PATH.
+    if not IS_WINDOWS:
+        sane_path_dirs = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        current_path = env.get("PATH", "")
+        path_parts = [p for p in current_path.split(os.pathsep) if p] if current_path else []
+        env["PATH"] = os.pathsep.join(
+            sane_path_dirs + [p for p in path_parts if p not in sane_path_dirs]
+        )
+        env["SHELL"] = "/bin/sh"
+        env["npm_config_script_shell"] = "/bin/sh"
+        env["NPM_CONFIG_SCRIPT_SHELL"] = "/bin/sh"
     if extra:
         env.update(extra)
     return env
