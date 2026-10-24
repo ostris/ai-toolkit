@@ -532,7 +532,11 @@ class QKNorm(torch.nn.Module):
 def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor) -> Tensor:
     q, k = apply_rope(q, k, pe)
 
-    x = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    from toolkit.util.mxfp8_attn import available as _mx8_ok, mxfp8_attention as _mx8
+    if _mx8_ok(q):
+        x = _mx8(q, k, v)
+    else:
+        x = torch.nn.functional.scaled_dot_product_attention(q, k, v)
     x = rearrange(x, "B H L D -> B L (H D)")
 
     return x

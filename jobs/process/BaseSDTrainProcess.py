@@ -280,10 +280,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return generate_image_config_list
 
     def sample(self, step=None, is_first=False):
-        if not self.accelerator.is_main_process:
+        if not self.accelerator.is_main_process and not getattr(self, '_fsdp_active', False):
             return
         flush()
         sample_folder = os.path.join(self.save_root, 'samples')
+        if getattr(self, '_fsdp_active', False) and not self.accelerator.is_main_process:
+            # FSDP2: all ranks must run the sampling forward (all-gather
+            # collectives); non-main ranks write to a scratch dir instead.
+            from toolkit.distributed import get_rank
+            sample_folder = os.path.join(self.save_root, f'samples_rank{get_rank()}')
         gen_img_config_list = []
 
         sample_config = self.first_sample_config if is_first else self.sample_config
@@ -504,6 +509,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
         pass
 
     def save(self, step=None):
+        if getattr(self, '_fsdp_active', False) and not self.accelerator.is_main_process:
+            # FSDP2: the LoRA state dict gather (DTensor full_tensor) is a
+            # collective issued inside get_state_dict - all ranks must join.
+            if self.network is not None:
+                self.network.get_state_dict(dtype=get_torch_dtype(self.save_config.dtype))
+            return
         if not self.accelerator.is_main_process:
             return
         flush()
@@ -700,7 +711,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         print_acc(f"Saved checkpoint to {file_path}")
 
         # save optimizer
-        if self.optimizer is not None:
+        if self.optimizer is not None and not getattr(self, '_fsdp_active', False):
             try:
                 filename = f'optimizer.pt'
                 file_path = os.path.join(self.save_root, filename)
@@ -720,6 +731,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.ema is not None:
             self.ema.train()
         flush()
+
+        # Persist the torch.compile Mega-Cache alongside the checkpoint. Each call captures every
+        # shape compiled so far, so the file converges to a complete (shippable) cache once all
+        # ARB-bucket shapes have been trained through; the final end-of-run save() is the complete
+        # one. Only active when compile_cache is on (path set in the compile block).
+        _compile_cache_path = getattr(self, "_compile_cache_path", None)
+        if _compile_cache_path:
+            from toolkit.util.compile_cache import save_compile_cache
+            save_compile_cache(_compile_cache_path, log=print_acc)
 
     # Called before the model is loaded
     def hook_before_model_load(self):
@@ -749,7 +769,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
         if self.sd.vae is not None:
             self.sd.vae = self.accelerator.prepare(self.sd.vae)
-        if self.sd.unet is not None:
+        fsdp = getattr(self, '_fsdp_active', False)
+        if self.sd.unet is not None and not fsdp:
             self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
@@ -764,10 +785,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.refiner_unet = self.accelerator.prepare(self.sd.refiner_unet)
             self.modules_being_trained.append(self.sd.refiner_unet)
         # todo, do we need to do the network or will "unet" get it?
-        if self.sd.network is not None:
+        if self.sd.network is not None and not fsdp:
             self.sd.network = self.accelerator.prepare(self.sd.network)
             self.modules_being_trained.append(self.sd.network)
-        if self.adapter is not None and self.adapter_config.train:
+        if self.adapter is not None and self.adapter_config.train and not fsdp:
             # todo adapters may not be a module. need to check
             self.adapter = self.accelerator.prepare(self.adapter)
             self.modules_being_trained.append(self.adapter)
@@ -797,6 +818,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for group in self.optimizer.param_groups:
                 for param in group['params']:
                     params.append(param)
+            # EMA keeps a weakref on every tracked param. If a tracked param is a tensor SUBCLASS
+            # (e.g. a trainable mxfp8 / quantized weight in a full fine-tune), that weakref makes
+            # the whole model un-.to()-able: nn.Module._apply forces the swap_tensors path for
+            # subclass params and swap_tensors refuses weakref'd tensors -> crash on any device
+            # move / sampling teardown (pytorch/pytorch#187008, which the no-op move guard cannot
+            # rescue for genuine moves). LoRA training is unaffected (EMA tracks only the plain
+            # LoRA params, never the frozen quantized base). Fail fast instead of crashing mid-run.
+            from torch.utils._python_dispatch import is_traceable_wrapper_subclass
+            subclass_params = [p for p in params if is_traceable_wrapper_subclass(p)]
+            if subclass_params:
+                raise ValueError(
+                    f"use_ema=True is incompatible with training tensor-subclass (quantized) "
+                    f"parameters: {len(subclass_params)} EMA-tracked param(s) are tensor subclasses "
+                    f"(e.g. mxfp8/quantized weights in a full fine-tune). EMA holds a weakref to "
+                    f"each tracked param, which makes the model crash on any .to()/device move via "
+                    f"torch.utils.swap_tensors (pytorch/pytorch#187008). Use a LoRA adapter so EMA "
+                    f"tracks only plain LoRA params, or disable EMA for full quantized fine-tuning."
+                )
             self.ema = ExponentialMovingAverage(
                 params,
                 decay=self.train_config.ema_config.ema_decay,
@@ -1725,6 +1764,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
         BaseTrainProcess.run(self)
         params = []
 
+        # FSDP2 multi-GPU: bring up the process group when launched via torchrun
+        from toolkit.distributed import init_process_group_if_needed, is_distributed
+        init_process_group_if_needed()
+        self._fsdp_active = bool(getattr(self.model_config, 'fsdp', False)) and is_distributed()
+        if self._fsdp_active:
+            if self.train_config.gradient_accumulation_steps != 1:
+                raise NotImplementedError("fsdp: gradient accumulation not supported yet")
+            if getattr(self.train_config, 'ema_config', None) is not None:
+                raise NotImplementedError("fsdp: EMA not supported yet")
+
         ### HOOK ###
         self.hook_before_model_load()
         model_config_to_load = copy.deepcopy(self.model_config)
@@ -1971,6 +2020,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_unet
                 )
 
+                # FSDP2: shard the denoiser (frozen mxfp8 weights + LoRA params
+                # inside blocks) now that LoRA is attached but BEFORE any
+                # optimizer-param collection - fully_shard replaces the param
+                # objects with sharded DTensors.
+                if self._fsdp_active:
+                    from toolkit.distributed.fsdp import apply_fsdp2
+                    apply_fsdp2(self.sd.unet)
+
                 # we cannot merge in if quantized or offloading. note: torchao quantized weights can
                 # still be force merged at save time for the merge-and-reset method (see save logic),
                 # but we keep can_merge_in False here so sampling never merges in/out.
@@ -2153,7 +2210,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.start_step = self.step_num
 
         optimizer_type = self.train_config.optimizer.lower()
-        
+
         # esure params require grad
         self.ensure_params_requires_grad(force=True)
         optimizer = get_optimizer(self.params, optimizer_type, learning_rate=self.train_config.lr,
@@ -2168,7 +2225,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # check if it exists
         optimizer_state_filename = f'optimizer.pt'
         optimizer_state_file_path = os.path.join(self.save_root, optimizer_state_filename)
-        if os.path.exists(optimizer_state_file_path):
+        if os.path.exists(optimizer_state_file_path) and not self._fsdp_active:
             # try to load
             # previous param groups
             # previous_params = copy.deepcopy(optimizer.param_groups)
@@ -2299,6 +2356,25 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 user_set_cache_limit = cache_size_limit is not None
                 if user_set_cache_limit:
                     torch._dynamo.config.cache_size_limit = cache_size_limit
+                else:
+                    # Raise the per-graph dynamo recompile limit before compiling. Multi-resolution /
+                    # ARB-bucket training feeds the compiled unet several distinct input shapes (one
+                    # per bucket, plus edit-vs-t2i conditioning lengths); each is a recompile and the
+                    # torch default (8) is easily exceeded, after which dynamo bails to eager and the
+                    # compile speedup is silently lost. `recompile_limit` is the torch>=2.12 name and
+                    # is aliased to the legacy `cache_size_limit`; set whichever this torch exposes.
+                    _recompile_limit = int(getattr(self.model_config, "compile_recompile_limit", 64) or 64)
+                    if hasattr(torch._dynamo.config, "recompile_limit"):
+                        torch._dynamo.config.recompile_limit = _recompile_limit
+                    else:
+                        torch._dynamo.config.cache_size_limit = _recompile_limit
+                # Mega-Cache: load a previously persisted portable compile cache (if present) BEFORE
+                # the first forward, so cold-start / migrated / fresh-container runs reuse the baked
+                # triton kernels instead of recompiling them. Re-saved at each checkpoint in save().
+                if getattr(self.model_config, "compile_cache", False):
+                    from toolkit.util.compile_cache import load_compile_cache
+                    self._compile_cache_path = os.path.join(self.save_root, "compile_cache.bin")
+                    load_compile_cache(self._compile_cache_path, log=print_acc)
                 torch._dynamo.config.suppress_errors = False
                 # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
                 # crashes on some dynamic-shape index expressions (sympy PowByNatural
@@ -2463,6 +2539,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     unet_module = self.sd.unet
                     unet_module.to = lambda *args, **kwargs: unet_module
 
+                # Compiled tensor-subclass weights (e.g. static mxfp8) can't survive a no-op
+                # `.to()` move (swap_tensors + compile's param weakref). Sampling does several
+                # redundant moves; guard `.to` on the unet (and its inner module) to skip them.
+                if str(getattr(self.model_config, "qtype", "") or "").startswith("mxfp8"):
+                    from toolkit.util.mxfp8_patch import install_noop_move_guard_recursive
+                    install_noop_move_guard_recursive(self.sd.unet)
             except Exception as e:
                 # undo any block-level compiles that happened before the failure,
                 # so "continuing without compilation" is actually true

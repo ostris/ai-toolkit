@@ -690,6 +690,7 @@ class ModelConfig:
 
         # only for flux for now
         self.quantize = kwargs.get("quantize", False)
+        self.fsdp: bool = kwargs.get("fsdp", False)  # FSDP2 fully_shard of the denoiser (launch with torchrun)
         self.quantize_te = kwargs.get("quantize_te", self.quantize)
         self.qtype = kwargs.get("qtype", "qfloat8")
         self.qtype_te = kwargs.get("qtype_te", "qfloat8")
@@ -759,7 +760,41 @@ class ModelConfig:
         self.compile_fullgraph = kwargs.get("compile_fullgraph", False)
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
         self.cache_size_limit = kwargs.get("cache_size_limit", None)
-        
+
+        # per-graph dynamo recompile limit for the compiled unet. Multi-resolution / ARB-bucket
+        # training feeds the compiled model several distinct input shapes (one per bucket, plus
+        # edit-vs-t2i conditioning lengths); each new shape is a recompile and the torch default
+        # (8) is easily exceeded, at which point dynamo silently falls back to eager and the
+        # compile speedup is lost. Raise it so every bucket shape stays compiled.
+        self.compile_recompile_limit = kwargs.get("compile_recompile_limit", 64)
+
+        # persist torch.compile's portable Mega-Cache (inductor + autotune + AOTAutograd
+        # artifacts) to <save_root>/compile_cache.bin. Loaded before compile, re-saved at each
+        # checkpoint. torch's default fx_graph_cache already persists to /tmp on a persistent box,
+        # so this mainly helps ephemeral / cloud / fresh-container runs (and 1-GPU -> N-GPU warmup)
+        # where the inductor cache would otherwise be lost and every kernel recompiled. Opt-in.
+        self.compile_cache = kwargs.get("compile_cache", False)
+
+        # mxfp8 stores weights as tensor subclasses. torch.compile leaves a weakref on the traced
+        # params (torch's MetaConverter, see pytorch/pytorch#170770), which makes a GENUINE device
+        # move (offloading) of the compiled weight crash inside torch.utils.swap_tensors
+        # ("_apply(): Couldn't swap Linear.weight"). The no-op move guard installed after compile
+        # only skips moves that change nothing (sampling device juggling at low_vram=False); it
+        # cannot rescue a real offload move. So compiling an mxfp8 model that also offloads is
+        # unsupported -> fail fast here instead of crashing minutes into the run.
+        _mxfp8_compilable = isinstance(self.qtype, str) and self.qtype in (
+            "mxfp8", "mxfp8_static", "mxfp8_static_d1", "mxfp8_static_rt",
+        )
+        if self.quantize and _mxfp8_compilable and self.compile and (self.low_vram or self.layer_offloading):
+            _which = "low_vram" if self.low_vram else "layer_offloading"
+            raise ValueError(
+                f"Unsupported combination: qtype='{self.qtype}' + compile=True + {_which}=True. "
+                f"Offloading a torch.compiled mxfp8 (tensor-subclass) weight triggers a torch "
+                f"swap_tensors weakref crash (pytorch/pytorch#170770; upstream fixes #171209/#174738 "
+                f"are unmerged). Choose one: compile=False, or {_which}=False (mxfp8 already cuts "
+                f"weight VRAM substantially, so compile without offload usually fits)."
+            )
+
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         
