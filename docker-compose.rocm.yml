@@ -1,0 +1,31 @@
+version: "3.8"
+
+# AMD GPUs: builds docker/Dockerfile.rocm locally. Narrow the GPU kernels with
+# ROCM_DEVICES=device-gfx1100 docker compose -f docker-compose.rocm.yml up --build
+services:
+  ai-toolkit:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rocm
+      args:
+        ROCM_DEVICES: ${ROCM_DEVICES:-device-all}
+    image: aitoolkit:rocm
+    restart: unless-stopped
+    ports:
+      - "8675:8675"
+    volumes:
+      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./aitk_db.db:/app/ai-toolkit/aitk_db.db
+      - ./datasets:/app/ai-toolkit/datasets
+      - ./output:/app/ai-toolkit/output
+      - ./config:/app/ai-toolkit/config
+    environment:
+      - AI_TOOLKIT_AUTH=${AI_TOOLKIT_AUTH:-password}
+      - NODE_ENV=production
+      - TZ=UTC
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    # AMD's documented setting for ROCm containers
+    security_opt:
+      - seccomp=unconfined

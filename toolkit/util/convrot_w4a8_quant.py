@@ -37,6 +37,7 @@ import torch
 
 from toolkit.util.convrot_quant import (
     ConvRotInt8Quantizer,
+    _e4m3_triton_ok,
     _import_triton,
     _int8_act_quant_padded,
     _int8_epilogue,
@@ -188,12 +189,21 @@ def _get_kernels():
         s = tl.interleave(s, s)
         return tl.interleave(s, s)
 
-    @triton.jit
-    def _sat_s8(v):
-        # round-to-nearest-even + saturate to int8 in one PTX cvt (-128 reachable; see SAT)
-        return tl.inline_asm_elementwise(
-            "cvt.rni.sat.s8.f32 $0, $1;", "=r,r", [v], dtype=tl.int32, is_pure=True, pack=1
-        )
+    if torch.version.hip is None:
+
+        @triton.jit
+        def _sat_s8(v):
+            # round-to-nearest-even + saturate to int8 in one PTX cvt (-128 reachable; see SAT)
+            return tl.inline_asm_elementwise(
+                "cvt.rni.sat.s8.f32 $0, $1;", "=r,r", [v], dtype=tl.int32, is_pure=True, pack=1
+            )
+
+    else:
+
+        @triton.jit
+        def _sat_s8(v):
+            # no PTX on ROCm: the same rounding and saturation in two steps
+            return tl.clamp(libdevice.rint(v), -128.0, 127.0).to(tl.int32)
 
     @triton.jit
     def w4a8_unpack_kernel(
@@ -324,7 +334,7 @@ def _unpack_impl(qdata: torch.Tensor, srel_u8: torch.Tensor, cb_u8: torch.Tensor
 
 @torch.library.custom_op("ostris::convrot_w4a8_unpack", mutates_args=())
 def _w4a8_unpack_op(qdata: torch.Tensor, srel_u8: torch.Tensor, cb_u8: torch.Tensor, group_size: int) -> torch.Tensor:
-    if not (_triton_available() and qdata.is_cuda):
+    if not (_triton_available() and qdata.is_cuda and _e4m3_triton_ok(qdata.device)):
         return unpack_w4a8_eager(qdata, srel_u8.view(torch.float8_e4m3fn), cb_u8.view(torch.float32), group_size)
     return _unpack_impl(qdata, srel_u8, cb_u8, group_size)
 
@@ -574,6 +584,7 @@ class ConvRotW4A8Quantizer(ConvRotInt8Quantizer):
             and module.cw4_group_size == 16
             and module.in_features % 16 == 0
             and _triton_available()
+            and _e4m3_triton_ok(x.device)
         )
 
     def prepare_act(self, module, x: torch.Tensor):

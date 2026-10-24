@@ -1,7 +1,10 @@
 import { spawn, execFile, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
+import path from 'path';
 import si from 'systeminformation';
+import { TOOLKIT_ROOT } from '@/paths';
+import { resolvePythonPath } from '../../cron/pythonPath';
 import { loadMacstats } from '@/server/macstats';
 import { createLoadSampler, readCpuTemperature, readMemory } from '@/server/cpuStats';
 import { CpuInfo, GpuInfo, GPUApiResponse, MonitorHistoryPoint, MonitorInit, MonitorSample } from '@/types';
@@ -19,6 +22,10 @@ const execFileAsync = promisify(execFile);
  * spawn-per-request /api/gpu route slow. If loop mode never produces output
  * (or nvidia-smi keeps hanging), we fall back to a one-shot spawn per tick,
  * which matches the old route's behavior exactly.
+ *
+ * Without nvidia-smi, the same loop runs toolkit/util/amd_gpu_stats.py in the
+ * venv instead: it prints AMD GPU stats (amdgpu sysfs on Linux, ADLX on
+ * Windows) in nvidia-smi's CSV layout, so both share the parser below.
  */
 
 const NV_QUERY_ARGS = [
@@ -26,6 +33,7 @@ const NV_QUERY_ARGS = [
   '--format=csv,noheader,nounits',
 ];
 const NV_ENV = { ...process.env, CUDA_DEVICE_ORDER: 'PCI_BUS_ID' };
+const AMD_STATS_SCRIPT = path.join(TOOLKIT_ROOT, 'toolkit', 'util', 'amd_gpu_stats.py');
 // No stdout line for this long means the loop child is buffering or hung.
 const NV_WATCHDOG_MS = 15_000;
 // A line-less gap this long after the last line closes out a batch (all
@@ -115,6 +123,8 @@ class SystemMonitor {
   private latestCpu: CpuInfo | null = null;
   private latestGpu: GPUApiResponse = { hasNvidiaSmi: false, isMac: this.isMac, gpus: [] };
   private macGpuName = 'Apple GPU';
+  // which tool feeds the loop below; switches to 'amd' once nvidia-smi is missing
+  private gpuVendor: 'nvidia' | 'amd' = 'nvidia';
   private nvChild: ChildProcess | null = null;
   private nvBatch: GpuInfo[] = [];
   private nvStdoutBuffer = '';
@@ -398,10 +408,13 @@ class SystemMonitor {
     this.nvReaped = true;
 
     let child: ChildProcess;
+    const [command, args] = this.gpuCommand(true);
     try {
-      child = spawn('nvidia-smi', [...NV_QUERY_ARGS, '-lms', String(MONITOR_TICK_MS)], {
+      child = spawn(command, args, {
         env: NV_ENV,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // the AMD helper exits when its stdin closes, so it can never outlive us
+        stdio: [this.gpuVendor === 'amd' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        windowsHide: true,
       });
     } catch {
       this.markNvUnavailable();
@@ -427,6 +440,12 @@ class SystemMonitor {
       if (this.nvFlushTimer) {
         clearTimeout(this.nvFlushTimer);
         this.nvFlushTimer = null;
+      }
+      // the helper exits early when there is no AMD GPU or no ADLX; retrying
+      // would only respawn python every few seconds
+      if (this.gpuVendor === 'amd' && !this.nvEverGotLine) {
+        this.markNvUnavailable();
+        return;
       }
       if (!this.nvUnavailable && !this.nvOneShotMode) {
         setTimeout(() => this.startNvLoop(), 5000);
@@ -454,17 +473,27 @@ class SystemMonitor {
     this.nvFlushTimer = null;
     if (this.nvBatch.length === 0) return;
     this.latestGpu = {
-      hasNvidiaSmi: true,
-      isMac: false,
+      ...this.gpuSource(),
       gpus: this.nvBatch.sort((a, b) => a.index - b.index),
     };
     this.nvBatch = [];
   }
 
+  private gpuSource(): Omit<GPUApiResponse, 'gpus'> {
+    return { hasNvidiaSmi: this.gpuVendor === 'nvidia', hasAmdGpu: this.gpuVendor === 'amd', isMac: false };
+  }
+
+  private gpuCommand(loop: boolean): [string, string[]] {
+    if (this.gpuVendor === 'amd') {
+      return [resolvePythonPath(), ['-u', AMD_STATS_SCRIPT, ...(loop ? ['--loop-ms', String(MONITOR_TICK_MS)] : [])]];
+    }
+    return ['nvidia-smi', [...NV_QUERY_ARGS, ...(loop ? ['-lms', String(MONITOR_TICK_MS)] : [])]];
+  }
+
   private nvWatchdog(): void {
     if (this.nvUnavailable || !this.nvChild) return;
     if (Date.now() - this.lastNvLineAt <= NV_WATCHDOG_MS) return;
-    console.warn('Monitor: no output from nvidia-smi loop, restarting it');
+    console.warn(`Monitor: no output from ${this.gpuVendor} GPU stats loop, restarting it`);
     // Loop mode that never produced a single line isn't going to start —
     // switch to a one-shot spawn per tick instead of kill/respawn forever.
     if (!this.nvEverGotLine) {
@@ -477,19 +506,20 @@ class SystemMonitor {
     if (this.nvUnavailable || this.nvOneShotInFlight) return;
     this.nvOneShotInFlight = true;
     try {
-      const { stdout } = await execFileAsync('nvidia-smi', NV_QUERY_ARGS, { env: NV_ENV });
+      const [command, args] = this.gpuCommand(false);
+      const { stdout } = await execFileAsync(command, args, { env: NV_ENV, windowsHide: true });
       const gpus = stdout
         .trim()
         .split('\n')
         .map(parseGpuLine)
         .filter((gpu): gpu is GpuInfo => gpu !== null)
         .sort((a, b) => a.index - b.index);
-      this.latestGpu = { hasNvidiaSmi: true, isMac: false, gpus };
+      this.latestGpu = { ...this.gpuSource(), gpus };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         this.markNvUnavailable();
       } else {
-        console.error('Monitor: one-shot nvidia-smi failed:', err);
+        console.error(`Monitor: one-shot ${this.gpuVendor} GPU stats failed:`, err);
       }
     } finally {
       this.nvOneShotInFlight = false;
@@ -497,12 +527,22 @@ class SystemMonitor {
   }
 
   private markNvUnavailable(): void {
+    if (this.gpuVendor === 'nvidia') {
+      // no nvidia-smi: try the AMD helper through the same loop
+      this.gpuVendor = 'amd';
+      this.nvChild = null;
+      this.nvEverGotLine = false;
+      this.nvOneShotMode = false;
+      this.startNvLoop();
+      return;
+    }
     this.nvUnavailable = true;
     this.latestGpu = {
       hasNvidiaSmi: false,
+      hasAmdGpu: false,
       isMac: false,
       gpus: [],
-      error: 'nvidia-smi not found or not accessible',
+      error: 'No GPU stats available (nvidia-smi not found, no AMD GPU readable by amd_gpu_stats.py)',
     };
   }
 }
