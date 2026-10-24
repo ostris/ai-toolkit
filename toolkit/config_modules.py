@@ -609,6 +609,21 @@ class TrainConfig:
         self.do_differential_guidance = kwargs.get('do_differential_guidance', False)
         self.differential_guidance_scale = kwargs.get('differential_guidance_scale', 3.0)
 
+        # OPD (On-Policy Distillation) - DiffSynth-Studio-style step distillation.
+        # Student runs N denoise steps (no grad) to build a trajectory, picks a random
+        # start idx, does 1 grad-enabled step, teacher walks the remaining sigmas
+        # (no grad) to produce a regression target in noise-pred space. LoRA only
+        # for now (teacher = base weights via network.is_active=False).
+        self.opd: bool = kwargs.get('opd', False)
+        self.opd_teacher_sigmas: Optional[List[float]] = kwargs.get('opd_teacher_sigmas', None)
+        self.opd_teacher_timesteps: Optional[List[float]] = kwargs.get('opd_teacher_timesteps', None)
+        self.opd_student_sigmas: Optional[List[float]] = kwargs.get('opd_student_sigmas', None)
+        self.opd_student_timesteps: Optional[List[float]] = kwargs.get('opd_student_timesteps', None)
+        self.opd_teacher_cfg: float = float(kwargs.get('opd_teacher_cfg', 4.0))
+        self.opd_student_cfg: float = float(kwargs.get('opd_student_cfg', 1.0))
+        self.opd_num_distill_steps: int = int(kwargs.get('opd_num_distill_steps', 1))
+        self.opd_min_distill_idx: int = int(kwargs.get('opd_min_distill_idx', 0))
+
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
@@ -690,6 +705,7 @@ class ModelConfig:
 
         # only for flux for now
         self.quantize = kwargs.get("quantize", False)
+        self.fsdp: bool = kwargs.get("fsdp", False)  # FSDP2 fully_shard of the denoiser (launch with torchrun)
         self.quantize_te = kwargs.get("quantize_te", self.quantize)
         self.qtype = kwargs.get("qtype", "qfloat8")
         self.qtype_te = kwargs.get("qtype_te", "qfloat8")
@@ -759,7 +775,41 @@ class ModelConfig:
         self.compile_fullgraph = kwargs.get("compile_fullgraph", False)
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
         self.cache_size_limit = kwargs.get("cache_size_limit", None)
-        
+
+        # per-graph dynamo recompile limit for the compiled unet. Multi-resolution / ARB-bucket
+        # training feeds the compiled model several distinct input shapes (one per bucket, plus
+        # edit-vs-t2i conditioning lengths); each new shape is a recompile and the torch default
+        # (8) is easily exceeded, at which point dynamo silently falls back to eager and the
+        # compile speedup is lost. Raise it so every bucket shape stays compiled.
+        self.compile_recompile_limit = kwargs.get("compile_recompile_limit", 64)
+
+        # persist torch.compile's portable Mega-Cache (inductor + autotune + AOTAutograd
+        # artifacts) to <save_root>/compile_cache.bin. Loaded before compile, re-saved at each
+        # checkpoint. torch's default fx_graph_cache already persists to /tmp on a persistent box,
+        # so this mainly helps ephemeral / cloud / fresh-container runs (and 1-GPU -> N-GPU warmup)
+        # where the inductor cache would otherwise be lost and every kernel recompiled. Opt-in.
+        self.compile_cache = kwargs.get("compile_cache", False)
+
+        # mxfp8 stores weights as tensor subclasses. torch.compile leaves a weakref on the traced
+        # params (torch's MetaConverter, see pytorch/pytorch#170770), which makes a GENUINE device
+        # move (offloading) of the compiled weight crash inside torch.utils.swap_tensors
+        # ("_apply(): Couldn't swap Linear.weight"). The no-op move guard installed after compile
+        # only skips moves that change nothing (sampling device juggling at low_vram=False); it
+        # cannot rescue a real offload move. So compiling an mxfp8 model that also offloads is
+        # unsupported -> fail fast here instead of crashing minutes into the run.
+        _mxfp8_compilable = isinstance(self.qtype, str) and self.qtype in (
+            "mxfp8", "mxfp8_static", "mxfp8_static_d1", "mxfp8_static_rt",
+        )
+        if self.quantize and _mxfp8_compilable and self.compile and (self.low_vram or self.layer_offloading):
+            _which = "low_vram" if self.low_vram else "layer_offloading"
+            raise ValueError(
+                f"Unsupported combination: qtype='{self.qtype}' + compile=True + {_which}=True. "
+                f"Offloading a torch.compiled mxfp8 (tensor-subclass) weight triggers a torch "
+                f"swap_tensors weakref crash (pytorch/pytorch#170770; upstream fixes #171209/#174738 "
+                f"are unmerged). Choose one: compile=False, or {_which}=False (mxfp8 already cuts "
+                f"weight VRAM substantially, so compile without offload usually fits)."
+            )
+
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         
@@ -1567,3 +1617,17 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
+
+    if train_config.opd:
+        if train_config.opd_teacher_sigmas is None or train_config.opd_teacher_timesteps is None:
+            raise ValueError("opd=True requires opd_teacher_sigmas and opd_teacher_timesteps")
+        if train_config.opd_student_sigmas is None or train_config.opd_student_timesteps is None:
+            raise ValueError("opd=True requires opd_student_sigmas and opd_student_timesteps")
+        if len(train_config.opd_teacher_sigmas) != len(train_config.opd_teacher_timesteps):
+            raise ValueError("opd_teacher_sigmas and opd_teacher_timesteps must have the same length")
+        if len(train_config.opd_student_sigmas) != len(train_config.opd_student_timesteps):
+            raise ValueError("opd_student_sigmas and opd_student_timesteps must have the same length")
+        if train_config.opd_num_distill_steps + train_config.opd_min_distill_idx > len(train_config.opd_student_sigmas):
+            raise ValueError(
+                "opd_num_distill_steps + opd_min_distill_idx must be <= len(opd_student_sigmas)"
+            )

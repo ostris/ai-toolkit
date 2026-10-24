@@ -767,6 +767,12 @@ def get_dataloader_from_datasets(
 
     concatenated_dataset = ConcatDataset(datasets)
 
+    # multi-GPU (torchrun): shard the outermost dataset so each rank sees every
+    # world_size-th item. No-op when running single-process.
+    from toolkit.distributed import is_distributed, get_rank, get_world_size, RankShardDataset
+    if is_distributed():
+        concatenated_dataset = RankShardDataset(concatenated_dataset, get_rank(), get_world_size())
+
     # todo build scheduler that can get buckets from all datasets that match
     # todo and evenly distribute reg images
 
