@@ -307,6 +307,14 @@ class ToolkitModuleMixin:
             x = x.dequantize()
         # always cast to float32
         lora_input = x.to(self.lora_down.weight.dtype)
+        if getattr(network, "zero_nonfinite_lora_inputs", False):
+            # A frozen base model can carry inf on tokens it never reads out (MiniMax H3:
+            # the text rows overflow in the last block). In the LoRA branch that becomes
+            # 0 * inf = NaN and NaN gradients for every upstream LoRA parameter, which the
+            # grad-norm clip then wipes out — the adapter never trains. Feed zeros instead.
+            finite = torch.isfinite(lora_input).all(dim=-1, keepdim=True)
+            if not bool(finite.all()):
+                lora_input = torch.where(finite, lora_input, torch.zeros_like(lora_input))
         lora_output = self._call_forward(lora_input)
         multiplier = self.network_ref().torch_multiplier
 
