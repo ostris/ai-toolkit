@@ -88,7 +88,7 @@ async function getAmdSmiGpuStats(): Promise<GpuInfo[]> {
       const metricCommand = `amd-smi metric --gpu ${gpuId} --csv`;
       try {
         const { stdout: metricStdout } = await execAsync(metricCommand, { env } as any);
-        const lines = metricStdout.trim().split('\n').filter(line => line.trim().length > 0);
+        const lines = metricStdout.trim().split('\n').filter((line: string) => line.trim().length > 0);
         if (lines.length < 2) return null;
         // Use robust CSV parsing for amd-smi (fields may contain quoted arrays with commas)
         function parseCSVLine(line: string): string[] {
@@ -179,8 +179,8 @@ async function getRocmGpuStats(): Promise<GpuInfo[]> {
   const env = getVenvPath();
   const command = 'rocm-smi --showid --showproductname --showtemp --showuse --showmemuse --showmeminfo vram --showpower --showclocks --csv';
   const { stdout } = await execAsync(command, { env } as any);
-  const lines = stdout.split('\n').map(line => line.trim()).filter(line => line.length > 0 && !line.startsWith('Exception') && !line.startsWith('Error'));
-  const headerIndex = lines.findIndex(line => line.startsWith('device,'));
+  const lines = stdout.split('\n').map((line: string) => line.trim()).filter((line: string) => line.length > 0 && !line.startsWith('Exception') && !line.startsWith('Error'));
+  const headerIndex = lines.findIndex((line: string) => line.startsWith('device,'));
   if (headerIndex === -1 || lines.length < headerIndex + 2) return [];
   function parseCSVLine(line: string): string[] {
     const fields: string[] = []; let current = ''; let inQuotes = false;
@@ -203,7 +203,7 @@ async function getRocmGpuStats(): Promise<GpuInfo[]> {
   const cardModelFieldIdx = findHeaderIndex(['card model', 'model']);
   const deviceIdFieldIdx = findHeaderIndex(['device id', 'gpu id']);
   const cardVendorFieldIdx = findHeaderIndex(['card vendor', 'vendor']);
-  const gpus = lines.slice(headerIndex + 1).map((line, idx) => {
+  const gpus = lines.slice(headerIndex + 1).map((line: string, idx: number) => {
     const fields = parseCSVLine(line);
     const deviceName = fields[0]?.trim() || '';
     const deviceMatch = deviceName.match(/\d+/);
