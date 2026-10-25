@@ -119,7 +119,14 @@ def run_doctor():
                 _check("torch sees gpu", False, "could not query")
 
     node_exe, node_major = nodejs.have_usable_node()
-    if node_exe:
+    if node_exe and node_exe == nodejs.local_node_exe() and nodejs.local_node_stale():
+        _check(
+            "node",
+            False,
+            "%s (v%s) is behind pinned v%s (manager sync reinstalls it)"
+            % (node_exe, node_major, nodejs.NODE_VERSION),
+        )
+    elif node_exe:
         _check("node", True, "%s (v%s)" % (node_exe, node_major))
     else:
         _check(

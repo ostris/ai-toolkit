@@ -39,6 +39,7 @@ const NV_BATCH_FLUSH_MS = 100;
 const CPU_TEMP_REFRESH_MS = 5000;
 
 
+
 // Helper function to get venv PATH
 function getVenvPath(): NodeJS.ProcessEnv {
   const projectRoot = path.resolve(process.cwd(), '..');
@@ -249,6 +250,12 @@ async function getRocmGpuStats(): Promise<GpuInfo[]> {
   });
   return gpus;
 }
+// Power limits for GPUs whose driver reports none (nvidia-smi gives [N/A]).
+// GB10 (DGX Spark) is a unified SoC with no settable GPU limit; 140 W is
+// NVIDIA's rated TDP for the GB10 superchip.
+const KNOWN_POWER_LIMITS_W: Record<string, number> = {
+  'NVIDIA GB10': 140,
+};
 
 function parseGpuLine(line: string): GpuInfo | null {
   const [
@@ -284,7 +291,7 @@ function parseGpuLine(line: string): GpuInfo | null {
     },
     power: {
       draw: parseFloat(powerDraw),
-      limit: parseFloat(powerLimit),
+      limit: isNaN(parseFloat(powerLimit)) ? (KNOWN_POWER_LIMITS_W[name] ?? NaN) : parseFloat(powerLimit),
     },
     clocks: {
       graphics: parseInt(clockGraphics),
@@ -293,6 +300,23 @@ function parseGpuLine(line: string): GpuInfo | null {
     fan: {
       speed: parseInt(fanSpeed) || 0, // Some GPUs might not report fan speed, default to 0
     },
+  };
+}
+
+/**
+ * Unified-memory GPUs (GB10 / DGX Spark) have no dedicated VRAM, so
+ * nvidia-smi reports memory as [N/A]. Report the system RAM pool they share
+ * instead, like the Mac path does for Apple silicon.
+ */
+function withSharedMemory(gpu: GPUApiResponse, cpu: CpuInfo | null): GPUApiResponse {
+  if (!cpu || !gpu.gpus.some(g => isNaN(g.memory.total))) return gpu;
+  const total = Math.round(cpu.totalMemory);
+  const free = Math.round(cpu.availableMemory);
+  return {
+    ...gpu,
+    gpus: gpu.gpus.map(g =>
+      isNaN(g.memory.total) ? { ...g, memory: { total, free, used: total - free, shared: true } } : g,
+    ),
   };
 }
 
@@ -364,7 +388,7 @@ class SystemMonitor {
     return {
       t: Date.now(),
       cpu: this.latestCpu,
-      gpu: this.latestGpu,
+      gpu: withSharedMemory(this.latestGpu, this.latestCpu),
       history: [...this.history],
     };
   }
@@ -425,7 +449,11 @@ class SystemMonitor {
       console.error('Monitor: GPU sample failed:', error);
     }
 
-    const sample: MonitorSample = { t, cpu: this.latestCpu, gpu: this.latestGpu };
+    const sample: MonitorSample = {
+      t,
+      cpu: this.latestCpu,
+      gpu: withSharedMemory(this.latestGpu, this.latestCpu),
+    };
     this.history.push(historyPointFromSample(sample));
     if (this.history.length > MONITOR_HISTORY_LENGTH) {
       this.history.splice(0, this.history.length - MONITOR_HISTORY_LENGTH);

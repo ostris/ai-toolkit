@@ -1,0 +1,28 @@
+{
+  // type checking + editor support for extension UI modules only (the web
+  // app has its own config in ui/); they are loaded at runtime, not bundled
+  "extends": "./ui/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "plugins": [],
+    "typeRoots": [
+      "./ui/node_modules/@types"
+    ],
+    "paths": {
+      "@/*": [
+        "./ui/src/*"
+      ],
+      "*": [
+        "./ui/node_modules/@types/*",
+        "./ui/node_modules/*"
+      ]
+    }
+  },
+  "include": [
+    "extensions/*/ui.tsx",
+    "extensions/*/ui.ts",
+    "extensions_built_in/*/ui.tsx",
+    "extensions_built_in/*/ui.ts"
+  ]
+}

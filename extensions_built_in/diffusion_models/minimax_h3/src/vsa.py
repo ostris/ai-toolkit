@@ -14,7 +14,7 @@ a 64-token BlockMask; the compression branch adds
 ``gate * softmax(scores) @ v_pooled`` per tile, gate from
 ``to_gate_compress``.
 
-The FastH3 4-step checkpoints were distilled WITH this policy (sparsity 0.9,
+The FastH3 8-step V2 checkpoint was distilled WITH this policy (sparsity 0.8,
 tile 64 is the trained geometry), so training and sampling both run it, at
 every sequence length.
 """

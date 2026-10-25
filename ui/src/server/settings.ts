@@ -90,3 +90,11 @@ export const getDataRoot = async () => {
   myCache.set(key, dataRoot);
   return dataRoot;
 };
+
+// MODELS_PATH: env wins, then the setting, then <toolkit>/models
+export const getModelsPath = async () => {
+  if (process.env.MODELS_PATH && process.env.MODELS_PATH.trim() !== '') return process.env.MODELS_PATH;
+  const row = await prisma.settings.findFirst({ where: { key: 'MODELS_PATH' } });
+  if (row?.value && row.value !== '') return row.value;
+  return path.join(process.cwd(), '..', 'models');
+};

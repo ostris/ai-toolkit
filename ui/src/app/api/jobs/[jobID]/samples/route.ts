@@ -28,11 +28,22 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   // find all img (png, jpg, jpeg) files in the samples folder. Thumbnails
   // live in the hidden .thumbs subfolder (and partial writes in .tmp) — the
   // isFile check keeps those directories out even if their names ever match.
-  const samples = (await fs.promises.readdir(samplesFolder, { withFileTypes: true }))
+  const names = (await fs.promises.readdir(samplesFolder, { withFileTypes: true }))
     .filter(entry => entry.isFile())
-    .map(entry => entry.name)
+    .map(entry => entry.name);
+  const isMedia = (file: string) =>
+    file.endsWith('.png') ||
+    file.endsWith('.jpg') ||
+    file.endsWith('.jpeg') ||
+    file.endsWith('.webp') ||
+    file.endsWith('.mp4') ||
+    file.endsWith('mp3');
+  const mediaStems = new Set(names.filter(isMedia).map(file => file.slice(0, file.lastIndexOf('.'))));
+  const samples = names
     .filter(file => {
-      return file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg') || file.endsWith('.webp') || file.endsWith('.mp4') || file.endsWith('mp3') || file.endsWith('wav') || file.endsWith('flac') || file.endsWith('ogg');
+      if (isMedia(file)) return true;
+      // text samples (LLM models); a .txt next to a media sample is its prompt sidecar, not a sample
+      return file.endsWith('.txt') && !mediaStems.has(file.slice(0, -4));
     })
     .map(file => {
       return path.join(samplesFolder, file);

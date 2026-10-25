@@ -9,13 +9,17 @@ import { encodeFilePathForUrl } from '@/utils/basic';
 import type { AxiosProgressEvent } from 'axios';
 
 const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.wmv', '.flv'];
+const AUDIO_EXTS = ['.mp3', '.wav', '.flac', '.ogg'];
 const isVideoPath = (p: string) => VIDEO_EXTS.some(ext => p.toLowerCase().endsWith(ext));
+const isAudioPath = (p: string) => AUDIO_EXTS.some(ext => p.toLowerCase().endsWith(ext));
 
 interface Props {
   src: string | null | undefined;
   className?: string;
   instruction?: string;
   onNewImageSelected: (imagePath: string | null) => void;
+  /** also accept audio files (text-generating models take any media) */
+  allowAudio?: boolean;
 }
 
 export default function SampleControlImage({
@@ -23,6 +27,7 @@ export default function SampleControlImage({
   className,
   instruction = 'Add Control Image',
   onNewImageSelected,
+  allowAudio = false,
 }: Props) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -31,7 +36,8 @@ export default function SampleControlImage({
 
   const backgroundUrl = useMemo(() => {
     if (localPreview) return localPreview;
-    // videos preview as a server-generated thumbnail
+    // videos preview as a server-generated thumbnail, audio as its waveform art
+    if (src && isAudioPath(src)) return `/api/audio/art/${encodeURIComponent(src)}`;
     if (src) return `/api/img/${encodeFilePathForUrl(src)}${isVideoPath(src) ? '?thumb=1' : ''}`;
     return null;
   }, [src, localPreview]);
@@ -104,6 +110,7 @@ export default function SampleControlImage({
     accept: {
       'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
       'video/*': VIDEO_EXTS,
+      ...(allowAudio ? { 'audio/*': AUDIO_EXTS } : {}),
     },
     multiple: false,
     noClick: true,
@@ -138,7 +145,7 @@ export default function SampleControlImage({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept={allowAudio ? 'image/*,video/*,audio/*' : 'image/*,video/*'}
         className="hidden"
         onChange={e => {
           const file = e.currentTarget.files?.[0];

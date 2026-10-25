@@ -2,7 +2,7 @@
 
 import { useState, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
-import { MdDashboard, MdImage, MdShowChart, MdCode, MdExtension } from 'react-icons/md';
+import { MdDashboard, MdImage, MdShowChart, MdCode, MdExtension, MdNotes } from 'react-icons/md';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
@@ -14,10 +14,11 @@ import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import JobLossGraph from '@/components/JobLossGraph';
 import JobPlugin from '@/components/JobPlugin';
+import JobNotes from '@/components/JobNotes';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
 
-type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'plugin';
+type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'notes' | 'plugin';
 
 interface Page {
   name: string;
@@ -62,6 +63,13 @@ const pages: Page[] = [
     mainCss: 'pt-[80px] px-0 pb-0',
   },
   {
+    name: 'Notes',
+    value: 'notes',
+    icon: MdNotes,
+    component: JobNotes,
+    mainCss: 'pt-24 pb-4',
+  },
+  {
     name: 'Plugin',
     value: 'plugin',
     icon: MdExtension,
@@ -96,6 +104,9 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   let title = `Job: ${job?.name || 'Loading...'}`;
   if (jobType === 'caption') {
     title = `Captioning: ${job?.job_ref || 'Loading...'}`;
+  }
+  if (jobType === 'inference') {
+    title = `Inference Engine: ${job?.name || 'Loading...'}`;
   }
 
   return (

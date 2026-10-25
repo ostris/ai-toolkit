@@ -249,6 +249,34 @@ def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     return t
 
 
+def _storage_device(t: torch.Tensor) -> torch.device:
+    """Device of a tensor's actual storage. A wrapper subclass (torchao) can report one
+    device on the outside while its inner tensors sit elsewhere (a `.data =` move updates
+    only the outer metadata), so walk __tensor_flatten__ down to the leaves."""
+    try:
+        names, _ = t.__tensor_flatten__()
+    except Exception:
+        return t.device
+    for name in names:
+        inner = getattr(t, name, None)
+        if isinstance(inner, torch.Tensor):
+            return _storage_device(inner)
+    return t.device
+
+
+def _move_own_param(module: nn.Module, name: str, param: nn.Parameter, device) -> None:
+    """Move one of ``module``'s direct parameters to ``device``. Plain tensors go through
+    `.data =`; quantized tensor subclasses (torchao AffineQuantizedTensor) get the whole
+    Parameter replaced -- `.data =` on them moves only the outer metadata, leaving the
+    inner storage behind (same reason _move_params_to_cpu_and_pin replaces them)."""
+    with torch.no_grad():
+        moved = param.data.to(device)
+        if _is_quantized_tensor(param.data):
+            setattr(module, name, nn.Parameter(moved, requires_grad=param.requires_grad))
+        else:
+            param.data = moved
+
+
 def _move_params_to_cpu_and_pin(module: nn.Module):
     """Force parameters to CPU (+pinned) so we can 'bounce' them per forward/backward."""
     with torch.no_grad():

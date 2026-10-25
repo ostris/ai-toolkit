@@ -1,7 +1,7 @@
-import { GroupedSelectOption, SelectOption } from "@/types";
+import { CloudLora, GroupedSelectOption, SelectOption } from "@/types";
 
-type CaptionGroup = 'image' | 'music' | 'video' | 'image/video/sound';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading';
+type CaptionGroup = 'image' | 'music' | 'video' | 'image/video' | 'image/video/sound';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption' | 'caption.caption_format' | 'caption.extract_vocals_before_transcribe' | 'caption.keep_timestamps' | 'caption.thinking' | 'caption.batch_size' | 'caption.layer_offloading' | 'caption.mtp' | 'caption.cuda_graph' | 'caption.vision_bf16' | 'caption.video_fps' | 'caption.system_prompt';
 
 export interface CaptionOption {
     name: string;
@@ -9,6 +9,14 @@ export interface CaptionOption {
     group: CaptionGroup;
     hasMultiLinePrompts?: boolean;
     minNewTokens?: number;
+    // captioner can run LoRAs on its model (applied as sidechains, never merged)
+    supportsLoras?: boolean;
+    // compile is a no-op for this captioner (its decode is already CUDA-graphed)
+    noCompile?: boolean;
+    // LoRAs published for this model, offered in the LoRA browser alongside
+    // local files. Paths are 'org/repo/path_to/file.safetensors'; the captioner
+    // searches the models folder for the file before downloading it to loras/.
+    cloudLoras?: CloudLora[];
     defaults?: { [key: string]: any };
     additionalSections?: AdditionalSections[];
     name_or_path_options?: SelectOption[];
@@ -20,13 +28,15 @@ export interface CaptionOption {
 
 const defaultNameOrPath = '';
 
+export const defaultQtype = 'convrot8';
+
 const extensionsAudio = ['mp3', 'wav', 'flac', 'ogg'];
 const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
 const extensionsVideo = ['mp4', 'mov', 'webm', 'mkv', 'avi'];
 
 const defaultExtensions = [...extensionsImage];
 
-const defaultImageCaptionPrompt = "Caption this image as if you were going to try to generate it with an image generator. Be thurough and describe everything in the image. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". Start out with things like \"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.";
+const defaultImageCaptionPrompt = "Caption this image as if you were going to try to generate it with an image generator. Be thorough and describe everything in the image. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". Start out with things like \"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.";
 
 const defaultVideoCaptionPrompt = "Caption this video as if you were going to try to generate it with a video generator. Describe the visual content, how it moves and changes over time, and the camera work. Also describe the audio, including any speech, music, or sound effects, and transcribe spoken dialogue verbatim in quotes. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". No preamble. Just get to the point.";
 
@@ -67,6 +77,24 @@ overall_soundscape and non_diegetic_music are always exactly N/A for a still ima
 
 Describe only what is actually visible. Be decisive. No preamble and no extra text - output only the three fields.`;
 
+// Captions a song as a YuE2 training caption: one line of comma-separated style
+// tags, then a [Lyrics] line and the verbatim lyrics with bracketed section
+// headers - the exact prefix layout the yue2 arch's parse_caption expects.
+const yue2CaptionPrompt = `Listen to this song and write a YuE2 training caption for it. Output exactly two parts and nothing else.
+
+Part 1, the first line only: comma-separated style tags describing the music. Cover, in this order where applicable: genre and sub-genre, mood, vocal type (male vocal, female vocal, duet, choir, rap, or instrumental), vocal delivery (breathy, belted, falsetto, spoken, whispered, harmonized), lead instruments and production (acoustic guitar, piano, synth pads, 808 bass, live drums, drum machine, strings, lo-fi, reverb-heavy), tempo feel (slow ballad, mid-tempo, upbeat, fast), and era or scene (90s alt rock, modern trap, bedroom pop). Use concrete lowercase tags, no sentences, no hedging, no artist or song names. Example: alternative rock, melancholic, male vocal, falsetto, electric guitar, piano, live drums, slow ballad, 2000s
+
+Part 2: on the next line write [Lyrics] and then the complete lyrics transcribed verbatim, one sung line per line. Split the song into sections with a bracketed header on its own line before each one, using these names: [Intro], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Bridge], [Instrumental], [Solo], [Outro]. A short descriptor may follow the name inside the brackets, e.g. [Intro choir] or [Chorus harmonized]. Leave one blank line between sections. Repeat a chorus each time it is sung, but write each repeated line once per time it is sung, never more. Wordless vocalizing (na, la, oh, ah, hums, vocal chops) is never transcribed syllable by syllable: describe it once in the section header instead, e.g. [Intro wordless vocals] or [Bridge oohs], and if you cannot make out real words in a passage, treat it as wordless. Do not add timestamps, speaker labels, quotation marks, translations, or commentary, and do not annotate ad-libs beyond the section header. If the song has no vocals at all, Part 2 is [Lyrics] followed by a single [Instrumental] line.
+
+Transcribe only what is actually sung. Be decisive. No preamble, no explanations, no markdown - output only the tag line and the lyrics block.`;
+
+// MOSS-Music description prompts. The lyric transcription prompt is fixed in the
+// captioner (it asks for timestamps as loop anchors and strips them afterwards).
+// Framing the description as a generator prompt is what keeps the model to one
+// plain paragraph instead of a sectioned essay with timings and chord names.
+const mossMusicCaptionPrompt = "Write a prompt that a text-to-music generator could use to recreate this track. One paragraph, under 80 words: genre, mood, instrumentation, tempo feel, production style, vocal style. No timestamps, section timings, chord names, or lyric quotes.";
+const mossMusicTagsPrompt = "Describe this music as a single line of comma-separated style tags: genre, mood, vocal type and delivery, lead instruments, production style, tempo feel, era. Lowercase tags only, no sentences.";
+
 // Editable ADDITIONAL INSTRUCTIONS block injected into the Ideogram system prompt.
 // Users can tweak this for dataset-specific guidance without altering the fixed
 // output contract, element/background rules, or bbox format.
@@ -81,6 +109,8 @@ export const captionerTypes: CaptionOption[] = [
             'config.process[0].caption.model_name_or_path': ['ACE-Step/acestep-transcriber', defaultNameOrPath],
             'config.process[0].caption.model_name_or_path2': ['ACE-Step/acestep-captioner', undefined],
             'config.process[0].caption.extensions': [extensionsAudio, defaultExtensions],
+            'config.process[0].caption.caption_format': ['ace_step', undefined],
+            'config.process[0].caption.compile': [true, false],
         },
         name_or_path_options: [
             { value: 'ACE-Step/acestep-transcriber', label: 'ACE-Step/acestep-transcriber' },
@@ -91,6 +121,34 @@ export const captionerTypes: CaptionOption[] = [
         additionalSections: [
             'caption.model_name_or_path2',
             'caption.fixed_caption',
+            'caption.caption_format',
+            'caption.extract_vocals_before_transcribe',
+        ],
+    },
+    {
+        name: 'MossMusicCaptioner',
+        label: 'MOSS-Music',
+        group: 'music',
+        defaults: {
+            'config.process[0].caption.model_name_or_path': ['OpenMOSS-Team/MOSS-Music-8B-Instruct', defaultNameOrPath],
+            'config.process[0].caption.extensions': [extensionsAudio, defaultExtensions],
+            'config.process[0].caption.caption_format': ['ace_step', undefined],
+            'config.process[0].caption.caption_prompt': [mossMusicCaptionPrompt, undefined],
+            'config.process[0].caption.keep_timestamps': [false, undefined],
+            'config.process[0].caption.compile': [true, false],
+        },
+        name_or_path_options: [
+            { value: 'OpenMOSS-Team/MOSS-Music-8B-Instruct', label: 'OpenMOSS-Team/MOSS-Music-8B-Instruct' },
+        ],
+        captionPrompts: {
+            'Description (ACE-Step)': mossMusicCaptionPrompt,
+            'Style tags (YuE2)': mossMusicTagsPrompt,
+        },
+        additionalSections: [
+            'caption.fixed_caption',
+            'caption.caption_format',
+            'caption.keep_timestamps',
+            'caption.caption_prompt',
         ],
     },
     {
@@ -127,7 +185,7 @@ export const captionerTypes: CaptionOption[] = [
         group: 'image/video/sound',
         defaults: {
             'config.process[0].caption.model_name_or_path': ['ai-toolkit/Qwen3-Omni-30B-A3B-Thinking', defaultNameOrPath],
-            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage], defaultExtensions],
+            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage, ...extensionsAudio], defaultExtensions],
             'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
             'config.process[0].caption.max_res': [512, undefined],
             'config.process[0].caption.max_new_tokens': [512, undefined],
@@ -143,6 +201,7 @@ export const captionerTypes: CaptionOption[] = [
             'General': defaultVideoCaptionPrompt,
             'MiniMax H4 T2V': minimaxT2VCaptionPrompt,
             'MiniMax H4 Image': minimaxImageCaptionPrompt,
+            'YuE2': yue2CaptionPrompt,
         },
         additionalSections: [
             'caption.caption_prompt',
@@ -151,6 +210,91 @@ export const captionerTypes: CaptionOption[] = [
             'caption.batch_size',
             'caption.layer_offloading',
             'caption.thinking',
+        ],
+    },
+    {
+        name: 'Qwen25OmniCaptioner',
+        label: 'Qwen2.5-Omni',
+        group: 'image/video/sound',
+        supportsLoras: true,
+        cloudLoras: [
+            {
+                path: 'ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_lora_caption_this_song.safetensors',
+                name: 'Caption This Song',
+            },
+        ],
+        defaults: {
+            'config.process[0].caption.loras': [[], undefined],
+            'config.process[0].caption.model_name_or_path': ['ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors', defaultNameOrPath],
+            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage, ...extensionsAudio], defaultExtensions],
+            'config.process[0].caption.caption_prompt': [defaultVideoCaptionPrompt, undefined],
+            'config.process[0].caption.max_res': [512, undefined],
+            'config.process[0].caption.max_new_tokens': [512, undefined],
+            'config.process[0].caption.batch_size': [1, undefined],
+            'config.process[0].caption.compile': [true, false],
+        },
+        name_or_path_options: [
+            { value: 'ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors', label: 'ai-toolkit/Qwen2.5-Omni-7B (convrot8)' },
+            { value: 'Qwen/Qwen2.5-Omni-7B', label: 'Qwen/Qwen2.5-Omni-7B' },
+            { value: 'Qwen/Qwen2.5-Omni-3B', label: 'Qwen/Qwen2.5-Omni-3B' },
+        ],
+        captionPrompts: {
+            'General': defaultVideoCaptionPrompt,
+            'MiniMax H4 T2V': minimaxT2VCaptionPrompt,
+            'MiniMax H4 Image': minimaxImageCaptionPrompt,
+            'YuE2': yue2CaptionPrompt,
+        },
+        additionalSections: [
+            'caption.caption_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
+            'caption.batch_size',
+        ],
+    },
+    {
+        name: 'Qwen38Captioner',
+        label: 'Qwen3.8 27B',
+        group: 'image/video',
+        supportsLoras: true,
+        noCompile: true,
+        defaults: {
+            'config.process[0].caption.loras': [[], undefined],
+            'config.process[0].caption.model_name_or_path': ['Comfy-Org/Qwen3.8-27B/text_encoders/qwen3.8_27b_w4a8.safetensors', defaultNameOrPath],
+            'config.process[0].caption.extensions': [[...extensionsVideo, ...extensionsImage], defaultExtensions],
+            'config.process[0].caption.caption_prompt': [defaultImageCaptionPrompt, undefined],
+            'config.process[0].caption.max_res': [1024, undefined],
+            'config.process[0].caption.max_new_tokens': [512, undefined],
+            'config.process[0].caption.mtp': [true, undefined],
+            'config.process[0].caption.mtp_depth': [3, undefined],
+            'config.process[0].caption.cuda_graph': [true, undefined],
+            'config.process[0].caption.vision_bf16': [true, undefined],
+            'config.process[0].caption.video_fps': [2, undefined],
+            'config.process[0].caption.thinking': [false, undefined],
+            // the ComfyUI file is already W4A8; quantize only applies to the HF repo
+            'config.process[0].caption.quantize': [true, true],
+            'config.process[0].caption.qtype': ['convrotw4a8', defaultQtype],
+            'config.process[0].caption.compile': [false, false],
+        },
+        name_or_path_options: [
+            { value: 'Comfy-Org/Qwen3.8-27B/text_encoders/qwen3.8_27b_w4a8.safetensors', label: 'Comfy-Org/Qwen3.8-27B (W4A8)' },
+            { value: 'Qwen/Qwen3.8-27B', label: 'Qwen/Qwen3.8-27B (bf16, quantized on load)' },
+        ],
+        captionPrompts: {
+            'General (image)': defaultImageCaptionPrompt,
+            'General (video)': defaultVideoCaptionPrompt,
+            'MiniMax H4 T2V': minimaxT2VCaptionPrompt,
+            'MiniMax H4 Image': minimaxImageCaptionPrompt,
+        },
+        additionalSections: [
+            'caption.caption_prompt',
+            'caption.system_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
+            'caption.video_fps',
+            'caption.thinking',
+            'caption.mtp',
+            'caption.cuda_graph',
+            'caption.vision_bf16',
         ],
     },
     {
@@ -216,6 +360,13 @@ export const quantizationOptions: SelectOption[] = [
     { value: 'uint4', label: '4 bit' },
     { value: 'uint3', label: '3 bit' },
     { value: 'uint2', label: '2 bit' },
+    { value: 'convrotw4a8', label: '4bit convrot W4A8 (int4 weights, int8 activations)' },
+];
+
+// AceStepCaptioner output layouts (caption.caption_format)
+export const captionFormatOptions: SelectOption[] = [
+    { value: 'ace_step', label: 'ACE-Step (caption, lyrics, bpm, key, time signature, duration)' },
+    { value: 'yue2', label: 'YuE2 (description, then [Lyrics] block)' },
 ];
 
 export const batchSizeOptions: SelectOption[] = [
@@ -247,4 +398,17 @@ export const maxNewTokensOptions: SelectOption[] = [
     { value: '8192', label: '8192' },
 ];
 
-export const defaultQtype = 'convrot8';
+export const videoFpsOptions: SelectOption[] = [
+    { value: '1', label: '1' },
+    { value: '2', label: '2 (default)' },
+    { value: '4', label: '4' },
+    { value: '8', label: '8' },
+];
+
+export const mtpDepthOptions: SelectOption[] = [
+    { value: '1', label: '1' },
+    { value: '2', label: '2' },
+    { value: '3', label: '3 (default)' },
+    { value: '4', label: '4' },
+    { value: '5', label: '5' },
+];

@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 _dwt = None
@@ -91,3 +92,63 @@ def stepped_loss(model_pred, latents, noise, noisy_latents, timesteps, scheduler
         latents.float().to(device=predicted_images.device),
         reduction="none",
     )
+
+
+def _band_lows(x: torch.Tensor, levels: int) -> list:
+    """Gaussian-pyramid low-passes of (N, C, H, W) at the input size: lows[0] = x, lows[k] = x
+    averaged over 2^k x 2^k cells and bilinearly resampled back."""
+    lows = [x]
+    cur = x
+    for _ in range(levels):
+        cur = F.avg_pool2d(cur, 2, ceil_mode=True)
+        lows.append(F.interpolate(cur, size=x.shape[-2:], mode="bilinear", align_corners=False))
+    return lows
+
+
+def _bands(x: torch.Tensor, levels: int) -> list:
+    """Laplacian bands at the input size, fine to coarse; they sum back to x."""
+    lows = _band_lows(x, levels)
+    return [lows[k] - lows[k + 1] for k in range(levels)] + [lows[levels]]
+
+
+def band_loss(pred, target, latents, noise, timesteps, is_flow_matching, scheduler, levels: int = 3):
+    """MSE on a per-sample frequency-filtered residual: each Laplacian band of the residual is
+    weighted by how recoverable that band is at the sample's noise level, snr_k / (1 + snr_k) with
+    snr_k = snr(t) * band power of the clean latents / band power of the noise (both measured on
+    the batch). At t -> 0 every weight is 1 and this is the plain MSE; at high t the bands the
+    noise has buried drop out instead of adding gradient noise. The filter is linear, so it
+    applies to pred / target as they are (x0, velocity or epsilon residuals differ only by a
+    scalar in t). Returns an elementwise loss, pred's shape."""
+    pred, target = pred.float(), target.float()
+    shape = pred.shape
+    if pred.dim() not in (4, 5):
+        return F.mse_loss(pred, target, reduction="none")
+    n = shape[0]
+    if pred.dim() == 5:  # video: bands over (H, W) of every frame
+        flat = lambda x: x.float().transpose(1, 2).flatten(0, 1)
+    else:
+        flat = lambda x: x.float()
+    with torch.no_grad():
+        clean_b = _bands(flat(latents.to(pred.device)), levels)
+        noise_b = _bands(flat(noise.to(pred.device)), levels)
+        # band power over the whole batch: a prior-level quantity, not per image
+        p_clean = torch.stack([b.pow(2).mean() for b in clean_b])
+        p_noise = torch.stack([b.pow(2).mean() for b in noise_b]).clamp_min(1e-12)
+        ts = timesteps.to(pred.device).float().flatten()
+        if is_flow_matching:
+            t = (ts / 1000.0).clamp(1e-4, 1 - 1e-4)
+            snr = ((1 - t) / t) ** 2
+        else:
+            ac = scheduler.alphas_cumprod.to(pred.device, torch.float32)[ts.long().clamp(0, scheduler.alphas_cumprod.shape[0] - 1)]
+            snr = ac / (1 - ac).clamp_min(1e-8)
+        s = snr.view(n, 1) * (p_clean / p_noise).view(1, -1)  # (N, levels + 1)
+        w = s / (1 + s)
+        if pred.dim() == 5:
+            w = w.repeat_interleave(shape[2], dim=0)  # per frame row
+        w = w.t().reshape(levels + 1, -1, 1, 1, 1)
+    pb, tb = _bands(flat(pred), levels), _bands(flat(target), levels)
+    filtered = sum(w[k] * (pb[k] - tb[k]) for k in range(levels + 1))
+    loss = filtered.pow(2)
+    if pred.dim() == 5:
+        loss = loss.view(n, shape[2], shape[1], *shape[-2:]).transpose(1, 2)
+    return loss

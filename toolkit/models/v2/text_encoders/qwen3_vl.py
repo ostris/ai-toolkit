@@ -44,6 +44,23 @@ class Qwen3VLTextEncoder(Qwen3VLForConditionalGeneration, OstrisTransformersMixi
     def get_transformer_block_names(cls):
         return ["model.language_model.layers"]
 
+    @classmethod
+    def convert_state_dict_on_load(cls, state_dict):
+        """Single-file (ComfyUI repack) checkpoints: accept the older comfy key
+        layout (``model.layers.*`` / ``visual.*``) next to the transformers one,
+        and materialize the tied ``lm_head`` the files omit."""
+        out = {}
+        for key, value in state_dict.items():
+            if key.startswith("model.layers.") or key in ("model.embed_tokens.weight", "model.norm.weight"):
+                key = "model.language_model." + key[len("model.") :]
+            elif key.startswith("visual."):
+                key = "model." + key
+            out[key] = value
+        embed = out.get("model.language_model.embed_tokens.weight")
+        if "lm_head.weight" not in out and embed is not None:
+            out["lm_head.weight"] = embed
+        return out
+
     def drop_vision_tower(self):
         """Text-only conditioning: the vision tower is dead weight — drop it to
         free VRAM and skip loading its (bf16-slow) Conv3d patch_embed."""

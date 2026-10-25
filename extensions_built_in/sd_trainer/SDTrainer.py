@@ -36,7 +36,7 @@ from diffusers import EMAModel
 import math
 from toolkit.train_tools import precondition_model_outputs_flow_match
 from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
-from toolkit.util.losses import wavelet_loss, stepped_loss
+from toolkit.util.losses import wavelet_loss, stepped_loss, band_loss
 import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
 from PIL import Image
@@ -122,6 +122,16 @@ class SDTrainer(BaseSDTrainProcess):
     def before_model_load(self):
         pass
 
+    def get_batch_target_size(self, batch: 'DataLoaderBatchDTO'):
+        # (width, height) of the bucket the batch was cropped to; what the noisy
+        # latents will be, so reference sizing can match it
+        item = batch.file_items[0]
+        width = getattr(item, 'crop_width', None)
+        height = getattr(item, 'crop_height', None)
+        if width is None or height is None:
+            return None
+        return (width, height)
+
     def get_blank_control_image(self):
         # noise instead of a black image so the fallback does not read as a
         # meaningful (solid black) reference
@@ -160,8 +170,11 @@ class SDTrainer(BaseSDTrainProcess):
                 # needed so we can autoparse the prompt to handle flags
                 gen_img_config = GenerateImageConfig(
                     prompt=prompt, # it will autoparse the prompt
+                    width=sample_item.width,
+                    height=sample_item.height,
                     negative_prompt=sample_item.neg,
                     output_path=output_path,
+                    num_frames=sample_item.num_frames,
                     ctrl_img=sample_item.ctrl_img,
                     ctrl_img_1=sample_item.ctrl_img_1,
                     ctrl_img_2=sample_item.ctrl_img_2,
@@ -242,13 +255,16 @@ class SDTrainer(BaseSDTrainProcess):
                         ctrl_img = ctrl_img_list[0] if len(ctrl_img_list) > 0 else None
                     
                     
+                    target_size = (gen_img_config.width, gen_img_config.height)
                     positive = self.sd.encode_prompt(
                         gen_img_config.prompt,
-                        control_images=ctrl_img
+                        control_images=ctrl_img,
+                        target_size=target_size,
                     ).to('cpu')
                     negative = self.sd.encode_prompt(
                         gen_img_config.negative_prompt,
-                        control_images=ctrl_img
+                        control_images=ctrl_img,
+                        target_size=target_size,
                     ).to('cpu')
                 else:
                     positive = self.sd.encode_prompt(gen_img_config.prompt).to('cpu')
@@ -298,15 +314,16 @@ class SDTrainer(BaseSDTrainProcess):
             # make sure model is on cpu for this part so we don't oom.
             self.sd.unet.to('cpu')
         
-        # cache unconditional embeds (blank prompt)
-        with torch.no_grad():
-            self.unconditional_embeds = self.encode_static_prompt(
-                [self.train_config.unconditional_prompt],
-                long_prompts=self.do_long_prompts,
-            ).to(
-                self.device_torch,
-                dtype=self.sd.torch_dtype
-            ).detach()
+        # cache unconditional embeds (blank prompt); text-generating models have no text encoder
+        if not getattr(self.sd, 'is_llm', False):
+            with torch.no_grad():
+                self.unconditional_embeds = self.encode_static_prompt(
+                    [self.train_config.unconditional_prompt],
+                    long_prompts=self.do_long_prompts,
+                ).to(
+                    self.device_torch,
+                    dtype=self.sd.torch_dtype
+                ).detach()
         
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
@@ -314,14 +331,16 @@ class SDTrainer(BaseSDTrainProcess):
             # D-OPSD: the teacher (prior) prediction is the training target
             self.do_prior_prediction = True
         # move vae to device if we did not cache latents
-        if not self.is_latents_cached:
-            self.sd.vae.eval()
-            self.sd.vae.to(self.device_torch)
-        else:
-            # offload it. Already cached
-            self.sd.vae.to('cpu')
-            flush()
-        add_all_snr_to_noise_scheduler(self.sd.noise_scheduler, self.device_torch)
+        if self.sd.vae is not None:
+            if not self.is_latents_cached:
+                self.sd.vae.eval()
+                self.sd.vae.to(self.device_torch)
+            else:
+                # offload it. Already cached
+                self.sd.vae.to('cpu')
+                flush()
+        if self.sd.noise_scheduler is not None:
+            add_all_snr_to_noise_scheduler(self.sd.noise_scheduler, self.device_torch)
         if self.adapter is not None:
             self.adapter.to(self.device_torch)
 
@@ -403,11 +422,11 @@ class SDTrainer(BaseSDTrainProcess):
                 sd=self.sd
             )
             self.dfe.to(self.device_torch)
-            if hasattr(self.dfe, 'vision_encoder') and self.train_config.gradient_checkpointing:
+            if hasattr(self.dfe, 'vision_encoder'):
                 # must be set to train for gradient checkpointing to work
                 self.dfe.vision_encoder.train()
                 self.dfe.vision_encoder.gradient_checkpointing = True
-            elif hasattr(self.dfe, 'model') and self.train_config.gradient_checkpointing:
+            elif hasattr(self.dfe, 'model'):
                 if hasattr(self.dfe.model, 'enable_gradient_checkpointing'): 
                     self.dfe.model.train()
                     self.dfe.model.enable_gradient_checkpointing()
@@ -750,6 +769,8 @@ class SDTrainer(BaseSDTrainProcess):
                     batch=batch,
                     scheduler=self.sd.noise_scheduler
                 )
+                dfe_loss = dfe_loss.mean()
+                self.additional_logs['loss/dfe'] = dfe_loss.item()
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight 
             else:
                 raise ValueError(f"Unknown diffusion feature extractor version {self.dfe.version}")
@@ -901,10 +922,7 @@ class SDTrainer(BaseSDTrainProcess):
                         tv = torch.clamp(tv, min=0.001)
                 
                 # step latent, use here or with do_fft_loss
-                if self.sd.x0_pred:
-                    t0 = noise_pred
-                else:
-                    t0 = noisy_latents - tv * noise_pred
+                t0 = self.sd.get_x0_prediction(noise_pred, noisy_latents, tv)
                 
                 if self.train_config.t0_loss_target:
                     # replace the loss targets and pred
@@ -912,7 +930,7 @@ class SDTrainer(BaseSDTrainProcess):
                     pred = t0
                     # handle velocity equiv loss if set. This scales t0 loss to match velocity of flowmatchhing loss
                     if self.train_config.t0_velocity_equiv_weight:
-                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.01) ** 2)
                         local_loss_scale = velocity_equiv_weight
                         
                 if self.train_config.do_fft_loss:
@@ -921,9 +939,11 @@ class SDTrainer(BaseSDTrainProcess):
                     pred_mag = torch.fft.rfft2(t0.float(), norm="ortho").abs()
                     fft_loss = F.mse_loss(pred_mag, target_mag, reduction="none")
                     if self.train_config.do_fft_velocity_equiv_weight:
-                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.01) ** 2)
                         fft_loss = fft_loss * velocity_equiv_weight
-                    additional_loss += fft_loss.mean()
+                    fft_loss = fft_loss.mean()
+                    self.additional_logs['loss/fft'] = fft_loss.item()
+                    additional_loss += fft_loss
             if self.train_config.loss_type == "pseudo_huber":
                 diff = pred.float() - target.float()
                 c=0.01
@@ -932,6 +952,9 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
             elif self.train_config.loss_type == "wavelet":
                 loss = wavelet_loss(pred, batch.latents, noise)
+            elif self.train_config.loss_type == "band":
+                # per-sample frequency-weighted MSE: bands the noise has buried at this t drop out
+                loss = band_loss(pred, target, batch.latents, noise, timesteps, self.sd.is_flow_matching, self.sd.noise_scheduler)
             elif self.train_config.loss_type == "stepped":
                 loss = stepped_loss(pred, batch.latents, noise, noisy_latents, timesteps, self.sd.noise_scheduler)
                 # the way this loss works, it is low, increase it to match predictable LR effects
@@ -958,7 +981,8 @@ class SDTrainer(BaseSDTrainProcess):
                 timestep_weight = self.sd.noise_scheduler.get_weights_for_timesteps(
                     timesteps,
                     v2=self.train_config.linear_timesteps2,
-                    timestep_type=self.train_config.timestep_type
+                    timestep_type=self.train_config.timestep_type,
+                    x0_pred=self.sd.x0_pred,
                 ).to(loss.device, dtype=loss.dtype)
                 if len(loss.shape) == 4:
                     timestep_weight = timestep_weight.view(-1, 1, 1, 1).detach()
@@ -1075,6 +1099,8 @@ class SDTrainer(BaseSDTrainProcess):
             if additional_model_loss is not None:
                 loss = loss + additional_model_loss
                 self.additional_logs["additional_model_loss"] = additional_model_loss.item()
+            # per-term breakdown, if the model keeps one
+            self.additional_logs.update(getattr(self.sd, "additional_loss_logs", None) or {})
 
         if self.train_config.max_loss_debug and self.train_config.max_loss is not None:
             if loss.item() > self.train_config.max_loss:
@@ -1315,12 +1341,13 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt_kwargs = {}
                     if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
                         prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        prompt_kwargs['target_size'] = self.get_batch_target_size(batch)
                     embeds_to_use = self.sd.encode_prompt(
                         prompt_list,
-                        long_prompts=self.do_long_prompts).to(
+                        long_prompts=self.do_long_prompts,
+                        **prompt_kwargs).to(
                         self.device_torch,
-                        dtype=dtype,
-                        **prompt_kwargs
+                        dtype=dtype
                     ).detach()
 
             # dont use network on this
@@ -1411,7 +1438,33 @@ class SDTrainer(BaseSDTrainProcess):
         )
     
 
-    def train_single_accumulation(self, batch: DataLoaderBatchDTO):
+    def train_llm_accumulation(self, batch: DataLoaderBatchDTO, accum_scale: float = 1.0):
+        """Text-generating models (BaseModel.is_llm): no noise, scheduler, VAE or prompt
+        encoding. The model computes its own loss from the batch (cached media + captions)
+        and reports per-term logs through additional_loss_logs."""
+        network = self.network if self.network is not None else BlankNetwork()
+        network.multiplier = batch.get_network_weight_list()
+        with torch.no_grad():
+            loss_multiplier = torch.tensor(batch.loss_multiplier_list).to(self.device_torch, dtype=torch.float32)
+        with network:
+            with self.timer('llm_loss'):
+                loss = self.sd.get_llm_loss(batch)
+            self.additional_logs.update(getattr(self.sd, "additional_loss_logs", None) or {})
+            if not torch.isfinite(loss):
+                print_acc("loss is nan")
+                loss = torch.zeros_like(loss).requires_grad_(True)
+            with self.timer('backward'):
+                loss = loss * loss_multiplier.mean()
+                # backward stays inside the network context (see the note in the diffusion path)
+                self.accelerator.backward(loss * accum_scale if accum_scale != 1.0 else loss)
+        return loss.detach()
+
+    def train_single_accumulation(self, batch: DataLoaderBatchDTO, accum_scale: float = 1.0):
+        # accum_scale: 1 / number of micro-batches accumulated per optimizer step, so the
+        # summed gradients equal the mean over the effective batch. Applied to the backward
+        # only; the returned loss stays unscaled for logging.
+        if getattr(self.sd, 'is_llm', False):
+            return self.train_llm_accumulation(batch, accum_scale=accum_scale)
         with torch.no_grad():
             self.timer.start('preprocess_batch')
             if isinstance(self.adapter, CustomAdapter):
@@ -1703,6 +1756,7 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt_kwargs = {}
                     if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
                         prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        prompt_kwargs['target_size'] = self.get_batch_target_size(batch)
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
@@ -1782,6 +1836,7 @@ class SDTrainer(BaseSDTrainProcess):
                                 self.adapter.is_unconditional_run = False
                             if self.sd.encode_control_in_text_embeddings and batch.control_tensor_list is not None:
                                 prompt_kwargs['control_images'] = batch.control_tensor_list
+                                prompt_kwargs['target_size'] = self.get_batch_target_size(batch)
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
@@ -2281,7 +2336,7 @@ class SDTrainer(BaseSDTrainProcess):
                     # if self.is_bfloat:
                     # loss.backward()
                     # else:
-                    self.accelerator.backward(loss)
+                    self.accelerator.backward(loss * accum_scale if accum_scale != 1.0 else loss)
 
         return loss.detach()
         # flush()
@@ -2293,6 +2348,12 @@ class SDTrainer(BaseSDTrainProcess):
             batch_list = [batch]
         total_loss = None
         self.optimizer.zero_grad()
+        # micro-batches per optimizer step: a batch list (gradient_accumulation) or repeated
+        # calls (gradient_accumulation_steps). -1 (whole epoch) has no fixed count; left summed.
+        n_accum = len(batch_list)
+        if self.train_config.gradient_accumulation_steps > 1:
+            n_accum *= self.train_config.gradient_accumulation_steps
+        accum_scale = 1.0 / n_accum
         for batch in batch_list:
             if self.sd.is_multistage:
                 # handle multistage switching
@@ -2306,7 +2367,7 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.current_boundary_index in self.sd.trainable_multistage_boundaries:
                             # if this boundary is trainable, we can stop looking
                             break
-            loss = self.train_single_accumulation(batch)
+            loss = self.train_single_accumulation(batch, accum_scale=accum_scale)
             self.steps_this_boundary += 1
             if total_loss is None:
                 total_loss = loss

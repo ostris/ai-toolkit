@@ -129,3 +129,52 @@ body {
     @apply text-sm text-gray-200;
   }
 }
+
+/* Generate page sidebar: tighter version of the shared form inputs */
+.compact-form label {
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.125rem !important;
+  font-size: 11px !important;
+}
+.compact-form input[type='text'],
+.compact-form input[type='number'],
+.compact-form input[type='password'],
+.compact-form textarea {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+  font-size: 12px !important;
+}
+.compact-form textarea {
+  min-height: 3.5rem;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__control {
+  height: 26px !important;
+  min-height: 26px !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__value-container {
+  padding: 0 6px !important;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__single-value,
+.compact-form .aitk-react-select-container .aitk-react-select__placeholder,
+.compact-form .aitk-react-select-container .aitk-react-select__input-container,
+.compact-form .aitk-react-select-container .aitk-react-select__input,
+.compact-form .aitk-react-select-container .aitk-react-select__option {
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__input-container {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__option {
+  padding: 4px 8px !important;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__indicator {
+  padding: 2px !important;
+}
+.compact-form .aitk-react-select-container .aitk-react-select__indicator svg {
+  width: 14px;
+  height: 14px;
+}

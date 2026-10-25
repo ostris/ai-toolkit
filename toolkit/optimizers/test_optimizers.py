@@ -10,6 +10,8 @@ Compares speed (ms/step) and peak VRAM across:
   - Automagic v2 (fused-backward)
   - Automagic v3 (fused-backward and traditional/unfused)
   - Automagic AdamW (fused-backward and traditional/unfused)
+  - AdamConvRot (AdamW with ConvRot-quantized moments; 8, 4 and 2 bit,
+    traditional/unfused and fused-backward)
   - Prodigy
 
 Pass optimizer keys as CLI args to run a subset (all when none passed), e.g.:
@@ -181,6 +183,7 @@ def main():
     from toolkit.optimizers.automagic2 import Automagic2
     from toolkit.optimizers.automagic3 import Automagic3
     from toolkit.optimizers.automagicEXPERIMENT import AutomagicEXPERIMENT
+    from toolkit.optimizers.adamconvrot import AdamConvRot
     from toolkit.optimizers.adafactor import Adafactor
     from prodigyopt import Prodigy
     import bitsandbytes as bnb
@@ -195,18 +198,24 @@ def main():
         ("automagic3", "Automagic v3 unfused", lambda p: Automagic3(p, lr=1e-4, fused=False)),
         ("automagicEXPERIMENT", "AutomagicEXPERIMENT", lambda p: AutomagicEXPERIMENT(p, lr=1e-4, fused=True)),
         ("automagicEXPERIMENT", "AutomagicEXPERIMENT", lambda p: AutomagicEXPERIMENT(p, lr=1e-4, fused=False)),
+        ("adamconvrot", "AdamConvRot 8bit", lambda p: AdamConvRot(p, lr=1e-4, eps=1e-6, qtype="convrot8")),
+        ("adamconvrot", "AdamConvRot 4bit", lambda p: AdamConvRot(p, lr=1e-4, eps=1e-6, qtype="convrotint4")),
+        ("adamconvrot", "AdamConvRot 2bit", lambda p: AdamConvRot(p, lr=1e-4, eps=1e-6, qtype="convrotint2")),
+        ("adamconvrot", "AdamConvRot 8bit fused", lambda p: AdamConvRot(p, lr=1e-4, eps=1e-6, qtype="convrot8", fused=True)),
+        ("adamconvrot", "AdamConvRot 4bit fused", lambda p: AdamConvRot(p, lr=1e-4, eps=1e-6, qtype="convrotint4", fused=True)),
+        ("adamconvrot", "AdamConvRot 2bit fused", lambda p: AdamConvRot(p, lr=1e-4, eps=1e-6, qtype="convrotint2", fused=True)),
         ("prodigy", "Prodigy", lambda p: Prodigy(p, lr=1.0, eps=1e-6)),
     ]
 
     selected = [a.lower() for a in sys.argv[1:]]
     if selected:
-        valid = {key for key, _, _ in optimizers}
+        valid = {key.lower() for key, _, _ in optimizers}
         unknown = [a for a in selected if a not in valid]
         if unknown:
             print(f"Unknown optimizer keys: {', '.join(unknown)}")
             print(f"Valid keys: {', '.join(sorted(valid))}")
             sys.exit(1)
-        optimizers = [o for o in optimizers if o[0] in selected]
+        optimizers = [o for o in optimizers if o[0].lower() in selected]
 
     for dtype in DTYPES:
         dtype_name = str(dtype).replace("torch.", "")

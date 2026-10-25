@@ -8,6 +8,8 @@ from .manager_modules import (
     OstrisLinearLayerMemoryManager,
     EmbeddingLayerMemoryManager,
     _DEVICE_STATE,
+    _move_own_param,
+    _storage_device,
 )
 import random
 
@@ -155,8 +157,14 @@ class MemoryManager:
             except Exception:
                 pass
 
-        # count ignore modules as processed
+        # count ignore modules as processed — including their whole subtree: an
+        # ignored module stays resident, so none of its children may get a
+        # layer manager (a managed child would pin its weight back to cpu
+        # behind the parent's back)
         modules_processed = [x for x in ignore_modules]
+        for im in ignore_modules:
+            if isinstance(im, torch.nn.Module):
+                modules_processed.extend(im.modules())
 
         # weights tied to an embedding (lm_head <-> embed_tokens) must not be
         # managed: pinning the linear's weight to cpu strands the (unmanaged)
@@ -284,9 +292,12 @@ class MemoryManager:
         for sub in module.modules():
             if hasattr(sub, "_layer_memory_manager"):
                 continue
-            for p in sub.parameters(recurse=False):
-                if p is not None and p.device != device:
-                    p.data = p.data.to(device)
+            # quantized tensor subclasses (torchao) ignore `p.data = ...` -- an unmanaged
+            # quantized linear (offload_percent < 1) would stay on cpu; _move_own_param
+            # swaps the Parameter in that case
+            for name, p in list(sub.named_parameters(recurse=False)):
+                if p is not None and _storage_device(p) != device:
+                    _move_own_param(sub, name, p, device)
             for name, b in sub._buffers.items():
                 if b is not None and b.device != device:
                     sub._buffers[name] = b.to(device)
@@ -446,15 +457,18 @@ class MemoryManager:
         gc.collect()
         torch.cuda.empty_cache()
 
-        # torch's pinned-host cache; private API, name varies by torch version
-        for fn_name in ("_accelerator_emptyHostCache", "_host_emptyCache"):
-            fn = getattr(torch._C, fn_name, None)
-            if fn is not None:
-                try:
-                    fn()
-                    break
-                except Exception:
-                    pass
+        # torch's pinned-host cache; private API, name varies by torch version.
+        # Skipped on MPS: it segfaults there (pytorch/pytorch#197561), not catchable
+        on_mps = getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+        if not on_mps:
+            for fn_name in ("_accelerator_emptyHostCache", "_host_emptyCache"):
+                fn = getattr(torch._C, fn_name, None)
+                if fn is not None:
+                    try:
+                        fn()
+                        break
+                    except Exception:
+                        pass
 
         # glibc keeps freed arenas mapped; CDLL(None) resolves malloc_trim in
         # the running process where glibc is present and fails cleanly on

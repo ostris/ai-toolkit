@@ -1,17 +1,18 @@
-import { useMemo, useState, useRef, useCallback } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
 import { JobConfig } from '@/types';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
-import { Button } from '@headlessui/react';
+import { Button, Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import { encodeFilePathForUrl } from '@/utils/basic';
 import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
+import { openConfirm } from './ConfirmModal';
 
 interface SampleImagesMenuProps {
   job?: Job | null;
@@ -74,6 +75,12 @@ interface SampleImagesProps {
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
+  // multi-select for bulk delete: shift-click ranges from the anchor, ctrl/cmd-click toggles
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(() => new Set());
+  const anchorIdxRef = useRef<number | null>(null);
+  // selection as it was when the anchor was set; shift-click ranges are rebuilt on top of it, not accumulated
+  const baseSetRef = useRef<Set<string>>(new Set());
+  const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -96,6 +103,98 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
     return out;
   }, [sampleImages, numSamples]);
+
+  const handleCardClick = useCallback(
+    (sample: string, e: React.MouseEvent) => {
+      const isRange = e.shiftKey;
+      const isToggle = e.ctrlKey || e.metaKey;
+      if (!isRange && !isToggle) {
+        setSelectedSet(new Set());
+        anchorIdxRef.current = null;
+        baseSetRef.current = new Set();
+        setSelectedSamplePath(sample);
+        return;
+      }
+      e.preventDefault();
+      const idx = sampleImages.indexOf(sample);
+      if (idx === -1) return;
+      setSelectedSet(prev => {
+        const anchor = anchorIdxRef.current;
+        if (isRange && anchor !== null && anchor < sampleImages.length) {
+          const next = new Set(baseSetRef.current);
+          const [lo, hi] = anchor < idx ? [anchor, idx] : [idx, anchor];
+          for (let i = lo; i <= hi; i++) next.add(sampleImages[i]);
+          return next;
+        }
+        const next = new Set(prev);
+        if (isToggle && next.has(sample)) {
+          next.delete(sample);
+        } else {
+          next.add(sample);
+        }
+        anchorIdxRef.current = idx;
+        baseSetRef.current = new Set(next);
+        return next;
+      });
+    },
+    [sampleImages],
+  );
+
+  const deleteSelected = useCallback(() => {
+    const paths = Array.from(selectedSet);
+    if (paths.length === 0) return;
+    openConfirm({
+      title: 'Delete Samples',
+      message: `Are you sure you want to delete ${paths.length} sample${paths.length === 1 ? '' : 's'}? This action cannot be undone.`,
+      type: 'warning',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        setDeleteProgress({ done: 0, total: paths.length });
+        // bounded concurrency so the progress counter advances and the server isn't flooded
+        const CONCURRENCY = 4;
+        let cursor = 0;
+        let done = 0;
+        const worker = async () => {
+          while (cursor < paths.length) {
+            const imgPath = paths[cursor++];
+            try {
+              await apiClient.post('/api/img/delete', { imgPath });
+            } catch (error) {
+              console.error('Error deleting sample:', imgPath, error);
+            }
+            done++;
+            setDeleteProgress({ done, total: paths.length });
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, paths.length) }, worker));
+        setDeleteProgress(null);
+        setSelectedSet(new Set());
+        anchorIdxRef.current = null;
+        baseSetRef.current = new Set();
+        refreshSampleImages();
+      },
+    });
+  }, [selectedSet, refreshSampleImages]);
+
+  // Delete/Backspace deletes the selection, Escape clears it; ignored while the viewer is open or typing in a field
+  useEffect(() => {
+    if (selectedSet.size === 0) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (selectedSamplePath) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteSelected();
+      } else if (e.key === 'Escape') {
+        setSelectedSet(new Set());
+        anchorIdxRef.current = null;
+        baseSetRef.current = new Set();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedSet.size, selectedSamplePath, deleteSelected]);
 
   const scrollToBottom = () => {
     virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end' });
@@ -201,7 +300,8 @@ export default function SampleImages({ job }: SampleImagesProps) {
                       numSamples={numSamples}
                       sampleImages={sampleImages}
                       alt="Sample Image"
-                      onClick={() => setSelectedSamplePath(sample)}
+                      onClick={e => handleCardClick(sample, e)}
+                      selected={selectedSet.has(sample) || selectedSamplePath === sample}
                       observerRoot={scrollParent}
                     />
                   ))}
@@ -214,6 +314,28 @@ export default function SampleImages({ job }: SampleImagesProps) {
           />
         )}
       </div>
+      <Dialog open={deleteProgress !== null} onClose={() => {}} className="relative z-20">
+        <DialogBackdrop className="fixed inset-0 bg-gray-900/75" />
+        <div className="fixed inset-0 z-10 flex items-center justify-center p-4">
+          <DialogPanel className="w-full max-w-sm rounded-lg bg-gray-800 p-6 shadow-xl text-gray-200">
+            <DialogTitle as="h3" className="text-base font-semibold flex items-center gap-2">
+              <LuLoader className="animate-spin" />
+              Deleting Samples
+            </DialogTitle>
+            <p className="mt-2 text-sm text-gray-400">
+              {deleteProgress?.done ?? 0} / {deleteProgress?.total ?? 0}
+            </p>
+            <div className="mt-3 h-2 w-full rounded bg-gray-700 overflow-hidden">
+              <div
+                className="h-full bg-blue-500 transition-all duration-150"
+                style={{
+                  width: `${deleteProgress && deleteProgress.total > 0 ? (deleteProgress.done / deleteProgress.total) * 100 : 0}%`,
+                }}
+              />
+            </div>
+          </DialogPanel>
+        </div>
+      </Dialog>
       <SampleImageViewer
         imgPath={selectedSamplePath}
         numSamples={numSamples}

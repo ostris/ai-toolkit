@@ -8,9 +8,13 @@ export const imgExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', 
 export const videoExtensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
 export const audioExtensions = ['.mp3', '.wav', '.flac', '.ogg'];
 
-export const isVideo = (filePath: string) => videoExtensions.includes(filePath.toLowerCase().slice(-4));
-export const isImage = (filePath: string) => imgExtensions.includes(filePath.toLowerCase().slice(-4));
-export const isAudio = (filePath: string) => audioExtensions.includes(filePath.toLowerCase().slice(-4));
+// suffix match: slice(-4) missed 5-char extensions like .flac/.jpeg/.webp
+const hasExt = (filePath: string, exts: string[]) => exts.some(ext => filePath.toLowerCase().endsWith(ext));
+export const isVideo = (filePath: string) => hasExt(filePath, videoExtensions);
+export const isImage = (filePath: string) => hasExt(filePath, imgExtensions);
+export const isAudio = (filePath: string) => hasExt(filePath, audioExtensions);
+// text-generating models write their samples as .txt
+export const isText = (filePath: string) => filePath.toLowerCase().endsWith('.txt');
 
 export const tagsToObj = (tagStr: string): Record<string, any> => {
   const result: Record<string, any> = {};

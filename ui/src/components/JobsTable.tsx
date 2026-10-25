@@ -128,6 +128,14 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
         let title = row.name;
         let href = `/jobs/${row.id}`;
         // if (row.job_type === 'train') title = `Train: ${title}`;
+        if (row.job_type === 'inference') {
+          href = `/generate?job=${row.id}`;
+          title = (
+            <>
+              <small className="opacity-50">INFERENCE ENGINE: </small> {row.name}
+            </>
+          );
+        }
         if (row.job_type === 'caption') {
           let splits = row.job_ref.split(/[/\\]/);
           const datasetPath = `${splits[splits.length - 1]}`;

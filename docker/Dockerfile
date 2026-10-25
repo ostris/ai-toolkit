@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 
 # Install nodejs
 WORKDIR /tmp
-RUN curl -sL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh && \
+RUN curl -sL https://deb.nodesource.com/setup_24.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get update && \
     apt-get install -y nodejs && \
@@ -77,6 +77,12 @@ RUN pip install --no-cache-dir --break-system-packages -U \
     natten==0.21.7+torch2130cu130 --find-links https://whl.natten.org \
     https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.47/flash_attn-2.8.3+cu130torch2.13-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl && \
     python -c "import flash_attn, natten, torchcodec; print('accelerators OK:', flash_attn.__version__, natten.__version__, torchcodec.__version__)"
+
+# flash-linear-attention (DeltaNet kernels for Qwen3.5/3.8), matching manager/spec.py FLA.
+# Pure-Python Triton package installed bare and WITHOUT -U: its unpinned transformers
+# requirement must not upgrade the pinned transformers from requirements_base.txt.
+RUN pip install --no-cache-dir --break-system-packages flash-linear-attention==0.5.2 && \
+    python -c "import fla, transformers; print('fla OK:', fla.__version__, 'transformers', transformers.__version__)"
 
 # Install Node dependencies (only re-runs when package.json / package-lock.json change)
 COPY ui/package.json ui/package-lock.json /app/ai-toolkit/ui/

@@ -26,8 +26,8 @@ from .util import (
 )
 
 NODE_DIR = os.path.join(REPO_ROOT, ".node")
-# Node 24 is the current LTS line and matches the dgx_instructions.md guidance.
-NODE_VERSION = "24.11.1"
+# Node 24 is the current LTS line.
+NODE_VERSION = "24.22.1"
 MIN_NODE_MAJOR = 20
 
 UI_DIR = os.path.join(REPO_ROOT, "ui")
@@ -44,7 +44,8 @@ def local_node_exe():
 
 
 def _node_info(exe):
-    """(major, arch) for a node executable, e.g. (24, 'x64'), or (None, None)."""
+    """(version, major, arch) for a node executable, e.g. ('24.22.1', 24, 'x64'),
+    or (None, None, None)."""
     try:
         out = subprocess.run(
             [exe, "-p", "process.version + ' ' + process.arch"],
@@ -53,11 +54,12 @@ def _node_info(exe):
             timeout=15,
         )
         if out.returncode != 0:
-            return None, None
-        version, arch = out.stdout.decode().strip().split()  # v24.11.1 x64
-        return int(version.lstrip("v").split(".")[0]), arch
+            return None, None, None
+        version, arch = out.stdout.decode().strip().split()  # v24.22.1 x64
+        version = version.lstrip("v")
+        return version, int(version.split(".")[0]), arch
     except (OSError, subprocess.TimeoutExpired, ValueError):
-        return None, None
+        return None, None, None
 
 
 def _usable_major(exe):
@@ -68,7 +70,7 @@ def _usable_major(exe):
     so a native ARM64 node loads the UI but dies on the first DB call. The
     x64 node runs under emulation on ARM hosts.
     """
-    major, arch = _node_info(exe)
+    _, major, arch = _node_info(exe)
     if major is None or major < MIN_NODE_MAJOR:
         return None
     if IS_WINDOWS and arch != "x64":
@@ -110,14 +112,30 @@ def have_usable_node():
     return None, None
 
 
+def local_node_stale():
+    """True when the portable copy exists but isn't the pinned NODE_VERSION."""
+    local = local_node_exe()
+    if not os.path.isfile(local):
+        return False
+    version, _, _ = _node_info(local)
+    return version != NODE_VERSION
+
+
 def ensure_node(detection, dry_run=False):
     exe, major = have_usable_node()
-    if exe:
+    if exe == local_node_exe() and local_node_stale():
+        # the portable copy is ours to keep current (security releases)
+        version, _, _ = _node_info(exe)
+        info(
+            "Portable Node.js v%s at %s is behind the pinned v%s — reinstalling."
+            % (version, NODE_DIR, NODE_VERSION)
+        )
+    elif exe:
         ok("Node.js v%d found (%s)." % (major, exe))
         return False
     system = which("node")
     if system:
-        _, arch = _node_info(system)
+        _, _, arch = _node_info(system)
         if IS_WINDOWS and arch and arch != "x64":
             info(
                 "System Node.js is %s but the UI needs an x64 node on Windows "

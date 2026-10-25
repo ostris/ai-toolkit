@@ -151,6 +151,21 @@ export async function GET(request: NextRequest, { params }: { params: { audioPat
       return new NextResponse('File not found', { status: 404 });
     }
 
+    // pre-generated thumb (written by the sampler, or by a previous call here)
+    // so the tags are read at most once per file
+    const thumbPath = path.join(path.dirname(resolved), '.thumbs', path.basename(resolved) + '.jpg');
+    const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+    if (thumbStat && thumbStat.isFile()) {
+      const data = await fs.promises.readFile(thumbPath);
+      return new NextResponse(data as any, {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': String(data.length),
+          'Cache-Control': 'public, max-age=604800, immutable',
+        },
+      });
+    }
+
     // Read only the ID3 tag (first min(tagSize, 4MB) bytes).
     // First read 10 bytes to get tag size, then read the full tag.
     const fd = await fs.promises.open(resolved, 'r');
@@ -171,6 +186,16 @@ export async function GET(request: NextRequest, { params }: { params: { audioPat
       const art = extractArtFromTag(tagBuf);
       if (!art) {
         return new NextResponse('No album art found', { status: 404 });
+      }
+
+      if (art.mime === 'image/jpeg') {
+        // cache as the file's thumb; best effort, the response does not depend on it
+        try {
+          await fs.promises.mkdir(path.dirname(thumbPath), { recursive: true });
+          await fs.promises.writeFile(thumbPath, art.data);
+        } catch (e) {
+          console.warn('album art thumb not written:', e);
+        }
       }
 
       return new NextResponse(art.data as any, {

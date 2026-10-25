@@ -1,9 +1,8 @@
 import React, { useEffect, useState, ReactNode, KeyboardEvent, useRef } from 'react';
-import { FaTrashAlt, FaPlay } from 'react-icons/fa';
+import { FaTrashAlt, FaPlay, FaMusic } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
-import AudioPlayer from './AudioPlayer';
 import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
 import useCaptionBatch, { setCachedCaption } from '@/hooks/useCaptionBatch';
 
@@ -35,7 +34,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   captionExt = 'txt',
 }) => {
   const [loaded, setLoaded] = useState<boolean>(false);
-  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
+  const [artFailed, setArtFailed] = useState(false);
   const [pollTick, setPollTick] = useState(0);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [streamVideo, setStreamVideo] = useState(false);
@@ -149,7 +148,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   useEffect(() => {
     if (!isAutoCaptioning) return;
     const interval = setInterval(() => setPollTick(t => t + 1), 5000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      // the job writes every caption before it reports completion, so the last
+      // ones land between the final tick and polling stopping here; without one
+      // more refresh they stay stale until the card is remounted
+      setPollTick(t => t + 1);
+    };
   }, [isAutoCaptioning]);
 
   const saveCaption = () => {
@@ -224,23 +229,30 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               muted
             />
           )}
-          {isItAudio && !showAudioPlayer && (
+          {isItAudio && (
             <div
-              className="w-full h-full cursor-pointer flex items-center justify-center bg-gray-900"
-              onClick={() => setShowAudioPlayer(true)}
+              className={classNames('w-full h-full flex items-center justify-center bg-gray-900', {
+                'cursor-zoom-in': !!onImageClick,
+              })}
+              onClick={onImageClick}
             >
-              <img
-                src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
-                alt={alt}
-                className="w-full h-full object-contain"
-                onError={e => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
+              {isVisible && !artFailed ? (
+                <img
+                  src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
+                  alt={alt}
+                  className="w-full h-full object-contain"
+                  onError={() => setArtFailed(true)}
+                />
+              ) : (
+                <FaMusic className="w-1/3 h-1/3 text-gray-600" />
+              )}
+              <div className="absolute top-0 left-0 right-0 bg-gray-900/70 px-3 py-2 pr-12 text-base font-medium text-white truncate pointer-events-none">
+                {imageUrl.replace(/^.*[\\/]/, '')}
+              </div>
+              <div className="absolute bottom-2 left-2 bg-gray-900/70 rounded-full p-2 pointer-events-none">
+                <FaPlay className="w-3 h-3 text-white" />
+              </div>
             </div>
-          )}
-          {isItAudio && showAudioPlayer && (
-            <AudioPlayer src={`/api/img/${encodeFilePathForUrl(imageUrl)}`} title={imageUrl.replace(/^.*[\\/]/, '')} />
           )}
           {!isItAudio && blobUrl && (
             <img

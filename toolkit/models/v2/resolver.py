@@ -188,6 +188,109 @@ def resolve_comfy_file(
     )
 
 
+def resolve_component_file(
+    path: str,
+    folder: str,
+    component: str = "model",
+    hf_token: Optional[str] = None,
+    status_fn: Optional[Callable[[str], None]] = None,
+) -> str:
+    """Resolve a single-file component that lives in one comfy-layout folder
+    (e.g. text_encoders/) to a local file.
+
+    Accepts a local path or a hub reference 'org/repo/path/to/file.safetensors'.
+    Anything on disk wins: the file's own spot under MODELS_PATH/<folder>, then
+    under MODELS_PATH, then a recursive search for the filename in <folder> and
+    finally in all of MODELS_PATH. A miss is downloaded into MODELS_PATH/<folder>
+    at its repo-relative path.
+    """
+    if os.path.isfile(path):
+        return path
+    root = os.path.join(MODELS_PATH, folder)
+    splits = path.split("/")
+    # 'org/repo/rel/file.safetensors' -> repo 'org/repo', file 'rel/file.safetensors'
+    rel_path = "/".join(splits[2:]) if len(splits) >= 3 else splits[-1]
+    filename = splits[-1]
+    for candidate in (
+        os.path.join(root, rel_path),
+        os.path.join(root, filename),
+        os.path.join(MODELS_PATH, rel_path),
+        os.path.join(MODELS_PATH, filename),
+        os.path.join(MODELS_PATH, path),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    for search_root in (root, MODELS_PATH):
+        found = find_file_recursive(search_root, filename)
+        if found is not None:
+            return found
+
+    if len(splits) < 3:
+        raise FileNotFoundError(
+            f"{component} not found: {path}. Must be a local file or "
+            "'org/repo/filename.safetensors' to download from the Hugging Face Hub."
+        )
+
+    import huggingface_hub
+
+    repo_id = "/".join(splits[:2])
+    if status_fn is not None:
+        status_fn(f"Downloading {rel_path} from {repo_id} into {root}")
+    return huggingface_hub.hf_hub_download(
+        repo_id=repo_id, filename=rel_path, token=hf_token, local_dir=root
+    )
+
+
+def resolve_lora_file(
+    path: str,
+    hf_token: Optional[str] = None,
+    status_fn: Optional[Callable[[str], None]] = None,
+) -> str:
+    """Resolve a LoRA reference to a local file.
+
+    Accepts a local path or a hub reference 'org/repo/path/to/file.safetensors'.
+    Anything already on disk wins: the exact relative spot under
+    MODELS_PATH/loras and MODELS_PATH, then a recursive search for the filename
+    under loras/ and finally under all of MODELS_PATH (a LoRA picked from a
+    training job's output folder lives outside loras/). Only a file found
+    nowhere is downloaded, into MODELS_PATH/loras at its repo-relative path.
+    """
+    if os.path.isfile(path):
+        return path
+    loras_root = os.path.join(MODELS_PATH, "loras")
+    splits = path.split("/")
+    # 'org/repo/rel/file.safetensors' -> repo 'org/repo', file 'rel/file.safetensors'
+    rel_path = "/".join(splits[2:]) if len(splits) >= 3 else splits[-1]
+    filename = splits[-1]
+    for candidate in (
+        os.path.join(loras_root, rel_path),
+        os.path.join(MODELS_PATH, rel_path),
+        os.path.join(loras_root, filename),
+        os.path.join(MODELS_PATH, path),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    for root in (loras_root, MODELS_PATH):
+        found = find_file_recursive(root, filename)
+        if found is not None:
+            return found
+
+    if len(splits) < 3:
+        raise FileNotFoundError(
+            f"LoRA not found: {path}. Must be a local file or "
+            "'org/repo/filename.safetensors' to download from the Hugging Face Hub."
+        )
+
+    import huggingface_hub
+
+    repo_id = "/".join(splits[:2])
+    if status_fn is not None:
+        status_fn(f"Downloading LoRA {rel_path} from {repo_id} into {loras_root}")
+    return huggingface_hub.hf_hub_download(
+        repo_id=repo_id, filename=rel_path, token=hf_token, local_dir=loras_root
+    )
+
+
 def resolve_named_file(
     path: str,
     component: str = "model",
