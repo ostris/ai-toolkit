@@ -168,6 +168,38 @@ captions, configurations, checkpoints and console logs are intentionally not
 included in this public change; only the generic harness and aggregate
 results are published.
 
+## Production follow-up: allocator and 100-step run
+
+A subsequent authorized deployment revealed that the uninstrumented UI job
+could still consume almost all 16 GiB and make extremely slow progress during
+embedding caching with `backend:cudaMallocAsync`. Stack captures confirmed the
+headless path, `use_cache=False`, and `output_hidden_states=False`; execution
+was inside Qwen3-VL normalization/convrot8, not the vocabulary projection.
+The initial measurement harness synchronizes CUDA for its memory readings;
+it is therefore not a substitute for an ordinary asynchronous UI launch.
+
+On this RTX 4070 Ti SUPER / WSL setup, switching the deployment environment to
+`PYTORCH_CUDA_ALLOC_CONF=backend:native,expandable_segments:True` allowed the
+normal UI job to complete **125/125 embedding items and all 100/100 steps**.
+The job configuration was byte-identical. All six regression tests also passed
+with the native allocator. This changes allocator configuration, not PyTorch
+or Transformers implementation code or the training hyperparameters.
+
+The ordinary UI run took about 120 seconds for the training loop. No OOM,
+OOM-skipped batch, traceback or non-finite loss was present. Checkpoints at
+25/50/75/final have finite weights; all 384 LoRA weight tensors differ between
+each successive checkpoint. A separate 1 Hz `nvidia-smi` sampler recorded a
+5,525 MiB (5.396 GiB) whole-device peak from approximately step 10 through
+completion; this sampling window excludes initial loading/cache. Original
+images/captions retained their hashes and existing cache entries were reused.
+This establishes functional 100-step training, not visual character fidelity.
+
+For this deployment, preserve the native allocator setting when rebuilding
+or rolling back. See the [PyTorch CUDA memory documentation](https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+for the distinction between allocator backends. The isolated before/after
+allocation figures above still describe that earlier experiment; they are
+not the same metric or execution mode as this production sampling result.
+
 ## Apply and roll back
 
 Review/cherry-pick the commit into a checkout matching the deployed version;
@@ -180,4 +212,5 @@ include this fix until the upstream project publishes it.
 Revert the commit in the source checkout, or deploy the previous image/tag,
 to roll back. No model-weight conversion or database migration is involved.
 Do not edit, delete or reuse existing production checkpoints as part of this
-procedure. The live service has not been patched or restarted by this work.
+procedure. The initial isolated validation did not modify the live service;
+the later authorized production follow-up is documented above.
