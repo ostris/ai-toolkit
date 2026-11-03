@@ -34,9 +34,12 @@ import albumentations as A
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
 from toolkit.prompt_utils import PromptEmbeds
+from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from torchvision.transforms import functional as TF
 
 from toolkit.train_tools import get_torch_dtype
+
+TEXT_EMBED_CACHE_BATCH = 16  # prompts per text-encoder forward when caching
 
 if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
@@ -2489,6 +2492,38 @@ class TextEmbeddingCachingMixin:
             
             did_move = False
 
+            # plain-text prompts are encoded TEXT_EMBED_CACHE_BATCH per forward: a 9B text
+            # encoder at batch 1 is kernel-launch bound (~15% GPU busy)
+            pending = []  # (path, caption), plain text only
+            pending_paths = set()
+            batch_ok = [None]  # None = untested; False = legacy PromptEmbeds, no per-item split
+
+            def flush_pending():
+                if not pending:
+                    return
+                # similar lengths together: a batch is right-padded to its longest prompt
+                pending.sort(key=lambda t: len(t[1]))
+                size = 1 if batch_ok[0] is False else TEXT_EMBED_CACHE_BATCH
+                start = 0
+                while start < len(pending):
+                    chunk = pending[start:start + size]
+                    embeds = self.sd.encode_prompt([c for _, c in chunk])
+                    if isinstance(embeds, AdvancedPromptEmbeds):
+                        batch_ok[0] = True
+                        parts = AdvancedPromptEmbeds.split_prompt_embeds(embeds, len(chunk))
+                    elif len(chunk) == 1:
+                        parts = [embeds]
+                    else:
+                        batch_ok[0] = False
+                        size = 1
+                        continue  # redo this chunk one prompt at a time
+                    for (path, _), part in zip(chunk, parts):
+                        part.save(path)
+                    del embeds, parts
+                    start += len(chunk)
+                pending.clear()
+                pending_paths.clear()
+
             # use tqdm to show progress
             i = 0
             for file_item in tqdm(self.file_list, desc='Caching text embeddings to disk'):
@@ -2616,9 +2651,11 @@ class TextEmbeddingCachingMixin:
                         file_item.tensor = None
                     else:
                         for path, caption in encode_targets:
-                            prompt_embeds: PromptEmbeds = self.sd.encode_prompt(caption)
-                            prompt_embeds.save(path)
-                            del prompt_embeds
+                            if path not in pending_paths:
+                                pending_paths.add(path)
+                                pending.append((path, caption))
+                        if len(pending) >= 4 * TEXT_EMBED_CACHE_BATCH:
+                            flush_pending()
                 if getattr(file_item, 'dopsd_self_ref', False):
                     # D-OPSD teacher embeds encode with the item's own media as the reference
                     control_video_paths = getattr(file_item, 'control_video_paths', None) or []
@@ -2665,6 +2702,7 @@ class TextEmbeddingCachingMixin:
                             del prompt_embeds
                 file_item.is_text_embedding_cached = True
                 i += 1
+            flush_pending()
             # restore device state
             # if did_move:
             #     self.sd.restore_device_state()

@@ -209,3 +209,4 @@ class AdvancedPromptEmbeds:
                 )
             for i in range(num_parts):
                 split_embeds[i]._store[key] = [values[i]]
+        return split_embeds

@@ -36,11 +36,20 @@ const NV_BATCH_FLUSH_MS = 100;
 const CPU_TEMP_REFRESH_MS = 5000;
 
 // Power limits for GPUs whose driver reports none (nvidia-smi gives [N/A]).
-// GB10 (DGX Spark) is a unified SoC with no settable GPU limit; 140 W is
-// NVIDIA's rated TDP for the GB10 superchip.
-const KNOWN_POWER_LIMITS_W: Record<string, number> = {
-  'NVIDIA GB10': 140,
-};
+// These unified SoCs have no settable GPU limit, so show the rated TDP of the
+// whole chip. GB10 (DGX Spark) is 140 W. RTX Spark N1X: the 5120-core part is
+// laptop-only, rated 45-80 W (OEM configurable); the 6144-core part is 140 W
+// on desktop and 45-80 W in laptops but shares its name, so it falls through
+// to the desktop figure.
+const KNOWN_POWER_LIMITS_W: [RegExp, number][] = [
+  [/\bGB10\b/, 140],
+  [/RTX Spark.*5120-core/, 80],
+  [/RTX Spark/, 140],
+];
+
+function knownPowerLimit(name: string): number {
+  return KNOWN_POWER_LIMITS_W.find(([re]) => re.test(name))?.[1] ?? NaN;
+}
 
 function parseGpuLine(line: string): GpuInfo | null {
   const [
@@ -76,7 +85,7 @@ function parseGpuLine(line: string): GpuInfo | null {
     },
     power: {
       draw: parseFloat(powerDraw),
-      limit: isNaN(parseFloat(powerLimit)) ? (KNOWN_POWER_LIMITS_W[name] ?? NaN) : parseFloat(powerLimit),
+      limit: isNaN(parseFloat(powerLimit)) ? knownPowerLimit(name) : parseFloat(powerLimit),
     },
     clocks: {
       graphics: parseInt(clockGraphics),
@@ -88,19 +97,28 @@ function parseGpuLine(line: string): GpuInfo | null {
   };
 }
 
+// Integrated NVIDIA GPUs that share system RAM with the CPU.
+const UNIFIED_MEMORY_GPU = /\b(GB10|RTX Spark)\b/i;
+
 /**
- * Unified-memory GPUs (GB10 / DGX Spark) have no dedicated VRAM, so
- * nvidia-smi reports memory as [N/A]. Report the system RAM pool they share
- * instead, like the Mac path does for Apple silicon.
+ * Unified-memory GPUs (GB10 / DGX Spark, RTX Spark) have no dedicated VRAM.
+ * On Linux nvidia-smi reports their memory as [N/A]; on Windows (WDDM) it
+ * reports only the small dedicated segment (8 GB) even though CUDA can use
+ * most of system RAM. Report the system RAM pool they share instead, like
+ * the Mac path does for Apple silicon.
  */
+function isSharedMemoryGpu(g: GpuInfo): boolean {
+  return isNaN(g.memory.total) || UNIFIED_MEMORY_GPU.test(g.name);
+}
+
 function withSharedMemory(gpu: GPUApiResponse, cpu: CpuInfo | null): GPUApiResponse {
-  if (!cpu || !gpu.gpus.some(g => isNaN(g.memory.total))) return gpu;
+  if (!cpu || !gpu.gpus.some(isSharedMemoryGpu)) return gpu;
   const total = Math.round(cpu.totalMemory);
   const free = Math.round(cpu.availableMemory);
   return {
     ...gpu,
     gpus: gpu.gpus.map(g =>
-      isNaN(g.memory.total) ? { ...g, memory: { total, free, used: total - free, shared: true } } : g,
+      isSharedMemoryGpu(g) ? { ...g, memory: { total, free, used: total - free, shared: true } } : g,
     ),
   };
 }

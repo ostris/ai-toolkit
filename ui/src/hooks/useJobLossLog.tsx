@@ -4,13 +4,20 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { apiClient } from '@/utils/api';
 import usePollLoop from '@/hooks/usePollLoop';
 
-export interface LossPoint {
-  step: number;
-  wall_time?: number;
-  value: number | null;
+// Columnar series: steps[i] pairs with values[i]. Null / non-finite values are
+// dropped at ingest, so every value here is a finite number.
+export interface LossSeries {
+  steps: number[];
+  values: number[];
 }
 
-type SeriesMap = Record<string, LossPoint[]>;
+type SeriesMap = Record<string, LossSeries>;
+
+interface LossResponse {
+  keys?: string[];
+  since_step?: number;
+  series?: Record<string, { steps: number[]; values: (number | null)[] }>;
+}
 
 export default function useJobLossLog(jobID: string, reloadInterval: null | number = null) {
   const [series, setSeries] = useState<SeriesMap>({});
@@ -20,8 +27,10 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
   const didInitialLoadRef = useRef(false);
   const inFlightRef = useRef(false);
 
-  // track last step per key so polling is incremental per series
-  const lastStepByKeyRef = useRef<Record<string, number | null>>({});
+  // Highest step seen across every key. Polls ask for step >= this (not >) so a
+  // key logged at that step after the previous poll is still picked up; the
+  // per-key merge below drops the one re-sent point.
+  const lastStepRef = useRef<number | null>(null);
 
   const lossKeys = useMemo(() => {
     const base = keys ?? [];
@@ -40,69 +49,60 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     setStatus(loadStatus);
 
     try {
-      // Step 1: get key list (we can do this by calling endpoint once; it returns keys)
-      // Keep it cheap: limit=1.
-      const first = await apiClient
-        .get(`/api/jobs/${jobID}/loss`, { params: { key: 'loss', limit: 1 } })
-        .then(res => res.data as { keys?: string[] });
+      // One request returns every key. Incremental after the initial load.
+      const params: Record<string, number> = {};
+      if (reloadInterval && didInitialLoadRef.current && lastStepRef.current != null) {
+        params.since_step = lastStepRef.current;
+      }
+      const res = await apiClient.get(`/api/jobs/${jobID}/loss`, { params });
+      const data = res.data as LossResponse;
 
-      const newKeys = first.keys ?? [];
+      const newKeys = data.keys ?? [];
       setKeys(newKeys);
-
       const wantedLossKeys = (newKeys.length ? [...newKeys] : ['loss']).sort();
-
-      // Step 2: fetch each loss key incrementally (since_step per key if polling)
-      const requests = wantedLossKeys.map(k => {
-        const params: Record<string, any> = { key: k };
-
-        if (reloadInterval && lastStepByKeyRef.current[k] != null) {
-          params.since_step = lastStepByKeyRef.current[k];
-        }
-
-        params.limit = 1000000;
-
-        return apiClient
-          .get(`/api/jobs/${jobID}/loss`, { params })
-          .then(res => res.data as { key: string; points?: LossPoint[] });
-      });
-
-      const results = await Promise.all(requests);
+      const incoming = data.series ?? {};
+      const initial = !didInitialLoadRef.current;
 
       setSeries(prev => {
-        const next: SeriesMap = { ...prev };
+        const next: SeriesMap = initial ? {} : { ...prev };
+        let maxStep = lastStepRef.current ?? null;
 
-        for (const r of results) {
-          const k = r.key;
-          const newPoints = (r.points ?? []).filter(p => p.value !== null);
+        for (const k of wantedLossKeys) {
+          const inc = incoming[k];
+          const existing = initial ? undefined : next[k];
+          const prevLast = existing && existing.steps.length ? existing.steps[existing.steps.length - 1] : null;
 
-          if (!didInitialLoadRef.current) {
-            // initial: replace
-            next[k] = newPoints;
-          } else if (newPoints.length) {
-            const existing = next[k] ?? [];
-            const prevLast = existing.length ? existing[existing.length - 1].step : null;
-            const filtered = prevLast == null ? newPoints : newPoints.filter(p => p.step > prevLast);
-            next[k] = filtered.length ? [...existing, ...filtered] : existing;
-          } else {
-            // no new points: keep existing
-            next[k] = next[k] ?? [];
+          const steps: number[] = existing ? existing.steps.slice() : [];
+          const values: number[] = existing ? existing.values.slice() : [];
+          let appended = false;
+          if (inc) {
+            const n = Math.min(inc.steps.length, inc.values.length);
+            for (let i = 0; i < n; i++) {
+              const v = inc.values[i];
+              if (v === null || !Number.isFinite(v)) continue;
+              const s = inc.steps[i];
+              if (prevLast != null && s <= prevLast) continue;
+              steps.push(s);
+              values.push(v as number);
+              appended = true;
+            }
           }
+          if (initial || appended) next[k] = { steps, values };
+          else next[k] = existing ?? { steps: [], values: [] };
 
-          // update last step per key
-          const finalArr = next[k] ?? [];
-          lastStepByKeyRef.current[k] = finalArr.length
-            ? finalArr[finalArr.length - 1].step
-            : (lastStepByKeyRef.current[k] ?? null);
+          const arr = next[k].steps;
+          if (arr.length) {
+            const last = arr[arr.length - 1];
+            if (maxStep == null || last > maxStep) maxStep = last;
+          }
         }
 
         // remove stale keys that no longer exist (rare, but keeps UI clean)
         for (const existingKey of Object.keys(next)) {
-          if (!wantedLossKeys.includes(existingKey)) {
-            delete next[existingKey];
-            delete lastStepByKeyRef.current[existingKey];
-          }
+          if (!wantedLossKeys.includes(existingKey)) delete next[existingKey];
         }
 
+        lastStepRef.current = maxStep;
         return next;
       });
 
@@ -124,13 +124,24 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
       await apiClient.delete(`/api/jobs/${jobID}/loss`, { data: { min_step: minStep, max_step: maxStep } });
       setSeries(prev => {
         const next: SeriesMap = {};
+        let last: number | null = null;
         for (const k of Object.keys(prev)) {
-          const kept = prev[k].filter(p => p.step < minStep || p.step > maxStep);
-          next[k] = kept;
-          // Re-anchor incremental polling to the new tail so a deleted tail
-          // isn't treated as already-fetched.
-          lastStepByKeyRef.current[k] = kept.length ? kept[kept.length - 1].step : null;
+          const steps: number[] = [];
+          const values: number[] = [];
+          const src = prev[k];
+          for (let i = 0; i < src.steps.length; i++) {
+            const s = src.steps[i];
+            if (s < minStep || s > maxStep) {
+              steps.push(s);
+              values.push(src.values[i]);
+            }
+          }
+          next[k] = { steps, values };
+          if (steps.length && (last == null || steps[steps.length - 1] > last)) last = steps[steps.length - 1];
         }
+        // Re-anchor incremental polling to the new tail so a deleted tail
+        // isn't treated as already-fetched.
+        lastStepRef.current = last;
         return next;
       });
     },
@@ -141,7 +152,7 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
   // before the first fetch when jobID changes.
   useEffect(() => {
     didInitialLoadRef.current = false;
-    lastStepByKeyRef.current = {};
+    lastStepRef.current = null;
     setSeries({});
     setKeys([]);
     setStatus('idle');

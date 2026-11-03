@@ -1,13 +1,19 @@
-"""Unified memory (integrated GPU) support, e.g. NVIDIA DGX Spark (GB10).
+"""Unified memory (integrated GPU) support, e.g. NVIDIA DGX Spark (GB10) and
+the Windows RTX Spark (N1X).
 
 On these devices the CPU and GPU share the same physical memory, so moving a
 module to the CPU frees nothing. Worse, device -> host copies are extremely
-slow (~100MB/s on GB10), so every "offload to cpu" of a large transformer or
-text encoder stalls for minutes. When a unified memory device is detected we
-make module level moves to the CPU a no-op (dtype casts still apply). Tensor
-level .cpu()/.to('cpu') is left alone since saving, numpy, etc. need it.
+slow (~100MB/s on GB10 under Linux, ~0.5-2GB/s pageable on Windows/WDDM), so
+every "offload to cpu" of a large transformer or text encoder stalls. When a
+unified memory device is detected we make module level moves to the CPU a
+no-op (dtype casts still apply). Tensor level .cpu()/.to('cpu') is left alone
+since saving, numpy, etc. need it.
 
-Set AITK_DISABLE_UNIFIED_MEMORY=1 to turn this off.
+Note for Windows: WDDM gives CUDA a fixed budget (~80% of system RAM, e.g.
+~45GB of 54GB) that host allocations do not count against. nvidia-smi / Task
+Manager only show the small dedicated segment (8GB); the real pool is what
+torch.cuda.mem_get_info() reports. If a job needs to keep modules on the CPU
+to stay under that budget, set AITK_DISABLE_UNIFIED_MEMORY=1 to turn this off.
 """
 import os
 import sys
@@ -20,8 +26,8 @@ _patched = False
 def is_unified_memory() -> bool:
     if os.environ.get("AITK_DISABLE_UNIFIED_MEMORY", "0") == "1":
         return False
-    # linux only (DGX Spark). The Windows RTX Spark stack does not behave the same way
-    if not sys.platform.startswith("linux"):
+    # macOS has no CUDA; MPS unified memory is handled elsewhere
+    if sys.platform == "darwin":
         return False
     # NVIDIA only. ROCm APUs report integrated too, but may have a dedicated VRAM carveout
     if torch.version.hip is not None:

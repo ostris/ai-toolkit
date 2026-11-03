@@ -1,7 +1,8 @@
 import React from 'react';
 import useFilesList from '@/hooks/useFilesList';
-import { Loader2, AlertCircle, Download, Box, Brain, Trash2, SlidersHorizontal } from 'lucide-react';
+import { Loader2, AlertCircle, Download, Box, Brain, Trash2, SlidersHorizontal, Info } from 'lucide-react';
 import { openMergeLoRAsModal } from './MergeLoRAsModal';
+import { openSafetensorsInfoModal } from './SafetensorsInfoModal';
 import { getFilename, getFoldername, encodeFilePathForUrl } from '@/utils/basic';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
@@ -114,6 +115,16 @@ export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName
                   </a>
                   <div className="flex items-center space-x-3 flex-shrink-0">
                     <span className="text-xs text-gray-400">{cleanSize(file.size)}</span>
+                    {fileName.endsWith('.safetensors') && (
+                      <button
+                        type="button"
+                        onClick={() => openSafetensorsInfoModal(file.path)}
+                        className="bg-sky-500 bg-opacity-0 group-hover:bg-opacity-10 hover:!bg-opacity-30 rounded-full p-1 transition-all"
+                        title="Safetensors info"
+                      >
+                        <Info className="w-3 h-3 text-sky-400" />
+                      </button>
+                    )}
                     <a
                       target="_blank"
                       href={`/api/files/${encodeFilePathForUrl(file.path)}`}
