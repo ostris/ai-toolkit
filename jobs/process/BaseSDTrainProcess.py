@@ -102,6 +102,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.grad_accumulation_step = 1
         # if true, then we do not do an optimizer step. We are accumulating gradients
         self.is_grad_accumulation_step = False
+        # True while gradients for an unfinished accumulation cycle are sitting in
+        # .grad. The train hook uses it to decide whether it may zero them: it must
+        # NOT when a cycle is mid-flight (gradient_accumulation_steps > 1 or -1 call
+        # this hook once per micro-step and defer the optimizer step).
+        self.grad_accum_in_progress = False
         self.device = str(self.accelerator.device)
         self.device_torch = self.accelerator.device
         network_config = self.get_conf('network', None)
@@ -2645,6 +2650,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.num_consecutive_oom > 3:
                     raise RuntimeError("OOM during training step 3 times in a row, aborting training")
                 optimizer.zero_grad(set_to_none=True)
+                # the partial cycle went with them
+                self.grad_accum_in_progress = False
                 flush()
                 torch.cuda.ipc_collect()
                 # skip this step and keep going
@@ -2727,6 +2734,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.ensure_params_requires_grad()
                         # clear any grads
                         optimizer.zero_grad()
+                        self.grad_accum_in_progress = False
                         flush()
                         flush_next = True
                         if self.progress_bar is not None:
