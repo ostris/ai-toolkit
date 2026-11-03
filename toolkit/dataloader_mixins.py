@@ -1173,6 +1173,9 @@ class ControlFileItemDTOMixin:
         self.control_tensor_list: Union[List[torch.Tensor], None] = None
         sd = kwargs.get('sd', None)
         self.use_raw_control_images = sd is not None and sd.use_raw_control_images
+        # raw control images keep their own size, which only works when a batch
+        # holds a single item. Larger batches scale and crop them to the bucket
+        self.bucket_control_images = not self.use_raw_control_images or kwargs.get('batch_size', 1) > 1
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         self.full_size_control_images = False
         if dataset_config.control_path is not None:
@@ -1271,7 +1274,7 @@ class ControlFileItemDTOMixin:
                 w, h = img.size
                 img = img.resize((512, 512), Image.BICUBIC)
 
-            elif not self.use_raw_control_images:
+            elif self.bucket_control_images:
                 w, h = img.size
                 if self.flip_x:
                     # do a flip
