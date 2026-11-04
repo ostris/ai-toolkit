@@ -494,7 +494,11 @@ def _stale_git_pins(spec):
 
 
 # optional packages whose import name differs from the distribution name
-_IMPORT_ALIASES = {"flash_linear_attention": "fla"}
+_IMPORT_ALIASES = {
+    "flash_linear_attention": "fla",
+    "triton_windows": "triton",
+    "amd_adlx": "adlx",
+}
 # companion dists to remove on rollback (fla-core provides the `fla` module
 # itself; leaving it behind would keep the broken import resolvable)
 _ROLLBACK_EXTRAS = {"flash_linear_attention": ["fla-core"]}
