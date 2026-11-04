@@ -248,6 +248,54 @@ class MinimaxH3Model(BaseModel):
             t1000_ladder=getattr(self, "t1000_sample_ladder", False),
         )
 
+    def _stage_for_sampling(self):
+        """DiT onto the gpu (the pipeline calls this right before denoising,
+        after the reference encodes); under low_vram the text encoder (brought
+        up by get_prompt_embeds) is parked first so the two never share the card."""
+        te = self.text_encoder
+        if (
+            self.low_vram
+            and isinstance(te, torch.nn.Module)
+            and not type(te).__name__.startswith("Fake")
+            and not hasattr(te, "_memory_manager")
+            and next(te.parameters(), None) is not None
+            and next(te.parameters()).device.type == "cuda"
+        ):
+            te.to("cpu")
+            flush()
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
+            # the 900-tensor move leaves ~3GB of split cache blocks behind
+            flush()
+
+    def set_device_state_preset(self, device_state_preset):
+        if device_state_preset == "generate" and self.low_vram:
+            # the sampling path stages text encoder, DiT and VAE one at a time
+            # (never together); only the eval / no-grad side of the preset applies
+            self.save_device_state()
+            for mod in (self.model, self.vae, self.text_encoder):
+                if isinstance(mod, torch.nn.Module):
+                    mod.eval()
+            self.model.requires_grad_(False)
+            return
+        return super().set_device_state_preset(device_state_preset)
+
+    def _park_vae_for_denoise(self):
+        """low_vram: the VAE (brought up for reference encodes) leaves the gpu
+        before the DiT denoises."""
+        if self.low_vram and self.vae.device.type == "cuda":
+            self.vae.to("cpu")
+            flush()
+
+    def _stage_for_decode(self):
+        """low_vram: the DiT leaves the gpu before the VAE comes up to decode;
+        restore_device_state / _stage_for_sampling bring it back."""
+        if self.low_vram and self.model.device.type == "cuda":
+            self.model.to("cpu")
+            flush()
+        if self.vae.device.type == "cpu":
+            self.vae.to(self.vae_device_torch)
+
     def _prompt_encoder_kwargs(self) -> dict:
         """Extra kwargs for encode_minimax_h3_prompt (P-H3-Image taps several
         hidden states through its text connector)."""
@@ -538,7 +586,8 @@ class MinimaxH3Model(BaseModel):
         flush()
 
         vae_bundle = self._load_vaes()
-        vae_bundle.to(self.vae_device_torch)
+        # low_vram: the VAE comes up only around encode / decode
+        vae_bundle.to("cpu" if self.model_config.low_vram else self.vae_device_torch)
 
         self.noise_scheduler = self.get_train_scheduler()
         self.vae = vae_bundle
@@ -1034,9 +1083,6 @@ class MinimaxH3Model(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        if self.model.device == torch.device("cpu"):
-            self.model.to(self.device_torch)
-
         sc = self.get_bucket_divisibility()
         gen_config.width = max(sc, int(gen_config.width // sc * sc))
         gen_config.height = max(sc, int(gen_config.height // sc * sc))
@@ -1530,9 +1576,6 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         generator: torch.Generator,
         extra: dict,
     ):
-        if self.model.device == torch.device("cpu"):
-            self.model.to(self.device_torch)
-
         sc = self.get_bucket_divisibility()
         gen_config.width = max(sc, int(gen_config.width // sc * sc))
         gen_config.height = max(sc, int(gen_config.height // sc * sc))

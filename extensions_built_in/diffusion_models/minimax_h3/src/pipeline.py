@@ -215,6 +215,8 @@ class MiniMaxH3Pipeline:
         text_indices = layout.text_indices.to(device)
 
         # --- denoise loop --------------------------------------------------
+        model._park_vae_for_denoise()
+        model._stage_for_sampling()
         num_steps = sigmas_v.shape[0] - 1
         for i in range(num_steps):
             sv, sv_next = sigmas_v[i], sigmas_v[i + 1]
@@ -263,6 +265,7 @@ class MiniMaxH3Pipeline:
 
         # --- decode --------------------------------------------------------
         video_latents = unpatchify_video_tokens(video_rows, t_lat, h_lat, w_lat)
+        model._stage_for_decode()
         video = model.decode_latents(video_latents)  # (1, 3, T, H, W) in [-1, 1]
         video = ((video.float().clamp(-1, 1) + 1.0) * 127.5).round().to(torch.uint8)
         video = video[0].permute(1, 2, 3, 0).cpu()  # (T, H, W, C)
