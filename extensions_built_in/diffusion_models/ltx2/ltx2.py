@@ -915,6 +915,7 @@ class LTX2Model(BaseModel):
                 and batch.dataset_config.do_audio
                 and getattr(batch, "num_frames", 1) > 1
             )
+            raw_audio_latents = None
             if do_audio and (
                 batch.audio_latents is not None or batch.audio_tensor is not None
             ):
@@ -927,34 +928,8 @@ class LTX2Model(BaseModel):
                     # we have audio waveforms to encode
                     # use audio from the batch if available
                     raw_audio_latents = self.encode_audio(batch.audio_data)
-
                 audio_num_frames = raw_audio_latents.shape[1]
-                # the audio noise is drawn once per step and shared by every
-                # pass (prior, primary, cfg/guidance, preservation) so they all
-                # see the same soundtrack and every pass's target matches. It
-                # rides on the latents DTO.
-                audio_noise = (
-                    batch.latents.get("audio_noise")
-                    if isinstance(batch.latents, DTO)
-                    else None
-                )
-                if (
-                    audio_noise is not None
-                    and audio_noise.shape == raw_audio_latents.shape
-                ):
-                    audio_noise = audio_noise.to(
-                        raw_audio_latents.device, dtype=raw_audio_latents.dtype
-                    )
-                else:
-                    audio_noise = torch.randn_like(raw_audio_latents)
-                    if batch.latents is not None:
-                        batch.latents = DTO(batch.latents, audio_noise=audio_noise)
-                audio_target = (audio_noise - raw_audio_latents).detach()
-                audio_latents = self.add_noise(
-                    raw_audio_latents,
-                    audio_noise,
-                    timestep,
-                ).to(self.device_torch, dtype=self.torch_dtype)
+                silence_latents = torch.zeros_like(raw_audio_latents)
             else:
                 # no audio
                 num_mel_bins = self.pipeline.audio_vae.config.mel_bins
@@ -969,7 +944,7 @@ class LTX2Model(BaseModel):
                     / float(self.pipeline.audio_vae_temporal_compression_ratio)
                 )
                 audio_num_frames = round(duration_s * audio_latents_per_second)
-                audio_latents = self.pipeline.prepare_audio_latents(
+                silence_latents = self.pipeline.prepare_audio_latents(
                     batch_size,
                     num_channels_latents=num_channels_latents_audio,
                     audio_latent_length=audio_num_frames,
@@ -980,6 +955,20 @@ class LTX2Model(BaseModel):
                     generator=None,
                     latents=None,
                 )
+            # audio shares the video sigma (audio_sigma default)
+            sigma_a = self.audio_sigma(timestep.to(torch.float32) / 1000.0)
+            # image batches and datasets without do_audio never stream, even for a DTO caller
+            stream_input = latent_model_input
+            if not do_audio and isinstance(latent_model_input, DTO):
+                stream_input = latent_model_input.tensor
+            audio_latents, audio_target, audio_noisy, audio_stream = self.audio_stream_input(
+                stream_input,
+                batch,
+                raw_audio_latents,
+                sigma_a,
+                silence_latents,
+            )
+            audio_latents = audio_latents.to(self.device_torch, dtype=self.torch_dtype)
 
             if self.pipeline.connectors.device != self.transformer.device:
                 self.pipeline.connectors.to(self.transformer.device)
@@ -1050,14 +1039,10 @@ class LTX2Model(BaseModel):
             patch_size_t=self.pipeline.transformer_temporal_patch_size,
         )
 
-        if audio_target is not None:
-            # every pass's DTO carries its own audio stream and target
-            return DTO(
-                unpacked_output,
-                audio=noise_pred_audio,
-                audio_target=audio_target,
-            )
-        return unpacked_output
+        # every pass's DTO carries its own audio stream and target
+        return self.audio_stream_output(
+            unpacked_output, noise_pred_audio, audio_target, audio_noisy, sigma_a, audio_stream
+        )
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         if self.pipeline.text_encoder.device != self.device_torch:

@@ -903,51 +903,33 @@ class MinimaxH3Model(BaseModel):
                 )
 
             sa = sigma_a.view(-1, 1, 1)
-            audio_target = None
-            noisy_audio_rows = None
+            expected_rows = a_lat * packing.AUDIO_CHANNELS
             if raw_audio is not None:
-                expected_rows = a_lat * packing.AUDIO_CHANNELS
                 if raw_audio.shape[1] > expected_rows:
                     raw_audio = raw_audio[:, :expected_rows]
                 elif raw_audio.shape[1] < expected_rows:
                     raw_audio = torch.nn.functional.pad(
                         raw_audio, (0, 0, 0, expected_rows - raw_audio.shape[1])
                     )
-                # the audio noise is drawn once per step and shared by every
-                # pass (prior, primary, cfg/guidance, preservation) so they all
-                # see the same soundtrack and every pass's target matches. It
-                # rides on the latents DTO along with the trimmed audio so
-                # on-the-fly encodes aren't repeated per pass.
-                audio_noise = (
-                    batch.latents.get("audio_noise")
-                    if isinstance(batch.latents, DTO)
-                    else None
-                )
-                if audio_noise is not None and audio_noise.shape == raw_audio.shape:
-                    audio_noise = audio_noise.to(device, torch.float32)
-                else:
-                    audio_noise = torch.randn_like(raw_audio)
-                    if batch.latents is not None:
-                        batch.latents = DTO(
-                            batch.latents, audio=raw_audio, audio_noise=audio_noise
-                        )
-                audio_rows = (1.0 - sa) * raw_audio + sa * audio_noise
-                # model predicts clean - noise; audio_pred is negated below so
-                # the target follows ai-toolkit's noise - clean convention
-                audio_target = (audio_noise - raw_audio).detach()
-                # what audio perceptual losses need to rebuild the clean
-                # estimate (x0 = noisy - sigma_a * pred); rides the pred DTO
-                noisy_audio_rows = audio_rows
-            else:
-                # no soundtrack: silence (zeros) noised at the audio sigma
-                # rides along without contributing to the loss
-                audio_rows = sa * torch.randn(
-                    batch_size,
-                    a_lat * packing.AUDIO_CHANNELS,
-                    32,
-                    device=device,
-                    dtype=torch.float32,
-                )
+            # no soundtrack: silence (zeros) noised at the audio sigma rides
+            # along without contributing to the loss
+            silence_rows = sa * torch.randn(
+                batch_size, expected_rows, 32, device=device, dtype=torch.float32
+            )
+            # audio_target follows ai-toolkit's noise - clean convention (the
+            # model's clean - noise audio pred is negated on return); audio_noisy
+            # is what audio perceptual losses need to rebuild the clean estimate
+            # image batches and datasets without do_audio never stream, even for a DTO caller
+            stream_input = latent_model_input
+            if not do_audio and isinstance(latent_model_input, DTO):
+                stream_input = latent_model_input.tensor
+            audio_rows, audio_target, noisy_audio_rows, audio_stream = self.audio_stream_input(
+                stream_input,
+                batch,
+                raw_audio,
+                sigma_a,
+                silence_rows,
+            )
 
             # embeds cached with a longer max_text_length: cap the caption
             # tail (vision blocks are never touched)
@@ -1037,17 +1019,11 @@ class MinimaxH3Model(BaseModel):
 
         video_pred = video_pred[:, num_cond:]
         noise_pred = unpatchify_video_tokens(video_pred, t_lat, h_lat, w_lat)
-        if audio_target is not None:
-            # every pass's DTO carries its own audio stream; preds flipped to
-            # ai-toolkit's noise - clean convention
-            return DTO(
-                -noise_pred,
-                audio=-audio_pred,
-                audio_target=audio_target,
-                audio_noisy=noisy_audio_rows,
-                audio_sigma=sigma_a,
-            )
-        return -noise_pred
+        # every pass's DTO carries its own audio stream; preds flipped to
+        # ai-toolkit's noise - clean convention
+        return self.audio_stream_output(
+            -noise_pred, -audio_pred, audio_target, noisy_audio_rows, sigma_a, audio_stream
+        )
 
     def _pdd_weights(self, sigma_v, sigma_v_next=None):
         """Head weights for PDD checkpoints (None otherwise). Training passes a
@@ -1067,6 +1043,10 @@ class MinimaxH3Model(BaseModel):
         noise = kwargs.get("noise")
         batch = kwargs.get("batch")
         return (noise - batch.latents).detach()
+
+    def audio_sigma(self, sigma_v: torch.Tensor) -> torch.Tensor:
+        """Audio-stream sigma coupled to a video sigma (0..1)."""
+        return remap_sigma(sigma_v, self.video_sigma_shift, self.audio_sigma_shift)
 
     # ------------------------------------------------------------------
     # Sampling (training previews)
