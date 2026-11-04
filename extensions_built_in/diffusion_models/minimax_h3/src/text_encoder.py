@@ -125,6 +125,8 @@ def encode_minimax_h3_prompt(
     max_length: Optional[
         int
     ] = None,  # cap on PROMPT tokens (vision blocks are never cut)
+    hidden_state_layers: Optional[List[int]] = None,
+    connector=None,
 ):
     """Encode ONE prompt (with optional keyframes) into MiniMax-H3 conditioning.
 
@@ -133,9 +135,13 @@ def encode_minimax_h3_prompt(
     also works ONLY if the final ``model.norm`` has been replaced with an
     Identity (transformers applies the final norm to the last entry of
     ``hidden_states``); the loader in minimax_h3.py does exactly that.
+
+    ``hidden_state_layers`` + ``connector`` (P-H3-Image): the listed hidden
+    states are stacked (1, layers, L, C) and projected by ``connector`` to
+    (1, L, 5120) instead of reading a single layer.
     """
     num_layers = text_encoder.config.text_config.num_hidden_layers
-    if num_layers < TEXT_ENCODER_LAYER:
+    if hidden_state_layers is None and num_layers < TEXT_ENCODER_LAYER:
         raise ValueError(
             f"MiniMax-H3 needs at least {TEXT_ENCODER_LAYER} Qwen3-VL decoder "
             f"layers to read hidden_states[{TEXT_ENCODER_LAYER}], got {num_layers}"
@@ -256,8 +262,14 @@ def encode_minimax_h3_prompt(
         use_cache=False,
         output_hidden_states=True,
     )
-    layer = min(TEXT_ENCODER_LAYER, len(outputs.hidden_states) - 1)
-    embeds = outputs.hidden_states[layer][0]
+    if connector is not None:
+        stacked = torch.stack(
+            [outputs.hidden_states[i] for i in hidden_state_layers], dim=1
+        )
+        embeds = connector(stacked)[0]
+    else:
+        layer = min(TEXT_ENCODER_LAYER, len(outputs.hidden_states) - 1)
+        embeds = outputs.hidden_states[layer][0]
     if dtype is not None:
         embeds = embeds.to(dtype)
     return embeds, torch.tensor(token_tags, dtype=torch.long)

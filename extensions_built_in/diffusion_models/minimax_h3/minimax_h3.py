@@ -156,9 +156,12 @@ def blank_log_image_function(self, *args, **kwargs):
 class MiniMaxH3VaeBundle(torch.nn.Module):
     """Holds both frozen autoencoders behind the single ``self.vae`` handle."""
 
-    def __init__(self, video_vae: MiniMaxH3VideoVAE, audio_vae: MiniMaxH3AudioVAE):
+    def __init__(
+        self, video_vae: MiniMaxH3VideoVAE, audio_vae: Optional[MiniMaxH3AudioVAE]
+    ):
         super().__init__()
         self.video_vae = video_vae
+        # None for image-only derivatives (P-H3-Image)
         self.audio_vae = audio_vae
 
     @property
@@ -171,7 +174,8 @@ class MiniMaxH3VaeBundle(torch.nn.Module):
 
     def enable_gradient_checkpointing(self, enable: bool = True):
         self.video_vae.enable_gradient_checkpointing(enable)
-        self.audio_vae.enable_gradient_checkpointing(enable)
+        if self.audio_vae is not None:
+            self.audio_vae.enable_gradient_checkpointing(enable)
 
     def disable_gradient_checkpointing(self):
         self.enable_gradient_checkpointing(False)
@@ -179,8 +183,11 @@ class MiniMaxH3VaeBundle(torch.nn.Module):
 
 class MinimaxH3Model(BaseModel):
     arch = "minimax_h3"
-    # video flow shift; audio stays on AUDIO_SIGMA_SHIFT, remapped from this
+    # video flow shift; audio stays on audio_sigma_shift, remapped from this
     video_sigma_shift = packing.VIDEO_SIGMA_SHIFT
+    audio_sigma_shift = packing.AUDIO_SIGMA_SHIFT
+    # released keyframe recipe rounds the posterior sample through fp16
+    keyframe_fp16_round = True
     # hub repo for missing files when name_or_path isn't an org/repo id
     comfy_repo = COMFY_REPO
     use_old_lokr_format = False
@@ -232,6 +239,19 @@ class MinimaxH3Model(BaseModel):
     def get_frame_count_snapper(self):
         # auto_frame_count: snap dataset clips down to the VAE's 17n+5 grid
         return packing.align_num_frames_down
+
+    def build_sample_sigmas(self, num_inference_steps: int) -> torch.Tensor:
+        """Video sigma grid for sampling (steps + 1 entries ending at 0)."""
+        return packing.build_sigma_schedule(
+            num_inference_steps,
+            self.video_sigma_shift,
+            t1000_ladder=getattr(self, "t1000_sample_ladder", False),
+        )
+
+    def _prompt_encoder_kwargs(self) -> dict:
+        """Extra kwargs for encode_minimax_h3_prompt (P-H3-Image taps several
+        hidden states through its text connector)."""
+        return {}
 
     def prepare_sample_prompt_context(self, gen_config):
         # sample prompts: video refs are treated at the sample's length, not
@@ -597,6 +617,7 @@ class MinimaxH3Model(BaseModel):
                 device=self.device_torch,
                 dtype=self.torch_dtype,
                 max_length=self.max_text_length,
+                **self._prompt_encoder_kwargs(),
             )
             embeds_list.append(embeds)
             tags_list.append(tags)
@@ -658,7 +679,7 @@ class MinimaxH3Model(BaseModel):
             frames.to(self.vae_device_torch, self.video_vae.dtype),
             sample=True,
             generator=generator,
-            fp16_round=True,
+            fp16_round=self.keyframe_fp16_round,
         )
         return latents.float()
 
@@ -794,7 +815,7 @@ class MinimaxH3Model(BaseModel):
             if sigma_v.shape[0] != batch_size:
                 sigma_v = sigma_v.expand(batch_size)
             sigma_a = remap_sigma(
-                sigma_v, self.video_sigma_shift, packing.AUDIO_SIGMA_SHIFT
+                sigma_v, self.video_sigma_shift, self.audio_sigma_shift
             )
             t_v = 1.0 - sigma_v
             t_a = 1.0 - sigma_a
@@ -989,6 +1010,7 @@ class MinimaxH3Model(BaseModel):
             sigma_v.flatten().tolist(),
             n,
             self.video_sigma_shift,
+            audio_shift=self.audio_sigma_shift,
             sigma_v_next=None if sigma_v_next is None else sigma_v_next.flatten().tolist(),
         )
 

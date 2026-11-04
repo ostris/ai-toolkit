@@ -1473,6 +1473,102 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     ),
   },
   {
+    name: "p_h3_image",
+    label: "PrunaAI P-H3-Image",
+    group: "image",
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      "config.process[0].model.name_or_path": [
+        "PrunaAI/P-H3-Image-Comfy",
+        defaultNameOrPath,
+      ],
+      // the comfy files are pre-quantized int8 ConvRot (DiT, text encoder, VAE);
+      // convrot8 keeps them as shipped, any other qtype picks the bf16 files
+      "config.process[0].model.quantize": [true, false],
+      "config.process[0].model.qtype": ["convrot8", "qfloat8"],
+      "config.process[0].model.quantize_te": [true, false],
+      "config.process[0].model.qtype_te": ["convrot8", "qfloat8"],
+      "config.process[0].model.low_vram": [true, false],
+      "config.process[0].sample.sampler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.noise_scheduler": ["flowmatch", "flowmatch"],
+      "config.process[0].train.cache_text_embeddings": [true, false],
+      "config.process[0].model.assistant_lora_path": [
+        "ostris/minimax_h3_training_adapter/p_h3_image_training_adapter_v1.safetensors",
+        undefined,
+      ],
+      "config.process[0].network.linear": [16, defaultLinearRank],
+      "config.process[0].network.linear_alpha": [16, defaultLinearRank],
+      "config.process[0].network.network_kwargs.ignore_if_contains": [
+        ["adaln_proj"],
+        [],
+      ],
+      "config.process[0].sample.width": [2048, 1024],
+      "config.process[0].sample.height": [2048, 1024],
+      "config.process[0].sample.guidance_scale": [1, 4],
+      "config.process[0].sample.sample_steps": [8, 25],
+      "config.process[0].train.timestep_type": ["shift", "sigmoid"],
+      "config.process[0].datasets[x].cache_latents_to_disk": [true, false],
+    },
+    disableSections: ["network.conv"],
+    additionalSections: [
+      "datasets.multi_control_paths",
+      "sample.multi_ctrl_imgs",
+      "model.low_vram",
+      "model.layer_offloading",
+      "model.assistant_lora_path",
+    ],
+    modelNotes: (
+      <div className="space-y-2">
+        <p>
+          P-H3-Image is PrunaAI&apos;s MiniMax-H3 fine-tune for text-to-image
+          and image editing: 8 steps, no CFG, up to 8 input images. Without
+          control images it trains and samples as text-to-image. With control
+          images the first is the image being edited and the rest are
+          references (<code>&lt;Picture 1&gt;</code>,{" "}
+          <code>&lt;Picture 2&gt;</code>, ...): each rides into the packed
+          sequence as a reference block, scaled down (never up) to the target
+          canvas area with its own aspect, and is shown to the Qwen3-VL-4B
+          conditioner at 1 MP. Captions that come with references get{" "}
+          <code>Edit &lt;Picture 1&gt;.</code> in front unless they already
+          name the picture to edit (set{" "}
+          <code>model_kwargs.edit_prompt_prefix: false</code> to turn that
+          off). Sample ctrl images work the same way.
+        </p>
+        <p>
+          Weights load from the{" "}
+          <Link href="/settings" className="text-blue-400 hover:underline">
+            Models Folder Path
+          </Link>{" "}
+          in the ComfyUI layout; anything missing is downloaded there from{" "}
+          <code>PrunaAI/P-H3-Image-Comfy</code> (~30GB for the int8 set). Files
+          used with the default quantization:
+        </p>
+        <pre className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs overflow-x-auto">
+          <code>{`<MODELS_PATH>/
+├── diffusion_models/
+│   └── p-h3-image_int8_convrot.safetensors
+├── text_encoders/
+│   └── p-h3-image_text_encoder_int8_convrot.safetensors
+└── vae/
+    └── p-h3-image_vae_int8_convrot.safetensors`}</code>
+        </pre>
+        <p>
+          The DiT is the pruned MiniMax-H3 with Pruna&apos;s LoRA merged in, so
+          the default <code>convrot8</code> qtypes load the int8 files as
+          shipped; any other qtype picks the bf16 files and quantizes them. The
+          model samples on its own 8-step sigma grid — keep sample steps at 8
+          and guidance scale at 1. The model is step and guidance distilled, so
+          training runs with the P-H3-Image training adapter (
+          <code>p_h3_image_training_adapter_v1</code>) as a live assistant
+          LoRA by default; the sampler turns it off for previews. It is
+          trained for 8 MP output (2912×2912,
+          3360×2496, ...) with 4 MP acceptable for edits; lower resolutions
+          show more artifacts. Audio and video are not supported.
+        </p>
+      </div>
+    ),
+  },
+  {
     name: "minimax_h3_omni",
     label: "FastH3 Omni",
     group: "video",
