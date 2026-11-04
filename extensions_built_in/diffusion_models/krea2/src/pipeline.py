@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 from typing import List, Optional
+from toolkit.sample_sigmas import sigmas_with_terminal
 
 import torch
 from einops import rearrange, repeat
@@ -298,6 +299,7 @@ class Krea2Pipeline:
         width: int = 1024,
         num_inference_steps: int = 28,
         guidance_scale: float = 4.5,
+        sigmas: Optional[List[float]] = None,
         latents: Optional[torch.Tensor] = None,
         generator: Optional[torch.Generator] = None,
         ref_latents: Optional[List[List[torch.Tensor]]] = None,
@@ -344,7 +346,10 @@ class Krea2Pipeline:
         align = ae_scale * patch
         x1 = (minres // align) ** 2
         x2 = (maxres // align) ** 2
-        ts = timesteps(gh * gw, num_inference_steps, x1, x2, y1=y1, y2=y2, mu=mu)
+        if sigmas is not None:
+            ts = sigmas_with_terminal(sigmas)
+        else:
+            ts = timesteps(gh * gw, num_inference_steps, x1, x2, y1=y1, y2=y2, mu=mu)
 
         # With the kv_cache model kwarg (isolated ref attention) the ref K/V
         # are step-invariant, so the very first model call doubles as the

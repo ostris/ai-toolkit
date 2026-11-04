@@ -15,6 +15,7 @@ state IS the image in [-1, 1]; "decode" is a clamp + uint8 cast.
 
 import math
 from typing import List, Optional, Tuple
+from toolkit.sample_sigmas import sigmas_with_terminal
 
 import torch
 from PIL import Image
@@ -91,6 +92,7 @@ class Iris3BPipeline:
         order: int = 2,
         cfg_interval: Tuple[float, float] = (0.0, 1.0),
         shift: Optional[float] = None,
+        sigmas: Optional[List[float]] = None,
         **kwargs,
     ) -> List[Image.Image]:
         model = self.model
@@ -128,7 +130,8 @@ class Iris3BPipeline:
                 return out_uncond + guidance_scale * (out_cond - out_uncond)
             return model.model_velocity(x_t.to(dtype), t_model, cond_feats, cond_mask).float()
 
-        grid = time_grid(num_inference_steps, shift)
+        grid = sigmas_with_terminal(sigmas) if sigmas is not None else time_grid(num_inference_steps, shift)
+        num_inference_steps = len(grid) - 1
         history: List[Tuple[float, torch.Tensor]] = []
         emit = getattr(model, "_emit_sample_step", None)
         for i in range(1, num_inference_steps + 1):

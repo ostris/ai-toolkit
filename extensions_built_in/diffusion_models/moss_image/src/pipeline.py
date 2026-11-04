@@ -7,6 +7,7 @@ convention is the toolkit's: sigma 1 = noise, the DiT predicts noise - clean.
 """
 
 from typing import List, Optional, Sequence
+from toolkit.sample_sigmas import sigmas_with_terminal
 
 import torch
 import torch.nn.functional as F
@@ -97,6 +98,7 @@ class MossImagePipeline:
         uncond_skip_layers: Sequence[int] = DEFAULT_UNCOND_SKIP_LAYERS,
         ref_latents: Optional[List[List[torch.Tensor]]] = None,
         isolate_refs: bool = False,
+        sigmas: Optional[List[float]] = None,
         **kwargs,
     ):
         model = self.model
@@ -129,7 +131,10 @@ class MossImagePipeline:
             if isolate_refs:
                 cond_cache, uncond_cache = {}, {}
 
-        sigmas = moss_sigmas(num_inference_steps, shift=shift).to(device)
+        if sigmas is not None:
+            sigmas = torch.tensor(sigmas_with_terminal(sigmas), dtype=torch.float32).to(device)
+        else:
+            sigmas = moss_sigmas(num_inference_steps, shift=shift).to(device)
         num_steps = len(sigmas) - 1
         for step_index in range(num_steps):
             sigma, sigma_next = sigmas[step_index], sigmas[step_index + 1]

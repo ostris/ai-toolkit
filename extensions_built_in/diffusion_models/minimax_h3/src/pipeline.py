@@ -19,6 +19,7 @@ Scheduler (the released math, not diffusers'):
 """
 
 from typing import Optional
+from toolkit.sample_sigmas import sigmas_with_terminal
 
 import numpy as np
 import torch
@@ -71,6 +72,7 @@ class MiniMaxH3Pipeline:
         num_frames: int = 124,
         num_inference_steps: int = 28,
         guidance_scale: float = 1.0,  # ignored
+        sigmas: Optional[list] = None,
         latents: Optional[torch.Tensor] = None,
         generator: Optional[torch.Generator] = None,
         ctrl_img: Optional[
@@ -201,7 +203,10 @@ class MiniMaxH3Pipeline:
 
         # --- schedules -----------------------------------------------------
         video_shift = getattr(model, "video_sigma_shift", VIDEO_SIGMA_SHIFT)
-        sigmas_v = model.build_sample_sigmas(num_inference_steps).to(device)
+        if sigmas is not None:
+            sigmas_v = torch.tensor(sigmas_with_terminal(sigmas), dtype=torch.float32).to(device)
+        else:
+            sigmas_v = model.build_sample_sigmas(num_inference_steps).to(device)
         # the audio schedule follows the video grid through the closed-form
         # shift remap so both streams sit at the same underlying position
         sigmas_a = remap_sigma(

@@ -242,6 +242,7 @@ class Fibo2Model(BaseModel):
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
+            sigmas=gen_config.sigmas,
             guidance_scale=gen_config.guidance_scale,
             latents=gen_config.latents,
             generator=generator,

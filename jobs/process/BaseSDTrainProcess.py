@@ -345,6 +345,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 guidance_scale=sample_item.guidance_scale,
                 guidance_rescale=sample_config.guidance_rescale,
                 num_inference_steps=sample_item.sample_steps,
+                sigmas=sample_item.sigmas,
                 network_multiplier=sample_item.network_multiplier,
                 output_path=output_path,
                 output_ext=sample_config.ext,

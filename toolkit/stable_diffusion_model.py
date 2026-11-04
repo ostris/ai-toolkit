@@ -1449,6 +1449,8 @@ class StableDiffusion:
         from toolkit.sample_step_hook import install_sample_step_hooks
 
         unwrap_step_hooks = install_sample_step_hooks(self, pipeline)
+        from toolkit.sample_sigmas import install_sample_sigma_override
+        unwrap_sigma_override = install_sample_sigma_override(self, pipeline, image_configs)
 
         refiner_pipeline = None
         if self.refiner_unet:
@@ -1482,6 +1484,7 @@ class StableDiffusion:
 
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
                     gen_config = image_configs[i]
+                    self.sample_sigmas = gen_config.sigmas
 
                     extra = {}
                     validation_image = None
@@ -1827,6 +1830,7 @@ class StableDiffusion:
                     self.adapter.clear_memory()
 
         unwrap_step_hooks()
+        unwrap_sigma_override()
         # clear pipeline and cache to reduce vram usage
         del pipeline
         if refiner_pipeline is not None:

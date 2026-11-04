@@ -10,6 +10,7 @@ convention. The inference schedule is a timeshifted uniform grid
 """
 
 from typing import List, Optional
+from toolkit.sample_sigmas import sigmas_with_terminal
 
 import torch
 import torch.nn.functional as F
@@ -145,6 +146,7 @@ class Flux3Pipeline:
         generator: Optional[torch.Generator] = None,
         ctrl_imgs: Optional[List[torch.Tensor]] = None,  # each (1, 3, H, W) in [0, 1]
         alpha: Optional[float] = None,
+        sigmas: Optional[List[float]] = None,
         **kwargs,
     ):
         model = self.model
@@ -156,7 +158,10 @@ class Flux3Pipeline:
 
         if alpha is None:
             alpha = DEFAULT_ALPHA
-        timesteps = build_timesteps(num_inference_steps, alpha=alpha).to(device)
+        if sigmas is not None:
+            timesteps = torch.tensor(sigmas_with_terminal(sigmas), dtype=torch.float32).to(device)
+        else:
+            timesteps = build_timesteps(num_inference_steps, alpha=alpha).to(device)
 
         # text conditioning, CFG-doubled as [uncond, cond]
         cond_list = conditional_embeds.text_embeds

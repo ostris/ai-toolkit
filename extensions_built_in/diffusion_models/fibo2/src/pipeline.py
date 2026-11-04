@@ -9,6 +9,7 @@ convention is the toolkit's: sigma 1 = noise, the DiT predicts noise - clean.
 
 import math
 from typing import List, Optional
+from toolkit.sample_sigmas import sigmas_with_terminal
 
 import numpy as np
 import torch
@@ -90,6 +91,7 @@ class Fibo2Pipeline:
         latents: Optional[torch.Tensor] = None,
         generator: Optional[torch.Generator] = None,
         ref_latents: Optional[List[torch.Tensor]] = None,  # each (1, 128, h, w)
+        sigmas: Optional[List[float]] = None,
         **kwargs,
     ):
         model = self.model
@@ -113,7 +115,11 @@ class Fibo2Pipeline:
             )
         latents = latents.to(device, torch.float32)
 
-        sigmas = fibo2_sigmas(num_inference_steps, shape[2] * shape[3]).to(device)
+        if sigmas is not None:
+            sigmas = torch.tensor(sigmas_with_terminal(sigmas), dtype=torch.float32).to(device)
+        else:
+            sigmas = fibo2_sigmas(num_inference_steps, shape[2] * shape[3]).to(device)
+        num_inference_steps = len(sigmas) - 1
         for step_index in range(num_inference_steps):
             sigma, sigma_next = sigmas[step_index], sigmas[step_index + 1]
             timestep = (sigma * NUM_TRAIN_TIMESTEPS).reshape(1)

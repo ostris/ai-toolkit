@@ -507,6 +507,8 @@ class BaseModel:
                 pass
 
         unwrap_step_hooks = self._install_sample_step_hooks(pipeline)
+        from toolkit.sample_sigmas import install_sample_sigma_override
+        unwrap_sigma_override = install_sample_sigma_override(self, pipeline, image_configs)
 
         start_multiplier = 1.0
         if network is not None:
@@ -521,6 +523,7 @@ class BaseModel:
 
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Samples", leave=True, position=0):
                     gen_config = image_configs[i]
+                    self.sample_sigmas = gen_config.sigmas
 
                     extra = {}
                     validation_image = None
@@ -786,6 +789,7 @@ class BaseModel:
                     self.adapter.clear_memory()
 
         unwrap_step_hooks()
+        unwrap_sigma_override()
         # clear pipeline and cache to reduce vram usage
         del pipeline
         torch.cuda.empty_cache()
