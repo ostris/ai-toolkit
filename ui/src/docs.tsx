@@ -3,6 +3,17 @@ import { ConfigDoc } from '@/types';
 import { IoFlaskSharp } from 'react-icons/io5';
 
 const docs: { [key: string]: ConfigDoc } = {
+  'config.process[0].model.assistant_lora_strength': {
+    title: 'MOSS Training Adapter Strength',
+    description: (
+      <>
+        Signed strength of the fixed MOSS training adapter. Defaults to 1. Use -1 to subtract an adapter
+        already merged at strength 1 into your checkpoint. Samples reverse this adjustment, using the
+        checkpoint as loaded plus your newly trained network. Use 0 to disable the adapter.
+        The exact adapter and original merge strength must match; quantized merges are approximate.
+      </>
+    ),
+  },
   'config.name': {
     title: 'Training Name',
     description: (
