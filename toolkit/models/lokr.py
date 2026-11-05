@@ -11,7 +11,13 @@ from toolkit.network_mixins import ToolkitModuleMixin
 from typing import TYPE_CHECKING, Union, List
 
 from optimum.quanto import QBytesTensor, QTensor
-from torchao.dtypes import AffineQuantizedTensor
+try:
+    from torchao.dtypes import AffineQuantizedTensor
+except Exception:
+    # torchao>=0.20 removed torchao.dtypes (#4696); AQT no longer exists there,
+    # so isinstance() against it must simply never match. Sentinel class.
+    class AffineQuantizedTensor:  # type: ignore[no-redef]
+        pass
 
 if TYPE_CHECKING:
 
