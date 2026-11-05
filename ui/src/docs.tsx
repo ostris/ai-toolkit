@@ -52,6 +52,16 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'sample.model.name_or_path': {
+    title: 'Sampling Model',
+    description: (
+      <>
+        Optional Huggingface repo id or local path to a different model used only for preview samples. Leave blank to
+        use the training model. The model must use the same architecture as the training model so the currently trained
+        LoRA can be applied to it. For example, train on Krea 2 Raw and sample with Krea 2 Turbo.
+      </>
+    ),
+  },
   'datasets.control_path': {
     title: 'Control Dataset',
     description: (

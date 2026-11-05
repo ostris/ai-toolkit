@@ -116,6 +116,9 @@ class SampleConfig:
         ]
         raw_samples = kwargs.get('samples', default_samples_kwargs)
         self.samples = [SampleItem(self, **item) for item in raw_samples]
+        # optional model override used only for preview sampling. Same format as
+        # the top level `model` config (name_or_path, model_kwargs, ...).
+        self.model = kwargs.get('model', None)
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
         

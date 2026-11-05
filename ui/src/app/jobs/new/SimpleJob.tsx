@@ -1666,6 +1666,25 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
             </div>
+            <div className="pt-2">
+              <TextInput
+                label="Sampling Model (optional)"
+                value={jobConfig.config.process[0].sample.model?.name_or_path ?? ''}
+                docKey="sample.model.name_or_path"
+                onChange={(value: string | null) => {
+                  if (!value || value.trim() === '') {
+                    setJobConfig(undefined, 'config.process[0].sample.model');
+                  } else {
+                    setJobConfig(value, 'config.process[0].sample.model.name_or_path');
+                  }
+                }}
+                placeholder="eg. krea/Krea-2-Turbo (blank uses the training model)"
+              />
+              <div className="text-xs text-gray-500 pt-1">
+                Model used only for preview samples. The currently trained LoRA is applied to it. Must use the same
+                architecture as the training model.
+              </div>
+            </div>
             <div className="pt-2 mb-2 flex items-center justify-between">
               <label className="block text-xs text-gray-300">
                 Sample Prompts ({jobConfig.config.process[0].sample.samples.length})
