@@ -24,6 +24,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
+        self._sigmoid_schedule = None
         self.timestep_type = "linear"
 
         with torch.no_grad():
@@ -80,8 +81,11 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         sigmas = self.sigmas.to(device=device, dtype=dtype)
         schedule_timesteps = self.timesteps.to(device)
         timesteps = timesteps.to(device)
-        step_indices = [(schedule_timesteps == t).nonzero().item()
-                        for t in timesteps]
+        if self.timestep_type == 'sigmoid':
+            step_indices = [self.index_for_timestep(t, schedule_timesteps) for t in timesteps]
+        else:
+            step_indices = [(schedule_timesteps == t).nonzero().item()
+                            for t in timesteps]
 
         sigma = sigmas[step_indices].flatten()
         while len(sigma.shape) < n_dim:
@@ -114,6 +118,12 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         patch_size=1
     ):
         self.timestep_type = timestep_type
+        if self._sigmoid_schedule is not None:
+            previous_sigmas, sigmoid_sigmas = self._sigmoid_schedule
+            # Inference may have already installed a new sigma table.
+            if self.sigmas is sigmoid_sigmas:
+                self.sigmas = previous_sigmas
+            self._sigmoid_schedule = None
         if timestep_type == 'linear' or timestep_type == 'weighted':
             timesteps = torch.linspace(1000, 1, num_timesteps, device=device)
             self.timesteps = timesteps
@@ -130,6 +140,11 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             timesteps, _ = torch.sort(timesteps, descending=True)
 
             self.timesteps = timesteps.to(device=device)
+            sigmoid_sigmas = torch.cat(
+                (self.timesteps / 1000, self.timesteps.new_zeros(1))
+            )
+            self._sigmoid_schedule = (self.sigmas, sigmoid_sigmas)
+            self.sigmas = sigmoid_sigmas
 
             return timesteps
         elif timestep_type in ['flux_shift', 'lumina2_shift', 'shift']:
