@@ -954,7 +954,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         schedule_timesteps = self.sd.noise_scheduler.timesteps.to(self.device)
         timesteps = timesteps.to(self.device)
 
-        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+        if getattr(self.sd.noise_scheduler, 'timestep_type', None) == 'sigmoid':
+            step_indices = [self.sd.noise_scheduler.index_for_timestep(t, schedule_timesteps) for t in timesteps]
+        else:
+            step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
 
         sigma = sigmas[step_indices].flatten()
         while len(sigma.shape) < n_dim:
