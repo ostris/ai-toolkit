@@ -954,6 +954,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         schedule_timesteps = self.sd.noise_scheduler.timesteps.to(self.device)
         timesteps = timesteps.to(self.device)
 
+        # Resolve duplicate sigmoid timesteps using the current sigma schedule
         if getattr(self.sd.noise_scheduler, 'timestep_type', None) == 'sigmoid':
             step_indices = [self.sd.noise_scheduler.index_for_timestep(t, schedule_timesteps) for t in timesteps]
         else:
