@@ -76,6 +76,21 @@ export async function POST(request: Request) {
 
     if (id) {
       // Update existing training
+      // Check if the new name already exists on a different job
+      if (name) {
+        const existingJob = await prisma.job.findUnique({
+          where: { name },
+        });
+        
+        // Only reject if the name exists AND it's a different job
+        if (existingJob && existingJob.id !== id) {
+          return NextResponse.json(
+            { error: 'Job name already exists. Please choose a different name.' },
+            { status: 409 },
+          );
+        }
+      }
+
       const training = await prisma.job.update({
         where: { id },
         data: {

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image, GitBranch } from 'lucide-react';
 import { LuLoader } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
@@ -18,6 +18,7 @@ import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
 import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import { openForkJobModal } from '@/components/ForkJobModal';
 
 interface JobActionBarProps {
   job: Job;
@@ -232,6 +233,21 @@ export default function JobActionBar({
                 <Copy className="w-4 h-4" />
                 Clone Job
               </Link>
+            </MenuItem>
+          )}
+          {job.job_type === 'train' && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+                onClick={() => {
+                  openForkJobModal(job.id, job.name, job.step, () => {
+                    if (onRefresh) onRefresh();
+                  });
+                }}
+              >
+                <GitBranch className="w-4 h-4" />
+                Fork Job
+              </div>
             </MenuItem>
           )}
           {job.job_type === 'train' && canStop && (
