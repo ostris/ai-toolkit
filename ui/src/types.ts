@@ -155,6 +155,12 @@ export interface ValidationConfig {
   validation_sigmas?: number[];
 }
 
+export interface SigmoidScheduleRow {
+  start_step: number;
+  shift: number;
+  scale: number;
+}
+
 export interface TrainConfig {
   batch_size: number;
   bypass_guidance_embedding?: boolean;
@@ -165,6 +171,9 @@ export interface TrainConfig {
   gradient_checkpointing: boolean;
   noise_scheduler: string;
   timestep_type: string;
+  timestep_shift?: number;
+  timestep_scale?: number;
+  timestep_sigmoid_schedule?: SigmoidScheduleRow[];
   content_or_style: string;
   optimizer: string;
   lr: number;
@@ -356,7 +365,7 @@ export interface CaptionProcessConfig {
     vision_bf16?: boolean;
     video_fps?: number;
     system_prompt?: string;
-  }
+  };
 }
 
 export interface CaptionConfigObject {

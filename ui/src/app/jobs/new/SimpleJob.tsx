@@ -24,6 +24,7 @@ import {
 import Card from '@/components/Card';
 import { X, Copy, Wand2, SquareDashed, Info } from 'lucide-react';
 import { openDoc } from '@/components/DocModal';
+import { EditTimestepSchedule } from '@/components/TimestepSchedulePlugin';
 import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
 import { openPromptBoxEditor } from '@/components/PromptBoxEditorModal';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
@@ -284,7 +285,13 @@ export default function SimpleJob({
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
               onChange={value => {
-                handleModelArchChange(modelArchs, jobConfig.config.process[0].model.arch, value, jobConfig, setJobConfig);
+                handleModelArchChange(
+                  modelArchs,
+                  jobConfig.config.process[0].model.arch,
+                  value,
+                  jobConfig,
+                  setJobConfig,
+                );
               }}
               options={groupedModelOptions}
             />
@@ -773,6 +780,15 @@ export default function SimpleJob({
                 <div>
                   {disableSections.includes('train.timestep_type') ? null : (
                     <SelectInput
+                      doc={
+                        jobConfig.config.process[0].train.timestep_type === 'sigmoid'
+                          ? {
+                              title: 'Sigmoid',
+                              description:
+                                'Adjust timestep_shift (mean) and timestep_scale (standard deviation) in Advanced YAML. Defaults are 0 and 1. Negative shift favors higher noise; positive shift favors lower noise.',
+                            }
+                          : null
+                      }
                       label="Timestep Type"
                       value={jobConfig.config.process[0].train.timestep_type}
                       disabled={disableSections.includes('train.timestep_type') || false}
@@ -795,6 +811,13 @@ export default function SimpleJob({
                       { value: 'content', label: 'High Noise' },
                       { value: 'style', label: 'Low Noise' },
                     ]}
+                  />
+                  <EditTimestepSchedule
+                    process={jobConfig.config.process[0]}
+                    jobId={runId ?? undefined}
+                    onApply={rows =>
+                      setJobConfig(rows.length ? rows : undefined, 'config.process[0].train.timestep_sigmoid_schedule')
+                    }
                   />
                   <SelectInput
                     label="Loss Type"

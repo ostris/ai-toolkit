@@ -414,6 +414,7 @@ def get_guided_loss_polarity(
         sd: 'StableDiffusion',
         train_config: 'TrainConfig',
         scaler=None,
+        step_num: int = 0,
         **kwargs
 ):
     dtype = get_torch_dtype(sd.torch_dtype)
@@ -443,7 +444,10 @@ def get_guided_loss_polarity(
                 1000,
                 device=device,
                 timestep_type=timestep_type,
-                latents=conditional_latents
+                latents=conditional_latents,
+                **train_config.get_timestep_kwargs(
+                    timestep_type, step_num, scheduler=sd.noise_scheduler
+                ),
             )
             target_pos = (noise - conditional_latents).detach()
             target_neg = (noise - unconditional_latents).detach()
@@ -728,6 +732,7 @@ def get_guidance_loss(
         prior_pred=None,
         scaler=None,
         train_config=None,
+        step_num: int = 0,
         **kwargs
 ):
     # TODO add others and process individual batch items separately
@@ -761,6 +766,7 @@ def get_guidance_loss(
             sd,
             scaler=scaler,
             train_config=train_config,
+            step_num=step_num,
             **kwargs
         )
     elif guidance_type == "tnt":

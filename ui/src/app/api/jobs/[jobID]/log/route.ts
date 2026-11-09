@@ -4,8 +4,9 @@ import path from 'path';
 import fs from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { getTrainingFolder } from '@/server/settings';
+import { trainingBucketsFromLog } from '@/utils/sigmoidSchedule';
 
-export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ jobID: string }> }) {
   const { jobID } = await params;
 
   const job = await prisma.job.findUnique({
@@ -19,10 +20,12 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const trainingFolder = await getTrainingFolder();
   const jobFolder = path.join(trainingFolder, job.name);
   const logPath = path.join(jobFolder, 'log.txt');
+  const bucketView = request.nextUrl.searchParams.get('view') === 'buckets';
 
   try {
     await fs.promises.access(logPath);
   } catch {
+    if (bucketView) return NextResponse.json({ buckets: [] });
     return NextResponse.json({ log: '', offset: 0, reset: true });
   }
 
@@ -54,6 +57,11 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
 
     const fh = await fs.promises.open(logPath, 'r');
     try {
+      if (bucketView) {
+        // Bucket setup is printed at startup, before the long progress log.
+        const prefix = await readRange(fh, 0, Math.min(size, 1024 * 1024));
+        return NextResponse.json({ buckets: trainingBucketsFromLog(prefix) });
+      }
       if (isReset) {
         // Read only the tail of very large files to bound memory/payload.
         const start = Math.max(0, size - MAX_TAIL_BYTES);
@@ -75,6 +83,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     }
   } catch (error) {
     console.error('Error reading log file:', error);
+    if (bucketView) return NextResponse.json({ buckets: [] });
     return NextResponse.json({ log: 'Error reading log file', offset: 0, reset: true });
   }
 }

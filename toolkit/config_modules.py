@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
@@ -558,6 +559,12 @@ class TrainConfig:
         self.target_norm_std = kwargs.get('target_norm_std', None)
         self.target_norm_std_value = kwargs.get('target_norm_std_value', 1.0)
         self.timestep_type = kwargs.get('timestep_type', 'sigmoid')  # sigmoid, linear, lognorm_blend, next_sample, weighted, one_step
+        # Mean and standard deviation for sigmoid timestep sampling.
+        self.timestep_shift = kwargs.get('timestep_shift', 0.0)
+        self.timestep_scale = kwargs.get('timestep_scale', 1.0)
+        self.timestep_sigmoid_schedule = self._parse_timestep_sigmoid_schedule(
+            kwargs.get('timestep_sigmoid_schedule', [])
+        )
         
         self.first_timestep_chance = kwargs.get('first_timestep_chance', 0.0)
         
@@ -628,6 +635,98 @@ class TrainConfig:
         validation = kwargs.get('validation_config', None)
         if validation is not None:
             self.validation_config: ValidationConfig = ValidationConfig(**validation)
+
+    @staticmethod
+    def _parse_timestep_sigmoid_schedule(
+        schedule: object,
+    ) -> list[dict[str, int | float]]:
+        name = 'timestep_sigmoid_schedule'
+        if not isinstance(schedule, list):
+            raise ValueError(f'{name} must be a list of mappings')
+
+        rows = []
+        previous_start = -1
+        for index, row in enumerate(schedule):
+            path = f'{name}[{index}]'
+            if not isinstance(row, dict):
+                raise ValueError(f'{path} must be a mapping')
+            unknown = row.keys() - {'start_step', 'shift', 'scale'}
+            if unknown:
+                fields = ', '.join(sorted(map(str, unknown)))
+                raise ValueError(f'{path} has unknown fields: {fields}')
+
+            start = row.get('start_step')
+            if type(start) is not int or start < 0:
+                raise ValueError(
+                    f'{path}.start_step must be a nonnegative integer'
+                )
+            if start <= previous_start:
+                raise ValueError(
+                    f'{path}.start_step must be strictly increasing'
+                )
+
+            normalized = {'start_step': start}
+            for field in ('shift', 'scale'):
+                value = row.get(field)
+                requirement = (
+                    'finite' if field == 'shift' else 'positive and finite'
+                )
+                error = f'{path}.{field} must be a {requirement} number'
+                if isinstance(value, bool) or not isinstance(
+                    value, (int, float)
+                ):
+                    raise ValueError(error)
+                try:
+                    value = float(value)
+                except OverflowError as exc:
+                    raise ValueError(error) from exc
+                if not math.isfinite(value) or (
+                    field == 'scale' and value <= 0
+                ):
+                    raise ValueError(error)
+                normalized[field] = value
+
+            rows.append(normalized)
+            previous_start = start
+        return rows
+
+    def get_timestep_kwargs(
+        self, timestep_type: str, step_num: int = 0, *, scheduler=None
+    ) -> dict[str, float]:
+        """Return the sigmoid sampler parameters for this training step."""
+        if timestep_type != 'sigmoid':
+            return {}
+        schedule = self.timestep_sigmoid_schedule
+        if schedule:
+            if getattr(scheduler, 'fixed_train_sigmas', None) is not None:
+                raise ValueError(
+                    'timestep_sigmoid_schedule is incompatible with '
+                    'fixed_train_sigmas. Remove the schedule to use the '
+                    "model's fixed training grid."
+                )
+            for index in range(len(schedule) - 1, -1, -1):
+                left = schedule[index]
+                start = left['start_step']
+                if step_num < start:
+                    continue
+                shift, scale = left['shift'], left['scale']
+                if step_num > start and index + 1 < len(schedule):
+                    right = schedule[index + 1]
+                    interval = right['start_step'] - start
+                    progress = (step_num - start) / interval
+                    shift = (1 - progress) * shift + progress * right['shift']
+                    right_scale = right['scale']
+                    # Interpolating from the lower scale keeps it positive.
+                    if scale <= right_scale:
+                        scale += progress * (right_scale - scale)
+                    else:
+                        weight = 1 - progress
+                        scale = right_scale + weight * (scale - right_scale)
+                return {'timestep_shift': shift, 'timestep_scale': scale}
+        return {
+            'timestep_shift': self.timestep_shift,
+            'timestep_scale': self.timestep_scale,
+        }
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21', 'anima']
@@ -1554,6 +1653,18 @@ def validate_configs(
     if train_config.bypass_guidance_embedding and train_config.do_guidance_loss:
         raise ValueError("Cannot bypass guidance embedding and do guidance loss at the same time. "
                          "Please set bypass_guidance_embedding to False or do_guidance_loss to False.")
+
+    if train_config.timestep_sigmoid_schedule and (
+        train_config.noise_scheduler != 'flowmatch'
+        or train_config.timestep_type != 'sigmoid'
+        or train_config.linear_timesteps
+        or train_config.linear_timesteps2
+    ):
+        raise ValueError(
+            'To use timestep_sigmoid_schedule, set noise_scheduler to '
+            'flowmatch, set timestep_type to sigmoid, and disable '
+            'linear_timesteps and linear_timesteps2.'
+        )
         
     if model_config.accuracy_recovery_adapter is not None:
         if model_config.assistant_lora_path is not None:
