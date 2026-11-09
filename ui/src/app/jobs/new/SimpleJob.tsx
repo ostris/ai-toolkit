@@ -777,6 +777,15 @@ export default function SimpleJob({
                       value={jobConfig.config.process[0].train.timestep_type}
                       disabled={disableSections.includes('train.timestep_type') || false}
                       onChange={value => setJobConfig(value, 'config.process[0].train.timestep_type')}
+                      doc={
+                        jobConfig.config.process[0].train.timestep_type === 'sigmoid'
+                          ? {
+                              title: 'Sigmoid',
+                              description:
+                                'Adjust timestep_shift (mean) and timestep_scale (standard deviation) in Advanced YAML. Defaults are 0 and 1. Negative shift favors higher noise; positive shift favors lower noise.',
+                            }
+                          : null
+                      }
                       options={[
                         { value: 'sigmoid', label: 'Sigmoid' },
                         { value: 'linear', label: 'Linear' },

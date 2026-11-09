@@ -558,6 +558,9 @@ class TrainConfig:
         self.target_norm_std = kwargs.get('target_norm_std', None)
         self.target_norm_std_value = kwargs.get('target_norm_std_value', 1.0)
         self.timestep_type = kwargs.get('timestep_type', 'sigmoid')  # sigmoid, linear, lognorm_blend, next_sample, weighted, one_step
+        # mean and std for sigmoid timestep sampling, separate from inference shift
+        self.timestep_shift = kwargs.get('timestep_shift', 0.0)
+        self.timestep_scale = kwargs.get('timestep_scale', 1.0)
         
         self.first_timestep_chance = kwargs.get('first_timestep_chance', 0.0)
         
@@ -628,6 +631,14 @@ class TrainConfig:
         validation = kwargs.get('validation_config', None)
         if validation is not None:
             self.validation_config: ValidationConfig = ValidationConfig(**validation)
+
+    def get_timestep_kwargs(self, timestep_type: str) -> Dict[str, float]:
+        if timestep_type != 'sigmoid':
+            return {}
+        return {
+            'timestep_shift': self.timestep_shift,
+            'timestep_scale': self.timestep_scale,
+        }
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21', 'anima']

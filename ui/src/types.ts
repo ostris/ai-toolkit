@@ -165,6 +165,8 @@ export interface TrainConfig {
   gradient_checkpointing: boolean;
   noise_scheduler: string;
   timestep_type: string;
+  timestep_shift?: number;
+  timestep_scale?: number;
   content_or_style: string;
   optimizer: string;
   lr: number;
