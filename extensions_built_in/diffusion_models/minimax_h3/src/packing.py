@@ -137,6 +137,20 @@ def reference_video_pixel_size(
     return height, width
 
 
+def bound_short_edge_size(
+    ref_width: int, ref_height: int, min_short_edge: int, max_short_edge: int
+) -> Tuple[int, int]:
+    """Reference sizing by short edge (MiniMax-H3-Image): aspect-preserving
+    scale that puts the short edge inside [min_short_edge, max_short_edge];
+    both axes snap to the canvas multiple. Returns (height, width)."""
+    short = min(ref_width, ref_height)
+    scale = min(max(short, min_short_edge), max_short_edge) / short
+    m = CANVAS_MULTIPLE
+    height = max(m, round(ref_height * scale / m) * m)
+    width = max(m, round(ref_width * scale / m) * m)
+    return height, width
+
+
 def prepare_reference_image(
     image: Image.Image, target_height: int, target_width: int
 ) -> Image.Image:
@@ -577,6 +591,56 @@ def build_pdd_weights(
         wv.append(pdd_head_weights(start, stop, n, video_shift))
         wa.append(pdd_head_weights(start, stop, n, audio_shift))
     return torch.stack(wv).float(), torch.stack(wa).float()
+
+
+def pdd_grid_span(grid, sigma_v: float, sigma_v_next=None):
+    """Head interval [start, stop) for PDD heads distilled on an explicit
+    decreasing sigma grid (n + 1 points, MiniMax-H3-Image). A sampling step
+    spans the grid points nearest sigma -> sigma_next (ComfyUI's rule); a
+    single training sigma uses the one interval containing it."""
+    n = len(grid) - 1
+    if sigma_v_next is None:
+        start = 0
+        for k in range(n):
+            # tolerance: a float32 sigma sitting on a grid point owns that head
+            if grid[k] >= sigma_v - 1e-5:
+                start = k
+        return start, start + 1
+    start, stop = (
+        min(range(n + 1), key=lambda k: abs(grid[k] - float(s)))
+        for s in (sigma_v, sigma_v_next)
+    )
+    start = min(start, n - 1)
+    return start, max(stop, start + 1)
+
+
+def build_pdd_grid_weights(sigma_v, grid, sigma_v_next=None) -> torch.Tensor:
+    """(B, n) head weights on an explicit sigma grid: head 0 (the full head)
+    at 1, the offset heads a step spans at their normalized dt share."""
+    n = len(grid) - 1
+    rows = []
+    for i in range(len(sigma_v)):
+        nxt = None if sigma_v_next is None else float(sigma_v_next[i])
+        start, stop = pdd_grid_span(grid, float(sigma_v[i]), nxt)
+        dt = [grid[k] - grid[k + 1] for k in range(start, stop)]
+        w = torch.zeros(n, dtype=torch.float64)
+        w[0] = 1.0
+        first = max(start, 1)
+        w[first:stop] = torch.tensor(dt[first - start :], dtype=torch.float64) / sum(dt)
+        rows.append(w)
+    return torch.stack(rows).float()
+
+
+def resample_sigma_grid(grid, num_inference_steps: int) -> torch.Tensor:
+    """A decreasing sigma grid read at ``num_inference_steps`` evenly spaced
+    positions (linear in the grid index, like ComfyUI's
+    MiniMaxH3ImageModelSampling); the grid's own step count returns it as is."""
+    grid = torch.tensor(grid, dtype=torch.float64)
+    n = grid.shape[0] - 1
+    pos = torch.linspace(0.0, float(n), num_inference_steps + 1, dtype=torch.float64)
+    lo = pos.floor().long().clamp(max=n - 1)
+    sigmas = torch.lerp(grid[lo], grid[lo + 1], pos - lo)
+    return sigmas.float()
 
 
 def remap_sigma(

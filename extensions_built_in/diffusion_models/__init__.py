@@ -28,6 +28,7 @@ from .minimax_h3 import (
     MinimaxH3FastModel,
     MinimaxH3OmniModel,
     PH3ImageModel,
+    MinimaxH3ImageModel,
 )
 from .flux3 import Flux3Model
 from .moss_image import MossImageModel
@@ -76,6 +77,7 @@ AI_TOOLKIT_MODELS = [
     MinimaxH3FastModel,
     MinimaxH3OmniModel,
     PH3ImageModel,
+    MinimaxH3ImageModel,
     Flux3Model,
     MossImageModel,
     Fibo2Model,

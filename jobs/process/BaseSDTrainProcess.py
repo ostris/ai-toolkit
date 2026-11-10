@@ -1233,7 +1233,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if is_reg:
                     content_or_style = self.train_config.content_or_style_reg
 
-                if self.train_config.timestep_type in ['two_step', 'four_step', 'eight_step']:
+                if getattr(self.sd.noise_scheduler, 'fixed_train_sigmas', None) is not None:
+                    # the scheduler's timesteps are the model's own sampling schedule
+                    timestep_indices = torch.randint(
+                        0,
+                        len(self.sd.noise_scheduler.timesteps),
+                        (batch_size,),
+                        device=self.device_torch
+                    )
+                    timestep_indices = timestep_indices.long()
+                elif self.train_config.timestep_type in ['two_step', 'four_step', 'eight_step']:
                     if self.train_config.timestep_type == 'two_step':
                         indice_choices = [0, 499]
                     elif self.train_config.timestep_type == 'four_step':

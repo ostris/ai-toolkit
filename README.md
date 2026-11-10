@@ -57,6 +57,7 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 - [krea/Krea-2-Turbo](https://huggingface.co/krea/Krea-2-Turbo) (Krea 2 Turbo Edit Training)
 - [microsoft/Mage-Flow-Edit-Base](https://huggingface.co/microsoft/Mage-Flow-Edit-Base) (Mage-Flow Edit)
 - [PrunaAI/P-H3-Image](https://huggingface.co/PrunaAI/P-H3-Image) (P-H3-Image) - text-to-image and editing with up to 8 reference images; it edits when your dataset has control images
+- [MiniMaxAI/MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image) (MiniMax-H3-Image) - text-to-image and editing with reference images; it edits when your dataset has control images
 
 ### Video
 - [Wan-AI/Wan2.1-T2V-1.3B-Diffusers](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers) (Wan 2.1 1.3B)

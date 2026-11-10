@@ -75,6 +75,9 @@ class MiniMaxH3TransformerParams:
     # the unshifted [1, 0] grid: block 0 is a full head, later blocks are
     # offsets from it; a step uses the dt-weighted blend of the heads it spans
     pdd_steps: int = 1
+    # image checkpoints (MiniMax-H3-Image) drop the audio stream: no
+    # audio_patch_proj, no final_layer.audio_out, no audio rows in the pack
+    audio_enabled: bool = True
 
     @property
     def adaln_apply_silu(self) -> bool:
@@ -376,8 +379,11 @@ class MiniMaxH3FinalLayer(nn.Module):
         self.video_out = nn.Linear(
             p.hidden_size, video_patch_dim * p.pdd_steps, bias=True
         )
-        self.audio_out = nn.Linear(
-            p.hidden_size, p.audio_latents_dim * p.pdd_steps, bias=True
+        self.audio_latents_dim = p.audio_latents_dim
+        self.audio_out = (
+            nn.Linear(p.hidden_size, p.audio_latents_dim * p.pdd_steps, bias=True)
+            if p.audio_enabled
+            else None
         )
 
     def forward(
@@ -396,12 +402,16 @@ class MiniMaxH3FinalLayer(nn.Module):
         ].to(dt)
         h = h.to(self.video_out.weight.dtype)
         video = self.video_out(h.index_select(1, video_indices))
-        audio = self.audio_out(h.index_select(1, audio_indices))
         if self.pdd_steps > 1:
             if pdd_weights is None:
                 raise ValueError("PDD heads need pdd_weights for the current step")
             # heads run through the Linear's own forward so LoRA hooks apply
             video = _blend_pdd_heads(video, pdd_weights[0], self.pdd_steps)
+        if self.audio_out is None:
+            # no audio stream: zero audio rows
+            return video, video.new_zeros((video.shape[0], 0, self.audio_latents_dim))
+        audio = self.audio_out(h.index_select(1, audio_indices))
+        if self.pdd_steps > 1:
             audio = _blend_pdd_heads(audio, pdd_weights[1], self.pdd_steps)
         return video, audio
 
@@ -427,6 +437,7 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
             params.adaln_t_table_size = table.shape[0]
             params.time_embed_dim = table.shape[1]
         params.gate_compress = "blocks.0.attn.to_gate_compress.weight" in state_dict
+        params.audio_enabled = "audio_patch_proj.weight" in state_dict
         video_out = state_dict.get("final_layer.video_out.weight", None)
         if video_out is not None:
             p = params.patch_size
@@ -457,7 +468,11 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
             p.latents_dim * p.patch_size[0] * p.patch_size[1] * p.patch_size[2]
         )
         self.video_patch_proj = nn.Linear(video_patch_dim, p.hidden_size, bias=True)
-        self.audio_patch_proj = nn.Linear(p.audio_latents_dim, p.hidden_size, bias=True)
+        self.audio_patch_proj = (
+            nn.Linear(p.audio_latents_dim, p.hidden_size, bias=True)
+            if p.audio_enabled
+            else None
+        )
         self.condition_proj = nn.Linear(p.text_dim, p.hidden_size, bias=True)
 
         if p.adaln_t_table_size is not None:
@@ -527,7 +542,7 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
     def forward(
         self,
         hidden_states: torch.Tensor,  # (B, Nv, 96) patchified video rows (cond + target)
-        audio_hidden_states: torch.Tensor,  # (B, Na, 32) audio rows
+        audio_hidden_states: Optional[torch.Tensor],  # (B, Na, 32) audio rows; unused without an audio stream
         encoder_hidden_states: torch.Tensor,  # (B, L, 5120) text conditioning
         row_timesteps: torch.Tensor,  # (B, S) float in [0, 1], t = 1 - sigma
         token_tags: torch.Tensor,  # (B, S) long: 0 video, 1 text, 2 audio, -1 pad
@@ -553,9 +568,11 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
         video_embeds = self.video_patch_proj(
             hidden_states.to(self.video_patch_proj.weight.dtype)
         )
-        audio_embeds = self.audio_patch_proj(
-            audio_hidden_states.to(self.audio_patch_proj.weight.dtype)
-        )
+        audio_embeds = None
+        if self.audio_patch_proj is not None:
+            audio_embeds = self.audio_patch_proj(
+                audio_hidden_states.to(self.audio_patch_proj.weight.dtype)
+            )
         text_embeds = self.condition_proj(encoder_hidden_states.to(self.dtype))
 
         # pad rows never act as attention keys; as queries they see everything
@@ -573,7 +590,8 @@ class MiniMaxH3Transformer(nn.Module, OstrisModelMixin):
         x = text_embeds.new_zeros((batch_size, seq_len, text_embeds.shape[-1]))
         x = x.index_copy(1, text_indices, text_embeds)
         x = x.index_copy(1, video_indices, video_embeds.to(x.dtype))
-        x = x.index_copy(1, audio_indices, audio_embeds.to(x.dtype))
+        if audio_embeds is not None:
+            x = x.index_copy(1, audio_indices, audio_embeds.to(x.dtype))
 
         # one timestep embedding per distinct noise level across the batch
         unique_t, inverse = torch.unique(

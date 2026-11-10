@@ -301,6 +301,11 @@ class MinimaxH3Model(BaseModel):
         hidden states through its text connector)."""
         return {}
 
+    def _num_audio_latents(self, num_frames: int) -> int:
+        """Target audio latents riding with ``num_frames`` video frames
+        (MiniMax-H3-Image has no audio stream: 0)."""
+        return packing.audio_latent_num_frames(num_frames)
+
     def prepare_sample_prompt_context(self, gen_config):
         # sample prompts: video refs are treated at the sample's length, not
         # the dataset's (which only applies while caching training embeds)
@@ -883,7 +888,7 @@ class MinimaxH3Model(BaseModel):
             else:
                 # invert 17n+5 -> 5n+2 from the latent frame count
                 num_frames = (t_lat - 2) // 5 * 17 + 5 if t_lat > 1 else 1
-            a_lat = packing.audio_latent_num_frames(num_frames)
+            a_lat = self._num_audio_latents(num_frames)
             # audio only trains for video batches from datasets that asked for
             # it. Cached latents can carry audio after do_audio was turned off,
             # and image (single frame) batches must never pick up a soundtrack
@@ -1209,6 +1214,14 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
             return static_image_video_ref(image, n, fps=packing.FPS)
         return image
 
+    def _reference_pixel_size(
+        self, ref_width: int, ref_height: int, target_height: int, target_width: int
+    ):
+        """(height, width) a still reference is encoded at."""
+        return packing.reference_pixel_size(
+            ref_width, ref_height, target_height, target_width
+        )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # references arrive as a list per sample (multi_control_paths), at
@@ -1280,7 +1293,7 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         size_fn = (
             packing.reference_video_pixel_size
             if as_video_frames
-            else packing.reference_pixel_size
+            else self._reference_pixel_size
         )
 
         all_rows = []
@@ -1592,11 +1605,12 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
                         self._encode_static_image_ref_for_sampling(img, gen_config)
                     )
                 else:
-                    ref_images.append(
-                        packing.prepare_reference_image(
-                            img, gen_config.height, gen_config.width
-                        )
+                    ph, pw = self._reference_pixel_size(
+                        img.size[0], img.size[1], gen_config.height, gen_config.width
                     )
+                    if img.size != (pw, ph):
+                        img = img.resize((pw, ph), Image.Resampling.LANCZOS)
+                    ref_images.append(img)
 
         with_audio = bool(self.model_config.model_kwargs.get("sample_audio", True))
 

@@ -101,7 +101,7 @@ class MiniMaxH3Pipeline:
             t_lat = 1
         h_lat = height // 16
         w_lat = width // 16
-        a_lat = packing.audio_latent_num_frames(num_frames)
+        a_lat = model._num_audio_latents(num_frames)
 
         text_embeds, token_tags = trim_caption_tokens(
             conditional_embeds.text_embeds[0],

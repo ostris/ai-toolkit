@@ -25,6 +25,9 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
         self.timestep_type = "linear"
+        # step-distilled models that must train on their own sampling schedule
+        # set this to its sigmas (descending, without the terminal 0)
+        self.fixed_train_sigmas = None
 
         with torch.no_grad():
             # create weights for timesteps
@@ -114,6 +117,13 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         patch_size=1
     ):
         self.timestep_type = timestep_type
+        if self.fixed_train_sigmas is not None:
+            sigmas = torch.tensor(
+                self.fixed_train_sigmas, dtype=torch.float32, device=device
+            )
+            self.timesteps = sigmas * self.config.num_train_timesteps
+            self.sigmas = torch.cat([sigmas, torch.zeros(1, device=device)])
+            return self.timesteps
         if timestep_type == 'linear' or timestep_type == 'weighted':
             timesteps = torch.linspace(1000, 1, num_timesteps, device=device)
             self.timesteps = timesteps

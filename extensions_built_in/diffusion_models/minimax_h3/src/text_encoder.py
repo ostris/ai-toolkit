@@ -127,6 +127,7 @@ def encode_minimax_h3_prompt(
     ] = None,  # cap on PROMPT tokens (vision blocks are never cut)
     hidden_state_layers: Optional[List[int]] = None,
     connector=None,
+    picture_label: str = "<Picture {}>: ",
 ):
     """Encode ONE prompt (with optional keyframes) into MiniMax-H3 conditioning.
 
@@ -139,6 +140,9 @@ def encode_minimax_h3_prompt(
     ``hidden_state_layers`` + ``connector`` (P-H3-Image): the listed hidden
     states are stacked (1, layers, L, C) and projected by ``connector`` to
     (1, L, 5120) instead of reading a single layer.
+
+    ``picture_label`` is the text in front of each image's vision block
+    (MiniMax-H3-Image labels its references without the angle brackets).
     """
     num_layers = text_encoder.config.text_config.num_hidden_layers
     if hidden_state_layers is None and num_layers < TEXT_ENCODER_LAYER:
@@ -215,7 +219,7 @@ def encode_minimax_h3_prompt(
             else:
                 num_image_tokens = int(image_grid_thw[pic_idx].prod()) // merge
                 label_ids = tokenizer(
-                    f"<Picture {pic_idx + 1}>: ", add_special_tokens=False
+                    picture_label.format(pic_idx + 1), add_special_tokens=False
                 )["input_ids"]
                 vision_ids = (
                     [vision_start] + [image_pad] * num_image_tokens + [vision_end]

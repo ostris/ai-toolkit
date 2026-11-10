@@ -49,6 +49,7 @@ ARCH_LATENT_FORMAT = {
     "minimax_h3_vsa": "MiniMaxH3Video",
     "minimax_h3_omni": "MiniMaxH3Video",
     "p_h3_image": "MiniMaxH3Video",
+    "minimax_h3_image": "MiniMaxH3Video",
     "anima": "Wan21",
     "cogview4": "Flux",
     "prx_pixel": None,  # pixel space
