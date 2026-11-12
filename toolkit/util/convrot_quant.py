@@ -330,7 +330,7 @@ def _get_kernel():
         BLOCK_K: tl.constexpr,
         BLOCKED_SCALES: tl.constexpr,
     ):
-        pid_m = tl.program_id(0)
+        pid_m = tl.program_id(0).to(tl.int64)
         pid_k = tl.program_id(1)
         pts = tl.load(pts_ptr)
         offs = pid_k * BLOCK_K + tl.arange(0, BLOCK_K)
@@ -500,7 +500,7 @@ def _get_dequant_kernel():
         K,
         BLOCK_B: tl.constexpr,
     ):
-        row = tl.program_id(0)
+        row = tl.program_id(0).to(tl.int64)
         pid_k = tl.program_id(1)
         pts = tl.load(pts_ptr)
         offs_b = pid_k * BLOCK_B + tl.arange(0, BLOCK_B)
