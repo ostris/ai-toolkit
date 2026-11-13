@@ -330,7 +330,7 @@ def _get_kernel():
         BLOCK_K: tl.constexpr,
         BLOCKED_SCALES: tl.constexpr,
     ):
-        pid_m = tl.program_id(0)
+        pid_m = tl.program_id(0).to(tl.int64)
         pid_k = tl.program_id(1)
         pts = tl.load(pts_ptr)
         offs = pid_k * BLOCK_K + tl.arange(0, BLOCK_K)
@@ -500,7 +500,7 @@ def _get_dequant_kernel():
         K,
         BLOCK_B: tl.constexpr,
     ):
-        row = tl.program_id(0)
+        row = tl.program_id(0).to(tl.int64)
         pid_k = tl.program_id(1)
         pts = tl.load(pts_ptr)
         offs_b = pid_k * BLOCK_B + tl.arange(0, BLOCK_B)
@@ -862,7 +862,7 @@ def _get_int8_kernels():
     def int8_act_quant_kernel(
         x_ptr, q_ptr, s_ptr, K, QMAX: tl.constexpr, BLOCK_K: tl.constexpr
     ):
-        row = tl.program_id(0)
+        row = tl.program_id(0).to(tl.int64)
         base = row * K
         acc = tl.zeros((BLOCK_K,), tl.float32)
         for k0 in range(0, K, BLOCK_K):
@@ -892,7 +892,7 @@ def _get_int8_kernels():
         HAS_BIAS: tl.constexpr,
         BLOCK_N: tl.constexpr,
     ):
-        row = tl.program_id(0)
+        row = tl.program_id(0).to(tl.int64)
         cb = tl.program_id(1)
         offs = cb * BLOCK_N + tl.arange(0, BLOCK_N)
         mask = offs < N
