@@ -38,28 +38,37 @@ class Automagic4(Automagic3):
 
     reference: the ``sensitivity_quantile`` (default 0.9) quantile of the
     per-tensor geometric-mean sensitivity, weighted by element count, from the
-    previous step. High so a large near-dead mass (LoRA downs at init are about
-    half of a LoRA's elements) cannot drag it down and stall everything above
-    it; the outliers it targets are a few percent of elements.
+    previous step, over the tensors that had a non-zero gradient. Tensors whose
+    gradient is exactly zero (LoRA downs while their ups are still zero) are
+    left out: at the eps floor (~1e-15) they would otherwise become the
+    reference whenever they are at least ``sensitivity_quantile`` of the
+    elements, and every live tensor's balance would go to ~0.
 
     The first step only measures (second moments and the reference): without a
     reference the sensitive tensors would take a full v3 step.
 
-    lr controller: re-centered flip-rate vote. v3's neutral point is a 50% sign
-    flip rate, but a weight bouncing on gradient noise at its minimum has
-    lag-1 gradient correlation -effective_lr * curvature / 2 at any lr > 0, so
-    v3 only balances at lr = 0 and anneals once the signal runs out. v4 votes
-    (neutral - observed) flip rate per element, with
+    lr controller: a zero-mean vote. Per element, over the last H update
+    signs, let k be the number of positive signs, m = (2k - H) / H the mean
+    sign and f = flips / (H - 1) the sign-flip rate. The vote is
 
-        neutral = 0.5 + asin(step_target / 2) / pi
+        (m^2 - 1/H) - (f - 1/2)
 
-    the flip rate of a stationary weight whose effective_lr * curvature equals
-    ``step_target`` (default 0.1; 2 is the stability edge). The lr then has a
-    fixed point set by step_target, with or without signal: trends flip less
-    and raise it, overshoot flips more and lowers it. Votes are weighted by the
-    balanced |update| (output impact). No gain: near the fixed point the flip
-    rate moves ~0.16 * step_target per e-fold of lr, so the loop gain over the
-    H-step window lag stays well below 1.
+    weighted by the balanced |update| (output impact) and pooled per group.
+    For independent fair signs (gradient noise) E[m^2] = 1/H and E[f] = 1/2
+    exactly, so noise votes 0 and the lr holds. A trend (consistent signs)
+    has m^2 above 1/H and few flips: it votes up. Overshoot (signs alternate)
+    flips more than half the time: it votes down. The pooled vote is capped at
+    ``max_vote`` per step, since the window only fully reflects an lr change
+    H - 1 steps later.
+
+    Earlier versions voted (neutral - f) with neutral = 0.5 + asin(step_target
+    / 2) / pi = 0.516. Noise flips 50% of the time, so every noise-dominated
+    element voted +0.016 per step at any lr and the lr doubled every ~44 steps
+    until training diverged (issues #1084, #1091). ``step_target`` is still
+    accepted so existing configs load, but it no longer has an effect.
+
+    A parameter whose state is created after training started (its first
+    gradient arrives late) starts at its group's adapted lr, not the start lr.
     """
 
     def __init__(
@@ -67,6 +76,7 @@ class Automagic4(Automagic3):
         params,
         *args,
         sensitivity_quantile: float = 0.9,
+        max_vote: float = 0.05,
         step_target: float = 0.1,
         **kwargs,
     ):
@@ -74,11 +84,13 @@ class Automagic4(Automagic3):
             raise ValueError(
                 f"sensitivity_quantile ({sensitivity_quantile}) must be in (0, 1]"
             )
+        if not max_vote > 0.0:
+            raise ValueError(f"max_vote ({max_vote}) must be > 0")
         if not 0.0 < step_target < 2.0:
             raise ValueError(f"step_target ({step_target}) must be in (0, 2)")
         self.sensitivity_quantile = float(sensitivity_quantile)
-        self.step_target = float(step_target)
-        self._neutral_flip = 0.5 + math.asin(self.step_target / 2.0) / math.pi
+        self.max_vote = float(max_vote)
+        self.step_target = float(step_target)  # unused; kept for config compatibility
         super().__init__(params, *args, **kwargs)
 
     # ------------------------------------------------------------------ utils
@@ -99,14 +111,26 @@ class Automagic4(Automagic3):
         n = len(self.param_groups)
         self._group_ref: list = [None] * n
         self._group_sens_log: list = [[] for _ in range(n)]
-        self._group_sens_numel: list = [[] for _ in range(n)]
+        self._group_sens_weight: list = [[] for _ in range(n)]
 
     def _init_state(self, p: torch.Tensor, group: dict) -> None:
         super()._init_state(p, group)
+        state = self.state[p]
+        # A param joining late starts at the group's adapted lr: the parent
+        # seeds it from group["lr"], which the controller never moves.
+        for q in group["params"]:
+            st = self.state.get(q)
+            if q is not p and st and "lr" in st:
+                state["lr"] = (
+                    st["lr"]
+                    .to(p.device, torch.float32, copy=True)
+                    .clamp_(min=group["min_lr"], max=group["max_lr"])
+                )
+                break
         gi = self._param_group_index.get(p)
         ref = self._group_ref[gi] if gi is not None else None
         if ref is not None:
-            self.state[p]["sens_ref"] = ref.to(p.device, copy=True)
+            state["sens_ref"] = ref.to(p.device, copy=True)
 
     # -------------------------------------------------------------- per-param
 
@@ -128,6 +152,8 @@ class Automagic4(Automagic3):
         beta2 = group["beta2"]
         eps = group["eps"]
         sq = grad * grad
+        # exactly-zero gradient: excluded from the reference (weight 0); no sync
+        alive = sq.sum() > 0
         if p.dim() >= 2:
             row = self._ema_(state["exp_avg_sq_row"], sq.mean(dim=-1).add_(eps), beta2)
             col = self._ema_(state["exp_avg_sq_col"], sq.mean(dim=-2).add_(eps), beta2)
@@ -148,7 +174,9 @@ class Automagic4(Automagic3):
         gi = self._param_group_index.get(p)
         if gi is not None:
             self._group_sens_log[gi].append(0.5 * (log_v - math.log(bias_corr)))
-            self._group_sens_numel[gi].append(p.numel())
+            self._group_sens_weight[gi].append(
+                alive.to(torch.float64) * float(p.numel())
+            )
 
         ref = state.get("sens_ref")
         if ref is None:
@@ -164,7 +192,7 @@ class Automagic4(Automagic3):
         update.mul_(balance)
         del balance, inv_sqrt_v
 
-        # flip-rate vote (see class docstring), pooled per group, applied in .step()
+        # zero-mean vote (see class docstring), pooled per group, applied in .step()
         cur_bits = update.gt(0.0)
         hist = state["sign_history"]
         idx = state["hist_idx"]
@@ -183,10 +211,18 @@ class Automagic4(Automagic3):
                 .bitwise_and_(1)
                 .view(H, -1)[:, : update.numel()]
             )
+            k = bits.sum(0, dtype=torch.int16).to(torch.float32)
             flips = (bits[1:] ^ bits[:-1]).sum(0, dtype=torch.int16)
+            del bits
             w = update.abs().view(-1)
             den = w.sum()
-            num = den * self._neutral_flip - (w * flips).sum() / (H - 1)
+            # sum w * [((2k - H) / H)^2 - 1/H - flips / (H - 1) + 1/2]
+            num = (
+                (w * k.square()).sum() * (4.0 / (H * H))
+                - (w * k).sum() * (4.0 / H)
+                + den * (1.5 - 1.0 / H)
+                - (w * flips).sum() / (H - 1)
+            )
             if self._group_num[gi] is None:
                 self._group_num[gi] = num
                 self._group_den[gi] = den
@@ -216,23 +252,38 @@ class Automagic4(Automagic3):
 
     def _apply_group_votes(self) -> None:
         self._update_sensitivity_refs()
+        # cap the pooled vote at +/- max_vote per step (the parent's cap is 1)
+        for gi in range(len(self.param_groups)):
+            num = self._group_num[gi]
+            if num is not None:
+                den = self._group_den[gi].clamp(min=1e-30)
+                num.copy_((num / den).clamp_(-self.max_vote, self.max_vote) * den)
         super()._apply_group_votes()
 
     def _update_sensitivity_refs(self) -> None:
-        # numel-weighted quantile of this step's per-tensor log sensitivities; no GPU sync
+        # numel-weighted quantile of this step's per-tensor log sensitivities
+        # over the live tensors; no GPU sync once a reference exists
         for gi, group in enumerate(self.param_groups):
             logs = self._group_sens_log[gi]
             if not logs:
                 continue
             dev = logs[0].device
             vals = torch.stack([t.to(dev) for t in logs])
-            weights = torch.tensor(
-                self._group_sens_numel[gi], dtype=torch.float64, device=dev
-            )
+            weights = torch.stack([w.to(dev) for w in self._group_sens_weight[gi]])
+            self._group_sens_log[gi] = []
+            self._group_sens_weight[gi] = []
             order = vals.argsort()
             cum = weights[order].cumsum(0)
-            pos = torch.searchsorted(cum, cum[-1:] * self.sensitivity_quantile)
+            total = cum[-1:]
+            pos = torch.searchsorted(cum, total * self.sensitivity_quantile)
             ref = vals[order][pos.clamp_(max=len(logs) - 1)].squeeze(0).exp_()
+            prev = self._group_ref[gi]
+            if prev is None:
+                if not bool(total > 0):
+                    continue  # nothing alive yet: keep measuring
+            else:
+                # a step where every tensor was dead keeps the previous reference
+                ref = torch.where(total.squeeze(0) > 0, ref, prev.to(dev))
             self._group_ref[gi] = ref
             for p in group["params"]:
                 st = self.state.get(p)
@@ -243,8 +294,6 @@ class Automagic4(Automagic3):
                     st["sens_ref"] = ref.to(p.device, copy=True)
                 else:
                     cur.copy_(ref)
-            self._group_sens_log[gi] = []
-            self._group_sens_numel[gi] = []
 
     def load_state_dict(self, state_dict):
         super().load_state_dict(state_dict)
