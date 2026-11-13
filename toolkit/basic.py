@@ -13,7 +13,7 @@ def value_map(inputs, min_in, max_in, min_out, max_out):
     return (inputs - min_in) * (max_out - min_out) / (max_in - min_in) + min_out
 
 
-def flush(garbage_collect=True):
+def flush(garbage_collect=False):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     # if is mps, also clear the mps cache
