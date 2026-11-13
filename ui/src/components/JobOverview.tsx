@@ -5,9 +5,10 @@ import GPUWidget from '@/components/GPUWidget';
 import CPUWidget from '@/components/CPUWidget';
 import FilesWidget from '@/components/FilesWidget';
 import { getTotalSteps } from '@/utils/jobs';
-import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
+import { Cpu, HardDrive, Info, Gauge, GitBranch } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useJobLog from '@/hooks/useJobLog';
+import { apiClient } from '@/utils/api';
 
 interface JobOverviewProps {
   job: Job;
@@ -22,14 +23,33 @@ export default function JobOverview({ job }: JobOverviewProps) {
   }, [job.gpu_ids]);
   const { log, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
   const logRef = useRef<HTMLDivElement>(null);
+  const [parentJob, setParentJob] = useState<Job | null>(null);
+  const [childJobs, setChildJobs] = useState<Job[]>([]);
+  
   // Track whether we should auto-scroll to bottom
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
-  console.log('job.gpu_ids', job.gpu_ids);
   const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
   const { cpuInfo, isCPUInfoLoaded } = useCPUInfo(5000);
   const totalSteps = getTotalSteps(job);
   const progress = (job.step / totalSteps) * 100;
   const isStopping = job.stop && job.status === 'running';
+
+  // Fetch fork information
+  useEffect(() => {
+    const fetchForkInfo = async () => {
+      try {
+        const response = await apiClient.get(`/api/jobs/${job.id}/fork`);
+        if (response.data) {
+          setParentJob(response.data.parentJob);
+          setChildJobs(response.data.childJobs || []);
+        }
+      } catch (error) {
+        console.error('Error fetching fork info:', error);
+      }
+    };
+
+    fetchForkInfo();
+  }, [job.id]);
 
   const logLines: string[] = useMemo(() => {
     // Log is already terminal-rendered by useJobLog — one entry per line.
@@ -138,6 +158,42 @@ export default function JobOverview({ job }: JobOverviewProps) {
               </div>
             </div>
           </div>
+
+          {/* Fork Information */}
+          {(parentJob || childJobs.length > 0) && (
+            <div className="border-t border-gray-700 pt-4 space-y-3">
+              {parentJob && (
+                <div className="flex items-center space-x-4 text-sm">
+                  <GitBranch className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                  <div className="flex-grow">
+                    <p className="text-xs text-gray-400">Forked from</p>
+                    <p className="text-gray-200">
+                      <a href={`/jobs/${parentJob.id}`} className="hover:text-blue-400 underline">
+                        {parentJob.name}
+                      </a>
+                      {job.fork_from_step && <span className="text-gray-500 ml-2">(at step {job.fork_from_step})</span>}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {childJobs.length > 0 && (
+                <div className="text-sm">
+                  <p className="text-xs text-gray-400 mb-2">Child Forks ({childJobs.length})</p>
+                  <div className="space-y-1">
+                    {childJobs.map((childJob) => (
+                      <div key={childJob.id} className="flex items-center space-x-2 pl-4">
+                        <GitBranch className="w-3 h-3 text-green-600 dark:text-green-400" />
+                        <a href={`/jobs/${childJob.id}`} className="text-gray-300 hover:text-blue-400 underline text-xs">
+                          {childJob.name}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Log - Now using flex-grow to fill remaining space */}
           <div className="bg-gray-950 rounded-lg p-4 relative flex-grow min-h-60">

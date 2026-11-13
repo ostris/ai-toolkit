@@ -12,7 +12,7 @@ import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { openConfirm } from '@/components/ConfirmModal';
 import { deleteJob, getTotalSteps, stopJob } from '@/utils/jobs';
-import { Trash2 } from 'lucide-react';
+import { Trash2, GitBranch } from 'lucide-react';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -178,6 +178,20 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
             </div>
           </div>
         );
+      },
+    },
+    {
+      title: 'Fork',
+      key: 'fork',
+      render: row => {
+        if (row.parent_job_id) {
+          return (
+            <Link href={`/jobs/${row.parent_job_id}`} title="View parent job">
+              <GitBranch className="w-4 h-4 text-amber-500 hover:text-amber-400" />
+            </Link>
+          );
+        }
+        return <></>;
       },
     },
     {
