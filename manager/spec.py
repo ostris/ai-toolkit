@@ -85,6 +85,28 @@ _WIN_HELPERS = ["wheel", "setuptools", "poetry-core", "hf_xet"]
 
 PYTORCH_INDEX = "https://download.pytorch.org/whl/"
 
+# ---- AMD ROCm: AMD's multi-arch wheels (Linux + Windows) --------------------
+# One index for every supported GPU. The base torch/torchvision wheels carry
+# no kernels; the device-<gfx> extra pulls the per-arch kernel package and the
+# matching ROCm runtime, so no system ROCm / HIP SDK install is needed.
+ROCM_BACKEND = "rocm10.1.0"
+ROCM_INDEX = "https://stable.repo.amd.com/rocm/whl-next/"
+AMD_ADLX = "amd-adlx>=1.0.3"
+# requirements pin optimum-quanto 0.2.4, whose qint4 path parses
+# torch.version.cuda (None on ROCm) and whose CUDA extension it tries to build
+# on every call; 0.2.6+ handles ROCm. --no-deps keeps requirements' pins.
+QUANTO_ROCM = "optimum-quanto==0.2.7"
+# targets with a device-<gfx> extra on both torch and torchvision at the
+# pinned version; an unlisted target falls back to device-all
+ROCM_DEVICE_TARGETS = (
+    "gfx908", "gfx90a", "gfx942", "gfx950",
+    "gfx1010", "gfx1011", "gfx1012",
+    "gfx1030", "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035", "gfx1036",
+    "gfx1100", "gfx1101", "gfx1102", "gfx1103",
+    "gfx1150", "gfx1151", "gfx1152", "gfx1153",
+    "gfx1200", "gfx1201", "gfx1250",
+)  # fmt: skip
+
 # ---- NVIDIA RTX Spark: native Windows-on-ARM CUDA ---------------------------
 # The CUDA 13.4 developer preview added native win_arm64 CUDA. No public wheels
 # exist for the GPU stack, so we build them ourselves (torch from main +
@@ -147,8 +169,9 @@ class EnvSpec(object):
         torch_links=None,
         no_deps_packages=None,
         runtime_dll_dirs=None,
+        torch_extras=None,
     ):
-        self.backend = backend  # cu134 / cu130 / cu126 / rocm7.1 / mps / cpu
+        self.backend = backend  # cu134 / cu130 / cu126 / rocm10.1.0 / mps / cpu
         self.torch_packages = torch_packages  # {name: version}
         self.torch_index = torch_index  # None = PyPI
         self.python_version = python_version
@@ -173,9 +196,18 @@ class EnvSpec(object):
         self.runtime_dll_dirs = runtime_dll_dirs or []
         # env vars every venv python needs (sitecustomize setdefault)
         self.runtime_env = {}
+        # {package: [extra, ...]} for the torch trio (AMD's device-<gfx>)
+        self.torch_extras = torch_extras or {}
 
     def torch_args(self):
-        args = ["%s==%s" % (k, v) for k, v in sorted(self.torch_packages.items())]
+        # AMD's index hosts several ROCm builds of each version, so the local
+        # tag is pinned there too
+        tag = "+%s" % self.backend if self.torch_extras else ""
+        args = []
+        for k, v in sorted(self.torch_packages.items()):
+            extras = self.torch_extras.get(k)
+            name = "%s[%s]" % (k, ",".join(extras)) if extras else k
+            args.append("%s==%s%s" % (name, v, tag))
         if self.torch_index:
             args += ["--index-url", self.torch_index]
         for links in self.torch_links:
@@ -231,6 +263,7 @@ class EnvSpec(object):
             "no_deps_packages": self.no_deps_packages,
             "runtime_dll_dirs": self.runtime_dll_dirs,
             "runtime_env": self.runtime_env,
+            "torch_extras": self.torch_extras,
         }
 
 
@@ -335,6 +368,59 @@ def _cuda_spec(detection):
         find_links=find_links,
         notes=notes,
     )
+
+
+def _rocm_devices(detection):
+    """device-<gfx> extras for the detected AMD GPUs, or None if all unsupported."""
+    gpus = (detection.get("rocm") or {}).get("gpus", [])
+    targets = [g["gfx"] for g in gpus if g.get("gfx")]
+    if not targets:
+        # GPU present but its target unknown (no KFD topology / clinfo)
+        return ["device-all"]
+    supported = []
+    for gfx in targets:
+        if gfx in ROCM_DEVICE_TARGETS and "device-" + gfx not in supported:
+            supported.append("device-" + gfx)
+    return supported or None
+
+
+def _rocm_spec(detection, allow_cpu=False):
+    devices = _rocm_devices(detection)
+    if devices is None:
+        if allow_cpu:
+            return None
+        targets = ", ".join(g["gfx"] for g in detection["rocm"]["gpus"])
+        raise RuntimeError(
+            "AMD GPU detected (%s), but ROCm PyTorch has no kernels for it. "
+            "Pass --cpu to install anyway." % targets
+        )
+    extras = [TORCHCODEC]
+    optional = [FLA]
+    if detection["os"] == "windows":
+        extras = _WIN_HELPERS + extras
+        # triton-windows ships an AMD backend; optional since only
+        # torch.compile and the flash-linear-attention kernels need it
+        optional = [TRITON_WINDOWS] + optional
+        # GPU telemetry for the UI monitor (amdsmi has no Windows port)
+        optional.append(AMD_ADLX)
+    spec = EnvSpec(
+        ROCM_BACKEND,
+        TORCH,
+        torch_index=ROCM_INDEX,
+        extra_packages=extras,
+        optional_packages=optional,
+        torch_extras={"torch": devices, "torchvision": devices},
+        no_deps_packages=[QUANTO_ROCM],
+        notes=[
+            "AMD ROCm: installing PyTorch for %s from AMD's wheel index."
+            % ", ".join(d[len("device-") :] for d in devices),
+            "flash-attn / NATTEN prebuilt wheels are unavailable for ROCm.",
+        ],
+    )
+    # SDPA's AOTriton flash / mem-efficient kernels are gated behind this on
+    # several consumer targets; without it attention falls back to the math path
+    spec.runtime_env["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+    return spec
 
 
 def _spark_spec(detection, wheels_source):
@@ -443,18 +529,9 @@ def _build_spec(detection, allow_cpu=False):
         return _cuda_spec(detection)
 
     if detection["backend"] == "rocm":
-        return EnvSpec(
-            "rocm7.1",
-            TORCH,
-            torch_index=PYTORCH_INDEX + "rocm7.1",
-            extra_packages=[TORCHCODEC],
-            # runs on ROCm via the triton bundled with rocm torch
-            optional_packages=[FLA],
-            notes=[
-                "AMD ROCm support is experimental and largely untested.",
-                "flash-attn / NATTEN prebuilt wheels are unavailable for ROCm.",
-            ],
-        )
+        spec = _rocm_spec(detection, allow_cpu)
+        if spec is not None:
+            return spec
 
     # CPU fallback
     if not allow_cpu:

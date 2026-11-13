@@ -226,7 +226,14 @@ def _e4m3_triton_ok(device) -> bool:
     key = str(device)
     if key not in _e4m3_triton_ok_cache:
         try:
-            _e4m3_triton_ok_cache[key] = torch.cuda.get_device_capability(device) >= (8, 9)
+            if torch.version.hip is not None:
+                # ROCm reports the gfx version as the capability; OCP e4m3 is
+                # native on RDNA4 and gfx950 only
+                arch = torch.cuda.get_device_properties(device).gcnArchName
+                ok = arch.startswith(("gfx12", "gfx950"))
+            else:
+                ok = torch.cuda.get_device_capability(device) >= (8, 9)
+            _e4m3_triton_ok_cache[key] = ok
         except Exception:
             _e4m3_triton_ok_cache[key] = False
     return _e4m3_triton_ok_cache[key]
@@ -577,6 +584,8 @@ def _fp4_gemm_supported(device) -> bool:
     supported = (
         device.type == "cuda"
         and torch.cuda.is_available()
+        # ROCm reports the gfx major here, so RDNA3/4 would read as sm_100+
+        and torch.version.hip is None
         and torch.cuda.get_device_capability(device)[0] >= 10  # Blackwell
     )
     if not supported and not _warned_no_fp4:
