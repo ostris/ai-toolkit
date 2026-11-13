@@ -10,18 +10,17 @@ from safetensors.torch import load_file, save_file
 from safetensors import safe_open
 
 
-DTYPE_MAP = {
-    "float32": torch.float32,
-    "fp32": torch.float32,
-    "float16": torch.float16,
-    "fp16": torch.float16,
-    "bfloat16": torch.bfloat16,
-    "bf16": torch.bfloat16,
-}
-
-
 def log(message: str) -> None:
     print(message, flush=True)
+
+
+def higher_precision(a: torch.dtype, b: torch.dtype) -> torch.dtype:
+    """Pick whichever of the two dtypes is more precise (fp16 beats bf16)."""
+    if a == b:
+        return a
+    if a.is_floating_point and b.is_floating_point:
+        return a if torch.finfo(a).eps <= torch.finfo(b).eps else b
+    return torch.promote_types(a, b)
 
 
 def pad_to_shape(tensor: torch.Tensor, shape: tuple) -> torch.Tensor:
@@ -44,12 +43,6 @@ def main() -> int:
     )
     parser.add_argument("--output", required=True, help="Output .safetensors path.")
     parser.add_argument(
-        "--save_dtype",
-        default="bfloat16",
-        choices=list(DTYPE_MAP.keys()),
-        help="Dtype of the saved tensors (merging is always done in float32).",
-    )
-    parser.add_argument(
         "--device",
         default="cpu",
         help="Device to merge on (cpu, cuda, cuda:1, mps). Output is always saved from CPU.",
@@ -67,11 +60,12 @@ def main() -> int:
         return 2
 
     device = torch.device(args.device)
-    save_dtype = DTYPE_MAP[args.save_dtype]
 
-    log(f"Merging {len(loras)} LoRA(s) on {device}, saving as {args.save_dtype}.")
+    log(f"Merging {len(loras)} LoRA(s) on {device}.")
 
     merged: dict[str, torch.Tensor] = {}
+    # dtype each key is saved as: the most precise dtype seen for that key
+    save_dtypes: dict[str, torch.dtype] = {}
 
     metadata = {}
 
@@ -95,9 +89,17 @@ def main() -> int:
         state_dict = load_file(path, device=str(device))
 
         for key, tensor in state_dict.items():
-            scaled = tensor.to(torch.float32) * strength
+            # accumulate in at least float32, cast back to the source dtype on save
+            work_dtype = higher_precision(tensor.dtype, torch.float32)
+            scaled = tensor.to(work_dtype) * strength
             if key in merged:
                 existing = merged[key]
+                save_dtypes[key] = higher_precision(save_dtypes[key], tensor.dtype)
+                if existing.dtype != scaled.dtype:
+                    work_dtype = higher_precision(existing.dtype, scaled.dtype)
+                    existing = existing.to(work_dtype)
+                    scaled = scaled.to(work_dtype)
+                    merged[key] = existing
                 if existing.shape != scaled.shape:
                     if existing.ndim != scaled.ndim:
                         print(
@@ -118,6 +120,7 @@ def main() -> int:
                 merged[key].add_(scaled)
             else:
                 merged[key] = scaled
+                save_dtypes[key] = tensor.dtype
         del state_dict
 
         if i == 0:
@@ -134,8 +137,8 @@ def main() -> int:
                     if meta_key in orig_metadata:
                         metadata[meta_key] = orig_metadata[meta_key]
 
-    log(f"Casting to {args.save_dtype} and moving to CPU")
-    final = {k: v.to(save_dtype).cpu().contiguous() for k, v in merged.items()}
+    log("Moving to CPU")
+    final = {k: v.to(save_dtypes[k]).cpu().contiguous() for k, v in merged.items()}
     merged.clear()
 
     log(f"Saving merged checkpoint to {args.output}")
@@ -148,7 +151,6 @@ def main() -> int:
                 "output": args.output,
                 "num_loras": len(loras),
                 "num_keys": len(final),
-                "save_dtype": args.save_dtype,
                 "device": str(device),
             }
         ),

@@ -94,7 +94,6 @@ const MergeLoRAsModal: React.FC = () => {
         args: {
           loras: JSON.stringify(selectedLoRAs),
           output,
-          save_dtype: 'bfloat16',
           device: 'cpu',
         },
         onStdout: append,
