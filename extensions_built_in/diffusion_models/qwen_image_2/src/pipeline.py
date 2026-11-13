@@ -159,7 +159,11 @@ class QwenImage21PromptEncoder:
         forward_kwargs = {
             "input_ids": model_inputs.input_ids,
             "attention_mask": model_inputs.attention_mask,
-            "output_hidden_states": True,
+            # Conditioning only needs the final layer, not every layer or the
+            # autoregressive KV cache (which scales with the whole prompt batch).
+            "output_hidden_states": False,
+            "use_cache": False,
+            "return_dict": True,
         }
         if flat_images and hasattr(model_inputs, "pixel_values"):
             forward_kwargs["pixel_values"] = model_inputs.pixel_values
@@ -179,10 +183,14 @@ class QwenImage21PromptEncoder:
             lambda module, args, output: args[0]
         )
         try:
-            outputs = self.text_encoder(**forward_kwargs)
+            # Call the multimodal base model, keeping its vision/RoPE handling
+            # and the existing per-layer offloading/quantization hooks. The LM
+            # wrapper would also run lm_head over B * L * vocab_size values;
+            # neither those logits nor even last-token logits are used here.
+            outputs = self.text_encoder.model(**forward_kwargs)
         finally:
             handle.remove()
-        hidden_states = outputs.hidden_states[-1]
+        hidden_states = outputs.last_hidden_state
 
         embeds, masks, slot_masks = [], [], []
         for sample_ids, sample_mask, sample_hidden in zip(
