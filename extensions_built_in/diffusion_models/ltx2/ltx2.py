@@ -26,7 +26,13 @@ import huggingface_hub
 
 try:
     from diffusers import LTX2Pipeline, LTX2ImageToVideoPipeline
-    from diffusers.pipelines.ltx2.export_utils import encode_video
+
+    # encode_video moved to diffusers.utils as of 0.39; the old location in
+    # diffusers.pipelines.ltx2.export_utils was removed in 0.41.
+    try:
+        from diffusers.utils import encode_video
+    except ImportError:
+        from diffusers.pipelines.ltx2.export_utils import encode_video
     from transformers import (
         Gemma3ForConditionalGeneration,
         GemmaTokenizerFast,
