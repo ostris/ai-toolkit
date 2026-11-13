@@ -83,8 +83,12 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         sigmas = self.sigmas.to(device=device, dtype=dtype)
         schedule_timesteps = self.timesteps.to(device)
         timesteps = timesteps.to(device)
-        step_indices = [(schedule_timesteps == t).nonzero().item()
-                        for t in timesteps]
+        # Resolve duplicate sigmoid timesteps using the current sigma schedule
+        if self.timestep_type == 'sigmoid':
+            step_indices = [self.index_for_timestep(t, schedule_timesteps) for t in timesteps]
+        else:
+            step_indices = [(schedule_timesteps == t).nonzero().item()
+                            for t in timesteps]
 
         sigma = sigmas[step_indices].flatten()
         while len(sigma.shape) < n_dim:
@@ -140,6 +144,8 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             timesteps, _ = torch.sort(timesteps, descending=True)
 
             self.timesteps = timesteps.to(device=device)
+            # Keep sigmas aligned with the timesteps used to add noise
+            self.sigmas = torch.cat((self.timesteps / 1000, self.timesteps.new_zeros(1)))
 
             return timesteps
         elif timestep_type in ['flux_shift', 'lumina2_shift', 'shift']:
