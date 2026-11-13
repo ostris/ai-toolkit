@@ -114,7 +114,9 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         device,
         timestep_type='linear',
         latents=None,
-        patch_size=1
+        patch_size=1,
+        timestep_shift=None,
+        timestep_scale=None,
     ):
         self.timestep_type = timestep_type
         if self.fixed_train_sigmas is not None:
@@ -129,9 +131,20 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.timesteps = timesteps
             return timesteps
         elif timestep_type == 'sigmoid':
-            # distribute them closer to center. Inference distributes them as a bias toward first
-            # Generate values from 0 to 1
-            t = torch.sigmoid(torch.randn((num_timesteps,), device=device))
+            if timestep_shift is None:
+                timestep_shift = self.config.get('timestep_shift', 0.0)
+            if timestep_scale is None:
+                timestep_scale = self.config.get('timestep_scale', 1.0)
+            if not math.isfinite(timestep_shift):
+                raise ValueError('timestep_shift must be finite')
+            if not math.isfinite(timestep_scale) or timestep_scale <= 0:
+                raise ValueError('timestep_scale must be positive and finite')
+
+            # Preserve the original samples when using Normal(0, 1)
+            z = torch.randn((num_timesteps,), device=device)
+            if timestep_shift != 0.0 or timestep_scale != 1.0:
+                z = z * timestep_scale + timestep_shift
+            t = torch.sigmoid(z)
 
             # Scale and reverse the values to go from 1000 to 0
             timesteps = ((1 - t) * 1000)

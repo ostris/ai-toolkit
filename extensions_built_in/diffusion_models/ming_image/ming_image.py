@@ -76,13 +76,28 @@ class MingImageFlowMatchScheduler(CustomFlowMatchEulerDiscreteScheduler):
     max-shift endpoint moves with the image size (see `ming_shift_params`),
     so 1024^2 and larger train at the same mu (1.35) they sample at."""
 
-    def set_train_timesteps(self, num_timesteps, device, timestep_type="linear", latents=None, patch_size=1):
+    def set_train_timesteps(
+        self,
+        num_timesteps,
+        device,
+        timestep_type="linear",
+        latents=None,
+        patch_size=1,
+        timestep_shift=None,
+        timestep_scale=None,
+    ):
         if latents is not None and self.config.use_dynamic_shifting:
             image_seq_len = latents.shape[2] * latents.shape[3] // (patch_size**2)
             max_shift, max_seq_len = ming_shift_params(image_seq_len)
             self.register_to_config(max_shift=max_shift, max_image_seq_len=max_seq_len)
         return super().set_train_timesteps(
-            num_timesteps, device, timestep_type=timestep_type, latents=latents, patch_size=patch_size
+            num_timesteps,
+            device,
+            timestep_type=timestep_type,
+            latents=latents,
+            patch_size=patch_size,
+            timestep_shift=timestep_shift,
+            timestep_scale=timestep_scale,
         )
 
 # decode above this many output pixels goes through the VAE's tiled path
