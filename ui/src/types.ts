@@ -257,6 +257,9 @@ export interface SampleConfig {
   num_frames: number;
   fps: number;
   duration?: number;
+  // Optional separate model used only for preview sampling. Inherits the
+  // top-level model config and overrides only the keys set here.
+  model?: Partial<ModelConfig>;
 }
 
 export interface LoggingConfig {

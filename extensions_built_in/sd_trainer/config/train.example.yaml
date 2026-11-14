@@ -55,6 +55,11 @@ config:
         sample_start_step: 0 # start sampling at this step
         width: 512
         height: 512
+        # optional: use a different model for preview samples, e.g. train on
+        # Krea 2 Raw and sample with Krea 2 Turbo. The currently trained LoRA
+        # is applied to it. Must be the same architecture as the training model.
+#        model:
+#          name_or_path: "krea/Krea-2-Turbo"
         prompts:
           - "photo of [trigger] laughing"
           - "photo of [trigger] smiling"
