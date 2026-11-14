@@ -24,7 +24,10 @@ downloaded from the hub into ``MODELS_PATH`` when missing. Individual files
 can be overridden via ``model_kwargs``: ``dit_<partition>_path``,
 ``text_encoder_path``, ``video_vae_path``, ``audio_vae_path``;
 ``model_kwargs.partition`` picks ``fl2va``, ``fl2va_pruned`` (default),
-``ref2va``, or ``ref2va_pruned``.
+``ref2va``, or ``ref2va_pruned``. A ``.safetensors`` ``name_or_path`` is
+loaded as the DiT, and otherwise the DiT's precision variants are ranked for
+the requested quantization: the int8-ConvRot repack for convrot8, the bf16
+repack with ``quantize`` off (a local variant always wins over a download).
 
 Conventions bridged to ai-toolkit:
   - the model consumes t = 1 - sigma in [0, 1] (t=1 clean) and predicts the
@@ -54,6 +57,7 @@ from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.models.v2.text_encoders.qwen3_vl import Qwen3VLTextEncoder
 from toolkit.models.v2.resolver import (
+    comfy_precision_rank,
     find_file_recursive,
     repo_id_from_name_or_path,
     resolve_comfy_file,
@@ -121,6 +125,15 @@ COMFY_FILES = {
     "audio_vae": "vae/minimax_h3_audio_vae_fp32.safetensors",
     "dit_fasth3": "diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
     "dit_fasth3_omni": "diffusion_models/fasth3_omniref_8step_pruned_int8_convrot.safetensors",
+}
+# full-precision variants of the DiTs in the same repack (the int8 keys minus
+# the weight_scale / comfy_quant sidecars), ranked against COMFY_FILES by the
+# requested qtype; the FastH3 repacks ship int8 only
+COMFY_BF16_DITS = {
+    "dit_fl2va": "diffusion_models/minimax_h3_fl2va_bf16.safetensors",
+    "dit_fl2va_pruned": "diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors",
+    "dit_ref2va": "diffusion_models/minimax_h3_ref2va_bf16.safetensors",
+    "dit_ref2va_pruned": "diffusion_models/minimax_h3_ref2va_pruned_bf16.safetensors",
 }
 # FastH3 8-Step V2 (FastVideo DMD2 + VSA distill) comfy repack: DiT plus the
 # shared text encoder and VAEs at the same repo-relative paths
@@ -327,15 +340,44 @@ class MinimaxH3Model(BaseModel):
         """Find a weight file at its local location (model_kwargs override,
         comfy layout under MODELS_PATH or a local name_or_path dir), or
         download it there when (and only when) it is missing — see
-        toolkit/models/v2/resolver.py for the search order."""
+        toolkit/models/v2/resolver.py for the search order. For the DiT, a
+        .safetensors name_or_path is the file itself, and the precision
+        variants are ranked for the requested quantization (bf16 when quantize
+        is off); the best-ranked local one wins, the best-ranked downloads."""
         name_or_path = self.model_config.name_or_path
         extra_roots = (
             [name_or_path] if name_or_path and os.path.isdir(name_or_path) else []
         )
+        repo_id = repo_id_from_name_or_path(name_or_path, self.comfy_repo)
+        override_path = self.model_config.model_kwargs.get(f"{component}_path", None)
+        rel_paths = [COMFY_FILES[component]]
+        if override_path is None and component.startswith("dit_"):
+            if name_or_path and name_or_path.endswith(".safetensors"):
+                # must exist: resolve_comfy_file raises on a missing override
+                override_path = name_or_path
+            elif component in COMFY_BF16_DITS:
+                qtype = self.model_config.qtype if self.model_config.quantize else None
+                rel_paths = sorted(
+                    rel_paths + [COMFY_BF16_DITS[component]],
+                    key=lambda r: comfy_precision_rank(r, qtype=qtype),
+                )
+                for rel_path in rel_paths:
+                    found = resolve_comfy_file(
+                        rel_path, repo_id, extra_roots=extra_roots, local_only=True
+                    )
+                    if found is None:
+                        continue
+                    if rel_path != rel_paths[0]:
+                        self.print_and_status_update(
+                            f" - {os.path.basename(rel_paths[0])} preferred for "
+                            f"{f'qtype {qtype}' if qtype else 'quantize: false'} "
+                            f"but not found locally; using {found}"
+                        )
+                    return found
         return resolve_comfy_file(
-            COMFY_FILES[component],
-            repo_id=repo_id_from_name_or_path(name_or_path, self.comfy_repo),
-            override_path=self.model_config.model_kwargs.get(f"{component}_path", None),
+            rel_paths[0],
+            repo_id=repo_id,
+            override_path=override_path,
             extra_roots=extra_roots,
             status_fn=self.print_and_status_update,
         )
