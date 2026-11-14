@@ -839,13 +839,25 @@ class ConvRotQuantizer(OstrisQuantizer):
 # ---------------- convrot8: W8A8 int8 backend ----------------
 
 
-def quantize_int8_rows(x: torch.Tensor, qmax: int = 127):
+def quantize_int8_rows(x: torch.Tensor, qmax: int = 127, *, stochastic_seed: Optional[int] = None):
     """Symmetric per-row integer quantization to [-qmax, qmax] (int8 storage).
-    Returns (int8 (rows, K), fp32 scales (rows,))."""
+    Returns (int8 (rows, K), fp32 scales (rows,)). Nearest rounding by default;
+    an explicit seed opts into stochastic rounding with a local RNG."""
     xf = x.float()
     scales = xf.abs().amax(dim=1) / qmax
     scales = torch.where(scales > 0, scales, torch.ones_like(scales))
-    q = torch.round(xf / scales.unsqueeze(1)).clamp_(-qmax, qmax).to(torch.int8)
+    scaled = xf / scales.unsqueeze(1)
+    if stochastic_seed is None:
+        q = torch.round(scaled)
+    else:
+        # A local generator makes fixed-adapter merges reproducible without
+        # consuming the training/sampling RNG. Preserve sub-grid updates in
+        # expectation instead of rounding most of a small LoRA delta away.
+        rng_device = xf.device if xf.device.type != "mps" else torch.device("cpu")
+        generator = torch.Generator(device=rng_device).manual_seed(stochastic_seed)
+        noise = torch.rand(scaled.shape, device=rng_device, dtype=torch.float32, generator=generator).to(xf.device)
+        q = torch.floor(scaled + noise)
+    q = q.clamp_(-qmax, qmax).to(torch.int8)
     return q, scales
 
 
@@ -1419,9 +1431,9 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
             self._dequantize_rotated(module, torch.float32), self._rot(module)
         )
 
-    def requantize_(self, module, fp_weight: torch.Tensor) -> None:
+    def requantize_(self, module, fp_weight: torch.Tensor, *, stochastic_seed: Optional[int] = None) -> None:
         w = fp_weight.to(device=module.cr8_qdata.device, dtype=torch.float32)
-        q, scales = quantize_int8_rows(rotate(w, module.cr8_rot_size))
+        q, scales = quantize_int8_rows(rotate(w, module.cr8_rot_size), stochastic_seed=stochastic_seed)
         module.cr8_qdata = q
         module.cr8_scales = scales.view(torch.uint8)
 
