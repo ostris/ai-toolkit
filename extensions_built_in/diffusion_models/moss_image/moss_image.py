@@ -663,10 +663,17 @@ class MossImageModel(BaseModel):
 
     def convert_lora_weights_before_save(self, state_dict):
         state_dict = super().convert_lora_weights_before_save(state_dict)
+        lokr_qkv_bases = {
+            key.partition(".proj.qkv.lokr_")[0]
+            for key in state_dict if ".proj.qkv.lokr_" in key
+        }
         out = {}
         for key, value in state_dict.items():
             base, sep, suffix = key.partition(".proj.qkv.")
             if not sep:
+                out[key] = value
+            elif suffix == "alpha" and base in lokr_qkv_bases:
+                # LoKr matrices stay fused, so their scale must stay fused too.
                 out[key] = value
             elif suffix in self._QKV_SPLIT_ROWS:
                 for name, part in zip(("q", "k", "v"), value.chunk(3, dim=0)):
@@ -681,6 +688,24 @@ class MossImageModel(BaseModel):
     def convert_lora_weights_before_load(self, state_dict):
         state_dict = super().convert_lora_weights_before_load(state_dict)
         out = dict(state_dict)
+        lokr_qkv_bases = {
+            key.partition(".proj.qkv.lokr_")[0]
+            for key in state_dict if ".proj.qkv.lokr_" in key
+        }
+        for base in sorted(lokr_qkv_bases):
+            # Older saves kept the LoKr matrices fused but duplicated alpha
+            # across q/k/v. Recover that shared scale without changing weights.
+            fused_key = f"{base}.proj.qkv.alpha"
+            split_keys = [f"{base}.proj.{p}.alpha" for p in ("q", "k", "v")]
+            present_keys = [k for k in [fused_key, *split_keys] if k in out]
+            if not present_keys:
+                continue
+            alpha = out[present_keys[0]]
+            if any(not torch.equal(alpha, out[k]) for k in present_keys[1:]):
+                raise ValueError(f"Conflicting MOSS LoKr QKV alpha values for {base}")
+            out[fused_key] = alpha
+            for key in split_keys:
+                out.pop(key, None)
         down_keys = [
             k for k in state_dict
             if k.endswith((".proj.q.lora_A.weight", ".proj.q.lora_down.weight"))
