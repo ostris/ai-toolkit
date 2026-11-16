@@ -962,22 +962,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return sigma
     
     def get_optimal_noise(self, latents, dtype=torch.float32):
-        batch_num = latents.shape[0]
-        chunks = torch.chunk(latents, batch_num, dim=0)
-        noise_chunks = []
-        for chunk in chunks:
-            noise_samples = [torch.randn_like(chunk, device=chunk.device, dtype=dtype) for _ in range(self.train_config.optimal_noise_pairing_samples)]
-            # find the one most similar to the chunk
-            lowest_loss = 999999999999
-            best_noise = None
-            for noise in noise_samples:
-                loss = torch.nn.functional.mse_loss(chunk, noise)
-                if loss < lowest_loss:
-                    lowest_loss = loss
-                    best_noise = noise
-            noise_chunks.append(best_noise)
-        noise = torch.cat(noise_chunks, dim=0)
-        return noise
+        # same distribution as keeping the best aligned of N noises, from one draw
+        num_candidates = self.train_config.optimal_noise_pairing_samples
+        noise = torch.randn_like(latents, dtype=dtype)
+        # one pick per channel
+        group_dims = tuple(range(2, latents.dim()))
+        float_latents = latents.float()
+        # clamp so an all zero latent gets plain noise instead of nan
+        latent_direction = float_latents / torch.linalg.vector_norm(float_latents, dim=group_dims, keepdim=True).clamp_min(1e-8)
+        current_alignment = (noise.float() * latent_direction).sum(dim=group_dims, keepdim=True)
+        best_alignment = torch.randn(*current_alignment.shape, num_candidates, device=latents.device).amax(dim=-1)
+        correction = (best_alignment - current_alignment) * latent_direction
+        return noise + correction.to(dtype)
     
     def get_consistent_noise(self, latents, batch: 'DataLoaderBatchDTO', dtype=torch.float32):
         batch_num = latents.shape[0]
