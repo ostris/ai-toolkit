@@ -1010,19 +1010,11 @@ class TIPSv2VisionModel(nn.Module):
     ) -> "TIPSv2VisionModel":
         """Build the vision encoder and load its weights from the hub.
 
-        Reads ``config.json`` to pick the vision architecture, then loads only the
-        ``vision_encoder.*`` tensors from ``model.safetensors``.
+        Loads only the ``vision_encoder.*`` tensors from ``model.safetensors`` and
+        picks the vision architecture from their shapes.
         """
-        import json
-
         from huggingface_hub import hf_hub_download
         from safetensors.torch import load_file
-
-        config_path = hf_hub_download(model_id, "config.json", cache_dir=cache_dir)
-        with open(config_path) as f:
-            config = json.load(f)
-
-        model = cls(config)
 
         ckpt = hf_hub_download(model_id, "model.safetensors", cache_dir=cache_dir)
         state = load_file(ckpt)
@@ -1030,6 +1022,16 @@ class TIPSv2VisionModel(nn.Module):
         state = {k: v for k, v in state.items() if k.startswith("vision_encoder.")}
         if not state:
             raise RuntimeError(f"No vision_encoder weights found in {model_id}")
+
+        # config.json changed layout on the hub (no vision_fn any more); the weights did not
+        width = state["vision_encoder.cls_token"].shape[-1]
+        depth = 1 + max(int(k.split(".")[2]) for k in state if k.startswith("vision_encoder.blocks."))
+        patch_size = state["vision_encoder.patch_embed.proj.weight"].shape[-1]
+        side = math.isqrt(state["vision_encoder.pos_embed"].shape[1] - 1)
+        vision_fn = {(768, 12): "vit_base", (1152, 27): "vit_so400m"}.get((width, depth))
+        if vision_fn is None:
+            raise NotImplementedError(f"{model_id}: no builder for a vision encoder of width {width}, depth {depth}")
+        model = cls({"vision_fn": vision_fn, "patch_size": patch_size, "img_size": side * patch_size})
 
         missing, unexpected = model.load_state_dict(state, strict=False)
         if missing:
