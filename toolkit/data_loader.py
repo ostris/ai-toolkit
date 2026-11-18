@@ -558,6 +558,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 file_item = FileItemDTO(
                     sd=self.sd,
                     path=file,
+                    batch_size=self.batch_size,
                     is_audio_model=self.is_audio_model or (self.is_multimodal_llm and file.lower().endswith(tuple(audio_extensions))),
                     dataset_config=dataset_config,
                     dataloader_transforms=transform,
