@@ -971,8 +971,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # clamp so an all zero latent gets plain noise instead of nan
         latent_direction = float_latents / torch.linalg.vector_norm(float_latents, dim=group_dims, keepdim=True).clamp_min(1e-8)
         current_alignment = (noise.float() * latent_direction).sum(dim=group_dims, keepdim=True)
-        best_alignment = torch.randn(*current_alignment.shape, num_candidates, device=latents.device).amax(dim=-1)
-        correction = (best_alignment - current_alignment) * latent_direction
+        picked_alignment = torch.randn(*current_alignment.shape, abs(num_candidates), device=latents.device).amax(dim=-1)
+        # negative count keeps the worst aligned instead
+        if num_candidates < 0:
+            picked_alignment = -picked_alignment
+        correction = (picked_alignment - current_alignment) * latent_direction
         return noise + correction.to(dtype)
     
     def get_consistent_noise(self, latents, batch: 'DataLoaderBatchDTO', dtype=torch.float32):
@@ -1004,7 +1007,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         batch: 'DataLoaderBatchDTO' = None,
         timestep=None,
     ):
-        if self.train_config.optimal_noise_pairing_samples > 1:
+        if abs(self.train_config.optimal_noise_pairing_samples) > 1:
             noise = self.get_optimal_noise(latents, dtype=dtype)
         elif self.train_config.force_consistent_noise:
             if batch is None:
@@ -1343,14 +1346,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 noise = noise * noise_multiplier
                 
                 if self.train_config.do_signal_correction_noise:
-                    batch_noise = latents.clone().to(noise.device, dtype=noise.dtype)
-                    scn_scale = torch.randn(
-                        batch_noise.shape[0], batch_noise.shape[1], 1, 1,
-                        device=batch_noise.device, 
-                        dtype=batch_noise.dtype
-                    ) * self.train_config.signal_correction_noise_scale
-                    batch_noise = batch_noise * scn_scale
-                    noise = noise + batch_noise 
+                    # inverted copy of the latent, tapered to zero at pure noise so the input never inverts
+                    scn_scale = self.train_config.signal_correction_noise_scale
+                    scn_t = (timesteps.to(noise.device, dtype=torch.float32) / 1000.0).view(-1, *([1] * (noise.dim() - 1)))
+                    scn_strength = scn_scale * (1.0 - scn_t) / (1.0 - scn_t + scn_scale * scn_t)
+                    noise = noise - latents.to(noise.device, dtype=noise.dtype) * scn_strength.to(noise.dtype)
                 
                 if self.train_config.do_batch_noise_correction:
                     if latents.shape[0] == 1:
