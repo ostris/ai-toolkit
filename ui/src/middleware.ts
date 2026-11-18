@@ -17,8 +17,9 @@ export function middleware(request: NextRequest) {
   // Get the token from the headers
   const token = request.headers.get('Authorization')?.split(' ')[1];
 
-  // allow public routes to pass through
-  if (publicRoutes.some(route => request.nextUrl.pathname.startsWith(route))) {
+  // allow public routes to pass through, reads only; writes need the token
+  const isRead = request.method === 'GET' || request.method === 'HEAD';
+  if (isRead && publicRoutes.some(route => request.nextUrl.pathname.startsWith(route))) {
     return NextResponse.next();
   }
 

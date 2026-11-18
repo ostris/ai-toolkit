@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
+import path from 'path';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
 
 const fileExists = (p: string) => fs.promises.access(p).then(() => true).catch(() => false);
@@ -7,12 +8,16 @@ const fileExists = (p: string) => fs.promises.access(p).then(() => true).catch((
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { imgPath } = body;
     let datasetsPath = await getDatasetsRoot();
     const trainingPath = await getTrainingFolder();
+    if (typeof body.imgPath !== 'string') {
+      return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
+    }
+    // resolve so `..` segments collapse before the containment check
+    const imgPath = path.resolve(body.imgPath);
 
     // make sure the dataset path is in the image path
-    if (!imgPath.startsWith(datasetsPath) && !imgPath.startsWith(trainingPath)) {
+    if (!imgPath.startsWith(datasetsPath + path.sep) && !imgPath.startsWith(trainingPath + path.sep)) {
       return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
     }
 

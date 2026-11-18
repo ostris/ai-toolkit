@@ -1,14 +1,20 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
+import path from 'path';
 import { getDatasetsRoot } from '@/server/settings';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { imgPath, caption, ext } = body;
+    const { caption, ext } = body;
     let datasetsPath = await getDatasetsRoot();
+    if (typeof body.imgPath !== 'string') {
+      return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
+    }
+    // resolve so `..` segments collapse before the containment check
+    const imgPath = path.resolve(body.imgPath);
     // make sure the dataset path is in the image path
-    if (!imgPath.startsWith(datasetsPath)) {
+    if (!imgPath.startsWith(datasetsPath + path.sep)) {
       return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
     }
 
@@ -21,7 +27,11 @@ export async function POST(request: Request) {
 
     // check for caption (default extension txt)
     const captionExt = ((ext || 'txt') as string).replace(/^\.+/, '').trim() || 'txt';
-    const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
+    const captionPath = path.resolve(imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt);
+    // ext is caller supplied; the file written must stay in the dataset root
+    if (/[\\/]/.test(captionExt) || !captionPath.startsWith(datasetsPath + path.sep)) {
+      return NextResponse.json({ error: 'Invalid caption extension' }, { status: 400 });
+    }
     // save caption to file
     await fs.promises.writeFile(captionPath, caption);
 
