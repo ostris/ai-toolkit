@@ -114,7 +114,7 @@ def _get_kernel():
     global _kernel
     if _kernel is not None:
         return _kernel
-    triton, tl = _import_triton()
+    triton, tl, _ = _import_triton()
 
     @triton.jit
     def _rot256(x, hb, R: tl.constexpr):
