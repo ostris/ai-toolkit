@@ -4,6 +4,7 @@ import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import { isVideo, isAudio, encodeFilePathForUrl } from '@/utils/basic';
+import { withReadKey } from '@/utils/readKey';
 import useCaptionBatch, { setCachedCaption } from '@/hooks/useCaptionBatch';
 
 interface DatasetImageCardProps {
@@ -84,7 +85,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     let objectUrl: string | null = null;
 
     const timer = window.setTimeout(() => {
-      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}?thumb=1`, { signal: controller.signal })
+      fetch(`/api/img/${encodeFilePathForUrl(imageUrl, 'thumb=1')}`, { signal: controller.signal })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           if ((r.headers.get('content-type') || '').startsWith('video/')) {
@@ -238,7 +239,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             >
               {isVisible && !artFailed ? (
                 <img
-                  src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
+                  src={withReadKey(`/api/audio/art/${encodeURIComponent(imageUrl)}`)}
                   alt={alt}
                   className="w-full h-full object-contain"
                   onError={() => setArtFailed(true)}

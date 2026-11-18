@@ -1,6 +1,12 @@
 import type { NextConfig } from 'next';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { randomBytes } from 'crypto';
+
+// per-launch secret behind the read keys; the front server (cron/fileServer.ts) sets it first when it launches Next
+if (process.env.AI_TOOLKIT_AUTH && !process.env.AI_TOOLKIT_READ_SECRET) {
+  process.env.AI_TOOLKIT_READ_SECRET = randomBytes(32).toString('hex');
+}
 
 const versionFile = readFileSync(join(__dirname, '..', 'version.py'), 'utf8');
 const versionMatch = versionFile.match(/VERSION\s*=\s*["']([^"']+)["']/);

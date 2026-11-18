@@ -1,12 +1,13 @@
 // middleware.ts (at the root of your project)
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { isReadProtectionDisabled, isValidReadKey, READ_KEY_PARAM } from '@/server/readKey';
 
-// if route starts with these, approve
+// if route starts with these, reads pass with the read key instead of the token
 // album art is fetched by plain <img> tags, which cannot send the bearer token
 const publicRoutes = ['/api/img/', '/api/files/', '/api/audio/art/'];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   // check env var for AI_TOOLKIT_AUTH, if not set, approve all requests
   // if it is set make sure bearer token matches
   const tokenToUse = process.env.AI_TOOLKIT_AUTH || null;
@@ -17,10 +18,12 @@ export function middleware(request: NextRequest) {
   // Get the token from the headers
   const token = request.headers.get('Authorization')?.split(' ')[1];
 
-  // allow public routes to pass through, reads only; writes need the token
+  // public routes pass with a live read key, reads only; otherwise the token check below applies
   const isRead = request.method === 'GET' || request.method === 'HEAD';
   if (isRead && publicRoutes.some(route => request.nextUrl.pathname.startsWith(route))) {
-    return NextResponse.next();
+    if (isReadProtectionDisabled() || (await isValidReadKey(request.nextUrl.searchParams.get(READ_KEY_PARAM)))) {
+      return NextResponse.next();
+    }
   }
 
   // Check if the route should be protected

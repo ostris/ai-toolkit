@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { apiClient, isAuthorizedState } from '@/utils/api';
+import { setReadKey } from '@/utils/readKey';
 import { createGlobalState } from 'react-global-hooks';
 
 interface AuthWrapperProps {
@@ -17,6 +18,8 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
   const [error, setError] = useState('');
   const [isBrowser, setIsBrowser] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const readKeyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastReadKeyFetch = useRef(0);
 
   const isAuthorized = authRequired ? isAuthorizedGlobal : true;
 
@@ -27,6 +30,56 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
     const storedToken = localStorage.getItem('AI_TOOLKIT_AUTH') || '';
     setToken(storedToken);
     checkAuth();
+  }, []);
+
+  // store the read key from an /api/auth response and re-fetch it once it rolls
+  const applyReadKey = (data: { readKey?: string; readKeyRefreshIn?: number }) => {
+    lastReadKeyFetch.current = Date.now();
+    setReadKey(data.readKey || '');
+    if (data.readKeyRefreshIn) scheduleReadKeyRefresh(data.readKeyRefreshIn + 5);
+  };
+
+  const scheduleReadKeyRefresh = (seconds: number) => {
+    if (readKeyTimer.current) clearTimeout(readKeyTimer.current);
+    readKeyTimer.current = setTimeout(refreshReadKey, seconds * 1000);
+  };
+
+  const refreshReadKey = async () => {
+    if (!authRequired || !localStorage.getItem('AI_TOOLKIT_AUTH')) return;
+    lastReadKeyFetch.current = Date.now();
+    try {
+      const response = await apiClient.get('/api/auth');
+      if (response.data.isAuthenticated) applyReadKey(response.data);
+    } catch (err) {
+      // server unreachable; a 401 is already handled by the apiClient interceptor
+      scheduleReadKeyRefresh(30);
+    }
+  };
+
+  // the key also dies on a server restart, which the roll timer cannot see
+  useEffect(() => {
+    if (!authRequired) return;
+    const refreshIfStale = () => {
+      if (Date.now() - lastReadKeyFetch.current > 30_000) refreshReadKey();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshIfStale();
+    };
+    // resource load errors do not bubble; capture them from media elements
+    const onLoadError = (e: Event) => {
+      const el = e.target as { currentSrc?: unknown; src?: unknown } | null;
+      const url = el?.currentSrc || el?.src;
+      if (typeof url === 'string' && url.includes('/api/')) refreshIfStale();
+    };
+    window.addEventListener('focus', refreshIfStale);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('error', onLoadError, true);
+    return () => {
+      window.removeEventListener('focus', refreshIfStale);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('error', onLoadError, true);
+      if (readKeyTimer.current) clearTimeout(readKeyTimer.current);
+    };
   }, []);
 
   // auto focus on input when not authorized
@@ -52,6 +105,8 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
     try {
       const response = await apiClient.get('/api/auth');
       if (response.data.isAuthenticated) {
+        // before authorizing, so the first render already builds keyed URLs
+        applyReadKey(response.data);
         setIsAuthorized(true);
       } else {
         setIsAuthorized(false);

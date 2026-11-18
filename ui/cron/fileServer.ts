@@ -30,10 +30,26 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { pipeline } from 'stream';
+import { randomBytes } from 'crypto';
+import { loadEnvConfig, resetEnv } from '@next/env';
 import prisma from './prisma';
 import { defaultDatasetsFolder, defaultTrainFolder, defaultDataRoot, TOOLKIT_ROOT } from './paths';
+import { isReadAuthorized } from './readKey';
 
 const isDev = process.argv.includes('dev');
+
+// these can live in the .env files Next.js loads; pick them up the same way so both processes agree
+const SHARED_ENV_KEYS = ['AI_TOOLKIT_AUTH', 'AI_TOOLKIT_READ_SECRET', 'AI_TOOLKIT_DISABLE_READ_PROTECTION'];
+{
+  // parsedEnv only holds keys the real environment does not already define
+  const { parsedEnv } = loadEnvConfig(process.cwd(), isDev, { info: () => { }, error: console.error });
+  const fromFiles = SHARED_ENV_KEYS.map(key => [key, parsedEnv?.[key]] as const);
+  // undo the load (it also sets a flag that would stop Next.js loading its own .env)
+  resetEnv();
+  for (const [key, value] of fromFiles) {
+    if (value) process.env[key] = value;
+  }
+}
 
 function argValue(name: string, fallback: number): number {
   const i = process.argv.indexOf(name);
@@ -525,6 +541,11 @@ function startServer(publicPort: number, upstreamPort: number): void {
     if (req.method === 'GET' || req.method === 'HEAD') {
       const prefix = ['/api/files/', '/api/img/', '/api/audio/art/'].find(p => urlPath.startsWith(p));
       if (prefix) {
+        if (!isReadAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized' }));
+          return;
+        }
         serveFile(req, res, prefix).then(handled => {
           if (!handled) proxy(req, res, upstreamPort);
         });
@@ -579,6 +600,11 @@ function getFreePort(): Promise<number> {
 }
 
 async function primaryMain(): Promise<void> {
+  // per-launch secret behind the read keys; Next.js and the workers inherit it
+  if (process.env.AI_TOOLKIT_AUTH && !process.env.AI_TOOLKIT_READ_SECRET) {
+    process.env.AI_TOOLKIT_READ_SECRET = randomBytes(32).toString('hex');
+  }
+
   const upstreamPort = await getFreePort();
 
   const nextBin = require.resolve('next/dist/bin/next');

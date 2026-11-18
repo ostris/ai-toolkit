@@ -1,3 +1,5 @@
+import { withReadKey } from '@/utils/readKey';
+
 export const objectCopy = <T>(obj: T): T => {
   return JSON.parse(JSON.stringify(obj)) as T;
 };
@@ -58,13 +60,20 @@ export const getFoldername = (filePath: string) => {
  * paths (`C:\foo\bar.safetensors` -> `C%3A%5Cfoo/bar.safetensors`). The
  * servers accept both this and the legacy single-segment
  * `encodeURIComponent(fullPath)` form.
+ *
+ * The result ends with the query string (`query` plus the read key when a
+ * password is set), so pass extra params like `thumb=1` as `query` instead
+ * of appending them.
  */
-export const encodeFilePathForUrl = (filePath: string) => {
+export const encodeFilePathForUrl = (filePath: string, query = '') => {
   const idx = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-  if (idx === -1) return encodeURIComponent(filePath);
-  // keep a root-only folder ("/" or "C:\") as a non-empty segment
-  const folder = idx === 0 ? filePath[0] : filePath.slice(0, idx);
-  return `${encodeURIComponent(folder)}/${encodeURIComponent(filePath.slice(idx + 1))}`;
+  let encoded = encodeURIComponent(filePath);
+  if (idx !== -1) {
+    // keep a root-only folder ("/" or "C:\") as a non-empty segment
+    const folder = idx === 0 ? filePath[0] : filePath.slice(0, idx);
+    encoded = `${encodeURIComponent(folder)}/${encodeURIComponent(filePath.slice(idx + 1))}`;
+  }
+  return withReadKey(query ? `${encoded}?${query}` : encoded);
 };
 
 export const pathJoin = (...parts: string[]) => {

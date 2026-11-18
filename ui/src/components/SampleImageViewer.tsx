@@ -9,6 +9,7 @@ import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
 import { isVideo, isAudio, isText, encodeFilePathForUrl } from '@/utils/basic';
+import { withReadKey } from '@/utils/readKey';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import BoundingBoxOverlay, { parseBoundingBoxes } from './BoundingBoxOverlay';
@@ -218,7 +219,9 @@ export default function SampleImageViewer({
 
   // control thumbnails: audio has no image thumb, it gets its waveform art
   const thumbSrc = (p: string) =>
-    isAudio(p) ? `/api/audio/art/${encodeURIComponent(p)}` : `/api/img/${encodeFilePathForUrl(p)}?thumb=1`;
+    isAudio(p)
+      ? withReadKey(`/api/audio/art/${encodeURIComponent(p)}`)
+      : `/api/img/${encodeFilePathForUrl(p, 'thumb=1')}`;
 
   // The sample's prompt is what generated it; if it's an Ideogram bbox-JSON we can
   // overlay the boxes on the generated image. Only on the main image (not controls).
