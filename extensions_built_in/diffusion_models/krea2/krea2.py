@@ -55,11 +55,104 @@ from .src.mmdit import (
     SingleMMDiTConfig,
     SingleStreamDiT,
 )
-from .src.text_encoder import encode_krea_prompt, SELECT_LAYERS
+from .src.text_encoder import (
+    encode_krea_prompt,
+    SELECT_LAYERS,
+    PROMPT_TEMPLATE_ENCODE_PREFIX,
+    PROMPT_TEMPLATE_ENCODE_SUFFIX,
+    PROMPT_TEMPLATE_ENCODE_START_IDX,
+)
 from .src.pipeline import Krea2Pipeline, pad_text_features, predict_velocity
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
+
+
+# Padded tokens (rows * longest row) per text-encoder forward. Activation memory
+# scales with this, so long captions go through in smaller groups. Override with
+# model_kwargs.text_encode_max_tokens.
+KREA_TEXT_BATCH_MAX_TOKENS = 4096
+
+
+@torch.no_grad()
+def encode_krea_text_batch(
+    qwen,
+    tokenizer,
+    processor,
+    prompts: List[str],
+    max_length: int = 512,
+    select_layers: tuple = SELECT_LAYERS,
+    prefix_idx: int = PROMPT_TEMPLATE_ENCODE_START_IDX,
+    max_tokens: int = KREA_TEXT_BATCH_MAX_TOKENS,
+) -> List[torch.Tensor]:
+    """Text-only prompts -> per-item (L_i, num_select_layers, hidden) features,
+    several prompts per forward (``encode_krea_prompt`` runs one forward per
+    prompt, which leaves the GPU kernel-launch bound when caching).
+
+    Each row is tokenized exactly like ``encode_krea_prompt`` (prefix + prompt,
+    truncated, then the suffix ids appended) and the rows are right-padded to the
+    group max. Qwen3-VL is causal, so the pads sit after a row's real tokens and
+    cannot influence them: each item's first L_i states match its unpadded
+    forward up to floating point noise. The pads are sliced off the result.
+
+    Rows are grouped by length so that rows * longest row <= ``max_tokens`` per
+    forward (a single row longer than that still goes through alone). The forward
+    skips the KV cache and all but one position of the vocab logits: neither is
+    used here and both scale with rows * length.
+    """
+    device = qwen.device
+    suffix_ids = processor(text=[PROMPT_TEMPLATE_ENCODE_SUFFIX])["input_ids"][0]
+    enc = tokenizer(
+        [PROMPT_TEMPLATE_ENCODE_PREFIX + p for p in prompts],
+        truncation=True,
+        return_length=False,
+        return_overflowing_tokens=False,
+        max_length=max_length + prefix_idx,
+    )
+    rows = [list(ids) + list(suffix_ids) for ids in enc["input_ids"]]
+    lengths = [len(r) for r in rows]
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = 0
+
+    out: List[Optional[torch.Tensor]] = [None] * len(rows)
+    # shortest first: similar lengths share a forward, so little padding
+    order = sorted(range(len(rows)), key=lambda i: lengths[i])
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while (
+            end < len(order)
+            and (end - start + 1) * lengths[order[end]] <= max_tokens
+        ):
+            end += 1
+        group = order[start:end]
+        max_len = lengths[group[-1]]
+        input_ids = torch.full((len(group), max_len), pad_id, dtype=torch.long)
+        for j, i in enumerate(group):
+            input_ids[j, : lengths[i]] = torch.tensor(rows[i], dtype=torch.long)
+        group_lengths = torch.tensor([lengths[i] for i in group])
+        mask = torch.arange(max_len)[None, :] < group_lengths[:, None]
+
+        states = qwen(
+            input_ids=input_ids.to(device),
+            attention_mask=mask.to(device),
+            output_hidden_states=True,
+            use_cache=False,
+            logits_to_keep=1,
+        )
+        # per item: drop the system prefix and the right padding, stack the layers
+        for j, i in enumerate(group):
+            out[i] = torch.stack(
+                [
+                    states.hidden_states[layer][j, prefix_idx : lengths[i]]
+                    for layer in select_layers
+                ],
+                dim=1,
+            )
+        del states
+        start = end
+    return out
 
 
 # The reference "single_mmdit_large_wide" architecture (oss_raw / oss_turbo share it).
@@ -668,23 +761,46 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         # batch size; predict_velocity restores the layer axis. Padding to the
         # batch max is deferred to the model call so caches stay small and any
         # prompts can share a batch.
-        features_list = []
-        for p, ctrl in zip(prompt, control_images):
-            images = self._prep_vlm_images(ctrl) if ctrl is not None else None
-            features = encode_krea_prompt(
+        #
+        # Text-only prompts share ONE right-padded forward (see
+        # encode_krea_text_batch); prompts with reference images stay one forward
+        # each, their image-pad runs differ per prompt.
+        features_list: List[Optional[torch.Tensor]] = [None] * len(prompt)
+        text_only = [i for i, ctrl in enumerate(control_images) if not ctrl]
+        if text_only:
+            batch_features = encode_krea_text_batch(
+                self.text_encoder,
+                self.tokenizer,
+                self.processor,
+                [prompt[i] for i in text_only],
+                max_length=self.max_text_length,
+                select_layers=SELECT_LAYERS,
+                max_tokens=int(
+                    self.model_config.model_kwargs.get(
+                        "text_encode_max_tokens", KREA_TEXT_BATCH_MAX_TOKENS
+                    )
+                ),
+            )
+            for i, features in zip(text_only, batch_features):
+                features_list[i] = features
+        for i, (p, ctrl) in enumerate(zip(prompt, control_images)):
+            if not ctrl:
+                continue
+            features_list[i] = encode_krea_prompt(
                 self.text_encoder,
                 self.tokenizer,
                 self.processor,
                 p,
                 max_length=self.max_text_length,
                 select_layers=SELECT_LAYERS,
-                images=images,
+                images=self._prep_vlm_images(ctrl),
                 vl_processor=self.vl_processor,
                 dtype=self.torch_dtype,
             )
-            # (L, n, d) -> (L, n*d)
-            features = features.reshape(features.shape[0], -1)
-            features_list.append(features.to(self.torch_dtype))
+        # (L, n, d) -> (L, n*d)
+        features_list = [
+            f.reshape(f.shape[0], -1).to(self.torch_dtype) for f in features_list
+        ]
 
         return AdvancedPromptEmbeds(text_embeds=features_list)
 
