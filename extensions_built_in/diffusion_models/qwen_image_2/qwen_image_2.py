@@ -375,11 +375,13 @@ class QwenImage2Model(BaseModel):
         pixels = latents.shape[-2] * latents.shape[-1] * self.vae_scale_factor**2
         tiled = self.model_config.low_vram or pixels > TILE_DECODE_ABOVE_PIXELS
         if tiled:
+            # low_vram gets smaller tiles; the decode peak follows the tile size
+            tile_size, tile_stride = (512, 384) if self.model_config.low_vram else (1024, 768)
             self.vae.enable_tiling(
-                tile_sample_min_height=1024,
-                tile_sample_min_width=1024,
-                tile_sample_stride_height=768,
-                tile_sample_stride_width=768,
+                tile_sample_min_height=tile_size,
+                tile_sample_min_width=tile_size,
+                tile_sample_stride_height=tile_stride,
+                tile_sample_stride_width=tile_stride,
             )
         try:
             images = self.vae.decode(latents).sample
