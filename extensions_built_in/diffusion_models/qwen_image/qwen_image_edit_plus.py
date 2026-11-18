@@ -15,6 +15,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
+from toolkit.util.vl_images import tensor_to_vl_pil
 import torch.nn.functional as F
 
 from diffusers import (
@@ -213,8 +214,10 @@ class QwenImageEditPlusModel(QwenImageModel):
                 width = round(width / 32) * 32
                 height = round(height / 32) * 32
 
-                batch_control_images[i] = F.interpolate(
-                    batch_control_images[i], size=(height, width), mode="bilinear"
+                # the VL processor expects 0-255 images and rescales by 1/255 itself,
+                # so hand it a uint8 PIL image rather than a 0-1 tensor
+                batch_control_images[i] = tensor_to_vl_pil(
+                    batch_control_images[i], height, width
                 )
 
             prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
