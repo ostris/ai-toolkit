@@ -2347,7 +2347,17 @@ class SDTrainer(BaseSDTrainProcess):
         else:
             batch_list = [batch]
         total_loss = None
-        self.optimizer.zero_grad()
+        # Only clear gradients when a NEW accumulation cycle starts. With
+        # gradient_accumulation_steps > 1 (or -1) this hook is called once per micro-step
+        # and the optimizer step is deferred, so zeroing unconditionally here would throw
+        # away every micro-step's gradients except the last one. The stepping branch below
+        # zeroes right after optimizer.step(), so this only has to cover the first step and
+        # grads left behind by an OOM-aborted or save-interrupted cycle (both of which reset
+        # the flag). gradient_accumulation (the batch-list knob) is unaffected either way:
+        # its micro-batches all run inside this one call.
+        if not self.grad_accum_in_progress:
+            self.optimizer.zero_grad()
+        self.grad_accum_in_progress = self.is_grad_accumulation_step
         # micro-batches per optimizer step: a batch list (gradient_accumulation) or repeated
         # calls (gradient_accumulation_steps). -1 (whole epoch) has no fixed count; left summed.
         n_accum = len(batch_list)
