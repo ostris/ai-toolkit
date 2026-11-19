@@ -428,17 +428,71 @@ def shift_vocal_octaves(abc: str, octaves: int) -> Tuple[str, Dict]:
     return "\n".join(out) + ("\n" if abc.endswith("\n") else ""), {"voices": vocal, "notes": moved}
 
 
+def sheetsage2_chord(label: str, chords) -> str:
+    """A SheetSage2-Refined chord label (mir_eval syntax over its 62 qualities and any bass, e.g. ``F:maj7(9)``) -> the nearest label in
+    SheetSage2's own chord vocabulary (``chords``: the vendored vocab.FULL_CHORDS), the only ones SheetSage2's exporter can spell and the
+    dialect YuE2's sheets were written in. Tensions in parentheses are dropped (maj7(9) -> maj7; a sus4 keeps its b7, which SheetSage2
+    has as sus4(b7)), a power chord reads as maj, and a bass SheetSage2 has no inversion for reads as root position."""
+    if label in chords or label in ("N", "X"):
+        return label
+    root, _, rest = label.partition(":")
+    body, _, bass = rest.partition("/")
+    shorthand, _, tensions = body.partition("(")
+    quality = {"5": "maj"}.get(shorthand, shorthand)
+    if quality == "sus4" and "b7" in tensions.rstrip(")").split(","):
+        quality = "sus4(b7)"
+    for candidate in ((f"{root}:{quality}/{bass}",) if bass else ()) + (f"{root}:{quality}",):
+        if candidate in chords:
+            return candidate
+    raise ValueError(f"SheetSage2-Refined chord {label!r} has no counterpart in SheetSage2's chord vocabulary")
+
+
+def fit_bar_meters(events: list) -> list:
+    """SheetSage2-Refined counts each bar's beats from its own downbeats (eighth position 0) but can leave the declared meter too short for
+    them: a (3, 8) meter over bars of six eighths, or a 4/4 bar with a fifth beat. SheetSage2's exporter rejects every such row. A bar whose
+    positions do not fit its meter gets a meter that holds them (same denominator, numerator = its last beat + 1), and the declared meter
+    is restored on the next downbeat; bars that fit are left as they are. Rows off the denominator's grid, and bars whose meter changes
+    inside them, are left for sheet_abc's repair. Edits ``events`` in place (a fresh transcription) and returns it."""
+    from fractions import Fraction
+
+    bars, meter = [], None                      # per bar: (meter in effect, rhythm) for each beat row, as the exporter reads them
+    for event in events:
+        rhythm = event["values"].get("rhythm") or {}
+        meter = tuple(rhythm["meter"]) if "meter" in rhythm else meter
+        if rhythm.get("eighth_position") is None or meter is None:
+            continue
+        if rhythm["eighth_position"] == 0 or not bars:
+            bars.append([])
+        bars[-1].append((meter, rhythm))
+    widened = False
+    for bar in bars:
+        (num, den), first = bar[0]
+        if widened and "meter" not in first:
+            first["meter"] = (num, den)         # the meter in effect again after a widened bar
+        widened = False
+        if len({m for m, _ in bar}) > 1:
+            continue
+        beats = [Fraction(int(rhythm["eighth_position"]) * den, 8) for _, rhythm in bar]
+        if any(b.denominator != 1 for b in beats) or all(0 <= b < num for b in beats):
+            continue
+        first["meter"], widened = (int(max(beats)) + 1, den), True
+    return events
+
+
 class RefinedTranscriber:
     """Audio -> ABC lead sheet with SheetSage2-Refined (anime-song; ../sheetsage2_refined): its fine-tuned decoder and rescoring heads
-    over SheetSage2's encoder decode SheetSage2's event stream, and SheetSage2's own exporter writes it (SheetSage2Exporter). Refined
-    writes the vocal line in the octave sung, one below SheetSage2's sheets and YuE2's own, so it is moved up one octave. The same
-    interface as SheetSage2Transcriber (transcribe, to, device, warnings)."""
+    over SheetSage2's encoder decode SheetSage2's event stream, and SheetSage2's own exporter writes it (SheetSage2Exporter), after the
+    stream is fitted to what that exporter accepts (sheetsage2_chord, fit_bar_meters). Refined writes the vocal line in the octave sung,
+    one below SheetSage2's sheets and YuE2's own, so it is moved up one octave. The same interface as SheetSage2Transcriber (transcribe,
+    to, device, warnings)."""
 
     def __init__(self, folder: str, sheetsage_file: str, code_dir: str):
         """``folder``: a SheetSage2-Refined model folder (config.json + refined_weight_files); its ``base_weights`` is built from
         ``sheetsage_file`` when missing (refined_base_weights). ``code_dir``: SheetSage2's local code folder, for the exporter."""
         from ..sheetsage2_refined.pipeline import SheetSage2Refined
+        from ..sheetsage2_refined.vocab import FULL_CHORDS
 
+        self.chords = frozenset(FULL_CHORDS)
         with open(os.path.join(folder, "config.json"), encoding="utf-8") as f:
             base = os.path.join(folder, json.load(f)["base_weights"])
         if not os.path.isfile(base):
@@ -466,7 +520,10 @@ class RefinedTranscriber:
         rate = self.refined.model.sample_rate
         mono = waveform.float().mean(0) if waveform.dim() == 2 else waveform.float()
         mono = torchaudio.functional.resample(mono, sample_rate, rate) if sample_rate != rate else mono
-        events = self.refined.transcribe([mono.cpu()])[0]
+        events = fit_bar_meters(self.refined.transcribe([mono.cpu()])[0])
+        for event in events:
+            if "chord" in event["values"]:
+                event["values"]["chord"] = sheetsage2_chord(event["values"]["chord"], self.chords)
         abc = self.exporter.export(events, len(mono) / rate, cot, self.warnings, who="SheetSage2-Refined")
         return shift_vocal_octaves(abc, 1)[0]
 
