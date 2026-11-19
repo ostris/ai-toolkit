@@ -41,10 +41,16 @@ model Job {
   job_ref         String? // can be used for anything for special jobs, like dataset path for caption jobs
   save_now        Boolean  @default(false) // if true, the job will be saved on the next step
   sample_now      Boolean  @default(false) // if true, the job will be sampled on the next step
+  
+  // Fork tracking fields
+  parent_job_id   String?
+  fork_from_step  Int?
+  forked_at       DateTime?
 
   @@index([status])
   @@index([gpu_ids])
   @@index([job_type])
   @@index([job_ref])
+  @@index([parent_job_id])
 
 }

@@ -13,6 +13,7 @@ import MergeLoRAsModal from '@/components/MergeLoRAsModal';
 import SafetensorsInfoModal from '@/components/SafetensorsInfoModal';
 import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
 import PromptBoxEditorModal from '@/components/PromptBoxEditorModal';
+import ForkJobModal from '@/components/ForkJobModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SafetensorsInfoModal />
         <UpsamplePromptsModal />
         <PromptBoxEditorModal />
+        <ForkJobModal />
       </body>
     </html>
   );
