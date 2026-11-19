@@ -953,6 +953,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         sigmas = self.sd.noise_scheduler.sigmas.to(device=self.device, dtype=dtype)
         schedule_timesteps = self.sd.noise_scheduler.timesteps.to(self.device)
         timesteps = timesteps.to(self.device)
+        scheduler = self.sd.noise_scheduler
+        if getattr(scheduler, 'uses_parameter_sigmas', False):
+            return scheduler.get_sigmas(timesteps, n_dim, dtype, self.device)
 
         step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
 
@@ -1203,6 +1206,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         timestep_type=timestep_type,
                         latents=latents,
                         patch_size=patch_size,
+                        **self.train_config.get_timestep_kwargs(
+                            timestep_type,
+                            self.step_num,
+                            scheduler=self.sd.noise_scheduler,
+                        ),
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(

@@ -387,7 +387,12 @@ class TrainSliderProcess(BaseSDTrainProcess):
                         self.train_config.max_denoising_steps,
                         device=self.device_torch,
                         timestep_type=timestep_type,
-                        latents=l
+                        latents=l,
+                        **self.train_config.get_timestep_kwargs(
+                            timestep_type,
+                            self.step_num,
+                            scheduler=self.sd.noise_scheduler,
+                        ),
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(

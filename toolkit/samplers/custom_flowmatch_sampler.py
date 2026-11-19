@@ -29,6 +29,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         # set this to its sigmas (descending, without the terminal 0)
         self.fixed_train_sigmas = None
 
+        self._parameter_sigmoid_sigmas = None
         with torch.no_grad():
             # create weights for timesteps
             num_timesteps = 1000
@@ -81,6 +82,9 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
 
     def get_sigmas(self, timesteps: torch.Tensor, n_dim, dtype, device) -> torch.Tensor:
         sigmas = self.sigmas.to(device=device, dtype=dtype)
+        if self.uses_parameter_sigmas:
+            sigma = (timesteps / 1000).to(device=device, dtype=dtype).flatten()
+            return sigma.reshape((-1,) + (1,) * max(0, n_dim - 1))
         schedule_timesteps = self.timesteps.to(device)
         timesteps = timesteps.to(device)
         step_indices = [(schedule_timesteps == t).nonzero().item()
@@ -91,6 +95,12 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             sigma = sigma.unsqueeze(-1)
 
         return sigma
+
+    @property
+    def uses_parameter_sigmas(self) -> bool:
+        """Whether the standalone sigmoid training sigma table is active."""
+        table = self._parameter_sigmoid_sigmas
+        return table is not None and self.sigmas is table[1]
 
     def add_noise(
             self,
@@ -114,8 +124,13 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         device,
         timestep_type='linear',
         latents=None,
-        patch_size=1
+        patch_size=1,
+        timestep_shift=None,
+        timestep_scale=None,
     ):
+        if self.uses_parameter_sigmas:
+            self.sigmas = self._parameter_sigmoid_sigmas[0]
+        self._parameter_sigmoid_sigmas = None
         self.timestep_type = timestep_type
         if self.fixed_train_sigmas is not None:
             sigmas = torch.tensor(
@@ -129,15 +144,35 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.timesteps = timesteps
             return timesteps
         elif timestep_type == 'sigmoid':
-            # distribute them closer to center. Inference distributes them as a bias toward first
-            # Generate values from 0 to 1
-            t = torch.sigmoid(torch.randn((num_timesteps,), device=device))
+            if timestep_shift is None:
+                timestep_shift = self.config.get('timestep_shift', 0.0)
+            if timestep_scale is None:
+                timestep_scale = self.config.get('timestep_scale', 1.0)
+            dtype = torch.get_default_dtype()
+            limit = torch.finfo(dtype).max
+            if not -limit <= timestep_shift <= limit:
+                raise ValueError(f'timestep_shift must be finite in {dtype}')
+            if not 0 < timestep_scale <= limit:
+                raise ValueError(
+                    f'timestep_scale must be positive and finite in {dtype}'
+                )
+
+            # Preserve the original samples when using Normal(0, 1)
+            z = torch.randn((num_timesteps,), device=device)
+            if timestep_shift != 0.0 or timestep_scale != 1.0:
+                z = z * timestep_scale + timestep_shift
+            t = torch.sigmoid(z)
 
             # Scale and reverse the values to go from 1000 to 0
             timesteps = ((1 - t) * 1000)
 
             # Sort the timesteps in descending order
             timesteps, _ = torch.sort(timesteps, descending=True)
+            # The separate alignment patch owns the table when installed.
+            if not hasattr(self, '_sigmoid_schedule'):
+                sigmas = torch.cat((timesteps / 1000, timesteps.new_zeros(1)))
+                self._parameter_sigmoid_sigmas = (self.sigmas, sigmas)
+                self.sigmas = sigmas
 
             self.timesteps = timesteps.to(device=device)
 

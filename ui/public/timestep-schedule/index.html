@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sigmoid Timestep Schedule</title>
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="sampler.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <main>
+      <p id="loading" role="status">Waiting for job settings…</p>
+      <div id="editor" hidden>
+        <section class="panel" aria-label="Training timeline">
+          <div class="timeline">
+            <div>
+              <label class="field step-field" for="step"
+                >Step
+                <input id="step" type="number" min="0" step="1" />
+              </label>
+              <p id="step-range" class="muted"></p>
+            </div>
+            <div class="timeline-track">
+              <input id="scrub" type="range" min="0" max="0" step="1" aria-label="Training step timeline" />
+              <div id="markers" aria-hidden="true"></div>
+            </div>
+            <button type="button" id="play">Play</button>
+            <span id="following" class="muted" hidden>Following training</span>
+          </div>
+          <div class="active">
+            <strong id="active-source"></strong>
+            <div class="pair">
+              <div><span>Shift</span> <output id="active-shift"></output></div>
+              <div><span>Scale</span> <output id="active-scale"></output></div>
+            </div>
+          </div>
+          <p id="bias-note" class="note muted" hidden></p>
+        </section>
+        <div class="workspace">
+          <section class="panel schedule" aria-labelledby="schedule-heading">
+            <div class="heading">
+              <h1 id="schedule-heading">Schedule points</h1>
+              <button type="button" id="add">Add point</button>
+            </div>
+            <p class="muted note">
+              Training uses the job’s scalar values before the first point, interpolates linearly between points, and
+              holds the last point’s values afterward.
+            </p>
+            <div class="table-wrap">
+              <table class="rows" aria-label="Schedule points">
+                <thead>
+                  <tr>
+                    <th scope="col">Start step</th>
+                    <th scope="col">Shift</th>
+                    <th scope="col">Scale</th>
+                    <th scope="col"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+              </table>
+            </div>
+            <p id="empty" class="muted empty">No points. The job uses its scalar settings for every step.</p>
+            <p id="schedule-error" class="error" role="status" hidden></p>
+            <button type="button" id="split">Split at step</button>
+          </section>
+
+          <section class="panel results" aria-labelledby="chart-heading">
+            <div class="heading">
+              <h2 id="chart-heading">Training timestep distribution</h2>
+              <label class="field" for="view"
+                >View
+                <select id="view">
+                  <option value="distribution">Probability curve</option>
+                  <option value="survival">Above threshold</option>
+                  <option value="quantiles">Descending quantiles</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="reference">
+              <label class="field" for="reference"
+                >Reference
+                <select id="reference">
+                  <option value="">None</option>
+                  <option value="balanced">Sigmoid (0, 1) · Balanced</option>
+                  <option value="content">Sigmoid (0, 1) · Content</option>
+                  <option value="style">Sigmoid (0, 1) · Style</option>
+                  <option value="model">Model Shift</option>
+                </select>
+              </label>
+              <label class="field" id="bias-control" for="bias" hidden
+                >Shift bias
+                <select id="bias">
+                  <option value="balanced">Balanced</option>
+                  <option value="content">Content</option>
+                  <option value="style">Style</option>
+                </select>
+              </label>
+              <label class="field" id="stage-control" for="stage" hidden
+                >Training stage
+                <select id="stage">
+                  <option value="high">High noise</option>
+                  <option value="low">Low noise</option>
+                </select>
+              </label>
+            </div>
+            <div id="bucket-controls" hidden>
+              <label id="known-buckets" class="field" for="bucket" hidden
+                >Configured buckets
+                <select id="bucket"></select>
+              </label>
+              <div class="dimensions">
+                <label class="field" for="width"
+                  >Bucket width
+                  <input id="width" type="number" min="1" step="1" placeholder="Pixels" />
+                </label>
+                <label class="field" for="height"
+                  >Bucket height
+                  <input id="height" type="number" min="1" step="1" placeholder="Pixels" />
+                </label>
+                <label class="field" id="frames-control" for="frames" hidden
+                  >Frames
+                  <input id="frames" type="number" min="1" step="1" />
+                </label>
+              </div>
+            </div>
+            <p id="model-info" class="note muted" role="status" hidden></p>
+
+            <div id="legend" class="legend" aria-label="Chart legend"></div>
+            <div class="plot">
+              <canvas
+                id="chart"
+                role="img"
+                aria-label="Training timestep sampling comparison. Summary values follow in the table."
+              ></canvas>
+              <div id="tooltip" class="tooltip" hidden></div>
+            </div>
+            <div class="table-wrap">
+              <table class="stats">
+                <caption>
+                  Sampling summary
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Schedule</th>
+                    <th scope="col">Median</th>
+                    <th scope="col">&lt;250</th>
+                    <th scope="col">≥600</th>
+                    <th scope="col">≥900</th>
+                  </tr>
+                </thead>
+                <tbody id="stats"></tbody>
+              </table>
+            </div>
+            <details>
+              <summary>Sampling assumptions</summary>
+              <p>
+                Curves show training draws over the default timestep range from 0 to 1000. Model references use the
+                selected stage where applicable. Loss weights and timestep overrides are outside this preview.
+              </p>
+            </details>
+          </section>
+        </div>
+        <footer>
+          <button type="button" id="close">Close</button>
+          <button type="button" id="apply" class="primary">Apply schedule</button>
+        </footer>
+      </div>
+    </main>
+  </body>
+</html>
