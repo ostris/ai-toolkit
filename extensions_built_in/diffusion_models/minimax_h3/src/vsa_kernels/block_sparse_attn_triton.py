@@ -196,7 +196,7 @@ def _attn_bwd_preprocess(
     HEAD_DIM: tl.constexpr,  #
 ):
     off_m = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
-    off_hz = tl.program_id(1)
+    off_hz = tl.program_id(1).to(tl.int64)
     off_n = tl.arange(0, HEAD_DIM)
     # load
     o = tl.load(
