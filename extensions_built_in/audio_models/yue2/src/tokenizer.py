@@ -17,8 +17,9 @@
 
 import json
 import os
+import re
 import unicodedata
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -172,6 +173,12 @@ SHEETSAGE_FILE = "Comfy-Org/YuE2/audio_encoders/sheetsage2_bf16.safetensors"
 # tied to token_embedding.weight (loaded); everything else in the Comfy file maps 1:1 onto upstream
 NONPERSISTENT_OK = {"decoder.embed_tokens.weight"}
 SHEETSAGE_SAMPLE_RATE = 24000
+# SheetSage2-Refined (anime-song): its code is vendored in ../sheetsage2_refined (MIT, 0.5.2); its weights (CC BY-NC) are this repo at
+# this revision, the 0.5.2 release the code matches (the weights transcription loads are byte-identical back to 0.5.0, whose code
+# made our earlier Refined sheets: 0.5.1 / 0.5.2 changed only the decoder-free key and beat trackers). Its encoder is SheetSage2's,
+# rebuilt from SHEETSAGE_FILE (refined_base_weights).
+REFINED_REPO = "anime-song/SheetSage2-Refined"
+REFINED_REVISION = "5e9c494941b8c0bb322d9f17f365a6f886d5e562"
 
 
 def code_package(folder: str, name: str) -> str:
@@ -245,20 +252,223 @@ class SheetSage2Transcriber:
     @torch.no_grad()
     def transcribe(self, waveform: torch.Tensor, sample_rate: int, cot: str = "full") -> str:
         """waveform [C, samples] -> ABC text (``cot`` "full" or "melody")."""
-        from .sheetsage_repair import AbcRepairError, repair_abc
-
         mono = waveform.float().mean(0) if waveform.dim() == 2 else waveform.float()
         result = self.model.transcribe(mono.cpu(), sampling_rate=sample_rate, melody_only=cot == "melody")
-        abc = result.get("abc") or ""
-        if not abc.strip():
-            # strict export rejected the sheet: rebuild it with the bad rows repaired, else the cacher drops the track
-            error = result.get("abc_error") or "unknown reason"
-            try:
-                abc, summary = repair_abc(self.model, result, melody_only=cot == "melody")
-            except AbcRepairError as exc:
-                raise UnusableFileError(f"SheetSage2 produced no ABC: {error}; repair failed: {exc}") from exc
-            self.warnings.append(f"SheetSage2 ABC repaired ({error}): {summary}")
-        return abc
+        return sheet_abc(self.model, result, cot, self.warnings)
+
+
+def sheet_abc(owner, result: dict, cot: str, warnings: List[str], who: str = "SheetSage2") -> str:
+    """The ABC of an exported transcription (SheetSage2's transcribe() dict, or SheetSage2Exporter.export's equivalent). A sheet the
+    strict export rejected is rebuilt with the bad rows repaired (sheetsage_repair; ``owner`` = any object of SheetSage2's code
+    package, which names the modules it rebuilds with), else the cacher drops the track. Repair notes go to ``warnings``."""
+    from .sheetsage_repair import AbcRepairError, repair_abc
+
+    abc = result.get("abc") or ""
+    if not abc.strip():
+        error = result.get("abc_error") or "unknown reason"
+        try:
+            abc, summary = repair_abc(owner, result, melody_only=cot == "melody")
+        except AbcRepairError as exc:
+            raise UnusableFileError(f"{who} produced no ABC: {error}; repair failed: {exc}") from exc
+        warnings.append(f"{who} ABC repaired ({error}): {summary}")
+    return abc
+
+
+class SheetSage2Exporter:
+    """SheetSage2's own ABC writer without its model: SheetSage2's event stream (another decoder's: SheetSage2-Refined's) -> the ABC
+    dialect the AR was trained on, through ``exports_sheetsage2.export_result`` and its tokenizer, from the same local code folder
+    SheetSage2Transcriber reads (``code_dir``). No weights load."""
+
+    def __init__(self, code_dir: str):
+        from .shims import install_shims
+
+        install_shims()
+        import importlib
+
+        if not os.path.isfile(os.path.join(code_dir, "config.json")):
+            raise FileNotFoundError(f"SheetSage2 code folder {code_dir!r} is not a local folder with config.json")
+        package = code_package(code_dir, "sheetsage2_code")
+        configuration = importlib.import_module(package + ".configuration_sheetsage2")
+        tokenization = importlib.import_module(package + ".tokenization_sheetsage2")
+        self.exports = importlib.import_module(package + ".exports_sheetsage2")
+        cfg = configuration.SheetSage2Config.from_pretrained(code_dir, local_files_only=True)
+        # the tokenizer SheetSage2Model builds from the same config
+        self.tokenizer = tokenization.SheetSage2Tokenizer(
+            cfg.input_audio_length, cfg.time_hz, cfg.tokenizer_schema_version, expected_fingerprint=cfg.tokenizer_fingerprint,
+        )
+
+    def export(self, events: list, duration: float, cot: str, warnings: List[str], who: str) -> str:
+        exported = self.exports.export_result({"events": events}, self.tokenizer, duration=duration, melody_only=cot == "melody")
+        payload = exported.pop("payload")
+        return sheet_abc(self.tokenizer, {**exported, **payload, "events": events, "duration_seconds": duration}, cot, warnings, who)
+
+
+def _refined_encoder_name(k: str) -> str:
+    """SheetSage2's MERT2 encoder tensor name (``encoder.`` stripped) -> SheetSage2-Refined's"""
+    front = {"feature_extractor.spectrogram.window": "frontend.window", "feature_extractor.mel_scale.fb": "frontend.mel_fb",
+             "feature_extractor.mel_mean": "frontend.mel_mean", "feature_extractor.mel_std": "frontend.mel_std"}
+    if k in front:
+        return front[k]
+    parts = k.split(".")
+    if parts[0] == "subsampling_module":        # subsampling_module.<stage>.(resampling_layer.<i> | convnext_layers.<n>.<block>.<i>).<p>
+        stage = parts[1]
+        if parts[2] == "resampling_layer":
+            return f"stages.{stage}." + {"0": "down_norm", "2": "down_conv"}[parts[3]] + "." + parts[4]
+        n, block, i, p = parts[3], parts[4], parts[5], parts[6]
+        if block == "depthwise_block":          # Sequential(Transpose, Conv1d, Transpose): index 1 = the conv
+            return f"stages.{stage}.layers.{n}.depthwise.{p}"
+        name = {"0": "norm", "1": "fc1", "3": "grn", "4": "fc2"}[i]   # pointwise_block: LayerNorm, Linear, GELU, GRN, Linear
+        if name == "grn":                       # GRN weight / bias [1, 1, 4d] -> grn_gamma / grn_beta [4d]
+            return f"stages.{stage}.layers.{n}.grn_{'gamma' if p == 'weight' else 'beta'}"
+        return f"stages.{stage}.layers.{n}.{name}.{p}"
+    if parts[0] == "layers":
+        table = {"ffn1_layer_norm": "ffn1_norm", "ffn2_layer_norm": "ffn2_norm", "attn_layer_norm": "attn_norm", "final_layer_norm": "final_norm",
+                 "ffn1.w_1": "ffn1.fc1", "ffn1.w_2": "ffn1.fc2", "ffn2.w_1": "ffn2.fc1", "ffn2.w_2": "ffn2.fc2",
+                 "attn.query_proj": "attn.q", "attn.key_proj": "attn.k", "attn.value_proj": "attn.v", "attn.out_proj": "attn.out",
+                 "conv_module.layer_norm": "conv.norm", "conv_module.conv_block.1": "conv.pointwise_in", "conv_module.conv_block.3": "conv.depthwise",
+                 "conv_module.conv_block.4.1": "conv.depthwise_norm", "conv_module.conv_block.6": "conv.pointwise_out"}
+        head, p = ".".join(parts[2:]).rsplit(".", 1)
+        return f"layers.{parts[1]}.{table[head]}.{p}"
+    raise KeyError(k)
+
+
+def _refined_decoder_name(k: str) -> str:
+    """SheetSage2 tensor name outside ``encoder.`` -> SheetSage2-Refined's; '' = not carried (the output projection: Refined ties it)"""
+    top = {"layer_weight": "layer_weights", "encoder_projection.weight": "encoder_projection.weight", "encoder_projection.bias": "encoder_projection.bias",
+           "token_embedding.weight": "decoder.token_embedding.weight", "decoder.embed_positions.weight": "decoder.position_embedding.weight",
+           "decoder.layernorm_embedding.weight": "decoder.embedding_norm.weight", "decoder.layernorm_embedding.bias": "decoder.embedding_norm.bias",
+           "output_projection.weight": ""}
+    if k in top:
+        return top[k]
+    parts = k.split(".")                        # decoder.layers.N.<module>.<p> | decoder.layers.N.<attn>.<proj>.<p>
+    if parts[:2] != ["decoder", "layers"]:
+        raise KeyError(k)
+    mod = {"self_attn": "self_attn", "encoder_attn": "cross_attn", "self_attn_layer_norm": "self_attn_norm", "encoder_attn_layer_norm": "cross_attn_norm",
+           "final_layer_norm": "final_norm", "fc1": "fc1", "fc2": "fc2"}[parts[3]]
+    if parts[3] in ("self_attn", "encoder_attn"):
+        return f"decoder.layers.{parts[2]}.{mod}." + {"q_proj": "q", "k_proj": "k", "v_proj": "v", "out_proj": "out"}[parts[4]] + f".{parts[5]}"
+    return f"decoder.layers.{parts[2]}.{mod}.{parts[4]}"
+
+
+def refined_base_weights(sheetsage_file: str, out_path: str):
+    """SheetSage2's weights in SheetSage2-Refined's tensor layout, written once to ``out_path`` (its model folder's ``base_weights``)
+    from the Comfy file SheetSage2Transcriber already loads (``sheetsage_file``): the same tensors under Refined's module names, so
+    its 2.7 GB repack is never downloaded. Every name and shape is checked against Refined's own model before the file is written."""
+    from safetensors.torch import load_file, save_file
+
+    from ..sheetsage2_refined.model import SheetSage
+
+    src = load_file(sheetsage_file)
+    tensors = {}
+    for k, v in src.items():
+        if k.startswith("encoder."):
+            name = "encoder." + _refined_encoder_name(k[len("encoder."):])
+            tensors[name] = v.reshape(-1) if name.endswith(("grn_gamma", "grn_beta")) else v
+        elif _refined_decoder_name(k):
+            tensors[_refined_decoder_name(k)] = v
+    want = {k: tuple(v.shape) for k, v in SheetSage().state_dict().items()}
+    missing, extra = sorted(set(want) - set(tensors)), sorted(set(tensors) - set(want))
+    # the token embedding is padded to Refined's vocabulary by its own loader
+    bad = [k for k in want.keys() & tensors.keys() if k != "decoder.token_embedding.weight" and tuple(tensors[k].shape) != want[k]]
+    if missing or extra or bad:
+        raise ValueError(f"{sheetsage_file} does not map onto SheetSage2-Refined: missing {missing[:5]} extra {extra[:5]} shape {bad[:5]}")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    save_file({k: v.contiguous() for k, v in tensors.items()}, out_path + ".tmp",
+              metadata={"source": os.path.basename(sheetsage_file), "layout": "sheetsage2_refined"})
+    os.replace(out_path + ".tmp", out_path)
+
+
+def refined_weight_files(config: dict) -> List[str]:
+    """The files of a SheetSage2-Refined model folder that transcription loads, besides ``base_weights``: the decoder, the bar
+    features and every rescoring head (not the decoder-free trackers)."""
+    bar = config.get("bar_features") or {}
+    names = [config.get("decoder"), bar.get("projection"), *bar.get("heads", [])]
+    for spec in config.get("rescoring", {}).values():
+        names += spec["head"] if isinstance(spec["head"], list) else [spec["head"]]
+    return sorted({n for n in names if n})
+
+
+def _voices(abc: str) -> Tuple[Dict[str, str], List[str]]:
+    """The score's voices (id -> its attributes: clef, name=..., from every V: line) and the ids named like "vocal"."""
+    declared = {}
+    for line in abc.splitlines():
+        m = re.match(r"\s*V:\s*(\S+)(.*)", line)
+        if m:
+            declared[m[1]] = declared.get(m[1], "") + m[2]
+    return declared, [v for v, attrs in declared.items() if "vocal" in (v + attrs).lower()]
+
+
+# in a music line: a note's pitch (accidental, letter, octave marks), or a span whose letters are not pitches and is kept
+# whole: a quoted chord symbol or annotation, an inline field, a decoration, a trailing comment
+_PITCH = re.compile(r'"[^"]*"|\[[A-Za-z]:[^\]]*\]|![^!]*!|\+[^+\s]*\+|%.*|(?P<acc>\^\^|\^|__|_|=)?(?P<letter>[A-Ga-g])(?P<marks>[,\']*)')
+
+
+def shift_vocal_octaves(abc: str, octaves: int) -> Tuple[str, Dict]:
+    """The score with every voice named like "vocal" moved by ``octaves`` octaves: each note's letter case and , / ' marks change and
+    nothing else, so accidentals, lengths, ties, chord symbols, inline fields, header and field lines and every other voice stay byte
+    for byte; grace notes move with their voice. -> (abc, {"voices": moved voice ids, "notes": notes moved})."""
+    _, vocal = _voices(abc)
+    moved = 0
+
+    def move(m):
+        nonlocal moved
+        if not m["letter"]:
+            return m[0]
+        moved += 1
+        octave = (4 if m["letter"].isupper() else 5) + m["marks"].count("'") - m["marks"].count(",") + octaves   # C = C4, c = C5
+        return (m["acc"] or "") + (m["letter"].upper() + "," * (4 - octave) if octave < 5 else m["letter"].lower() + "'" * (octave - 5))
+
+    out, cur = [], None
+    for line in abc.splitlines():
+        s = line.strip()
+        field = re.match(r"([A-Za-z]):(.*)", s)
+        if field and field[1] == "V":
+            cur = field[2].split()[0] if field[2].strip() else None
+        out.append(line if not s or s.startswith("%") or field or cur not in vocal else _PITCH.sub(move, line))
+    return "\n".join(out) + ("\n" if abc.endswith("\n") else ""), {"voices": vocal, "notes": moved}
+
+
+class RefinedTranscriber:
+    """Audio -> ABC lead sheet with SheetSage2-Refined (anime-song; ../sheetsage2_refined): its fine-tuned decoder and rescoring heads
+    over SheetSage2's encoder decode SheetSage2's event stream, and SheetSage2's own exporter writes it (SheetSage2Exporter). Refined
+    writes the vocal line in the octave sung, one below SheetSage2's sheets and YuE2's own, so it is moved up one octave. The same
+    interface as SheetSage2Transcriber (transcribe, to, device, warnings)."""
+
+    def __init__(self, folder: str, sheetsage_file: str, code_dir: str):
+        """``folder``: a SheetSage2-Refined model folder (config.json + refined_weight_files); its ``base_weights`` is built from
+        ``sheetsage_file`` when missing (refined_base_weights). ``code_dir``: SheetSage2's local code folder, for the exporter."""
+        from ..sheetsage2_refined.pipeline import SheetSage2Refined
+
+        with open(os.path.join(folder, "config.json"), encoding="utf-8") as f:
+            base = os.path.join(folder, json.load(f)["base_weights"])
+        if not os.path.isfile(base):
+            print(f"SheetSage2-Refined: writing its encoder weights from {os.path.basename(sheetsage_file)} -> {base}")
+            refined_base_weights(sheetsage_file, base)
+        self.exporter = SheetSage2Exporter(code_dir)
+        self.refined = SheetSage2Refined.load(folder, "cpu")
+        self.warnings: List[str] = []
+
+    def to(self, device):
+        self.refined.model.to(device)                    # the bar features are a submodule of the model
+        for head, _ in self.refined.rescoring.values():  # the rescoring heads are not (shared ones move once, harmlessly twice)
+            head.to(device)
+        return self
+
+    @property
+    def device(self):
+        return next(self.refined.model.parameters()).device
+
+    @torch.no_grad()
+    def transcribe(self, waveform: torch.Tensor, sample_rate: int, cot: str = "full") -> str:
+        """waveform [C, samples] -> ABC text (``cot`` "full" or "melody"), vocal line in YuE2's sheet octave."""
+        import torchaudio
+
+        rate = self.refined.model.sample_rate
+        mono = waveform.float().mean(0) if waveform.dim() == 2 else waveform.float()
+        mono = torchaudio.functional.resample(mono, sample_rate, rate) if sample_rate != rate else mono
+        events = self.refined.transcribe([mono.cpu()])[0]
+        abc = self.exporter.export(events, len(mono) / rate, cot, self.warnings, who="SheetSage2-Refined")
+        return shift_vocal_octaves(abc, 1)[0]
 
 
 def load_head_state_dict(head_path: str) -> dict:

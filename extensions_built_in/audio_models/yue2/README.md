@@ -53,12 +53,34 @@ Code that gets executed, and the encoder of the community head, are no longer pu
 
 | `model_kwargs` key | Default | What goes in it | Needed for |
 |---|---|---|---|
-| `sheetsage_code` | `<MODELS_PATH>/ai_toolkit/SheetSage2` | `config.json` + `*.py` of `m-a-p/SheetSage2` at revision `55bfe14e32d8b663629b3a86b0f3285c2ca5da0b` (no weights) | `cot: full` / `melody`, unless every track has a manual `.abc` sheet |
+| `sheetsage_code` | `<MODELS_PATH>/ai_toolkit/SheetSage2` | `config.json` + `*.py` of `m-a-p/SheetSage2` at revision `55bfe14e32d8b663629b3a86b0f3285c2ca5da0b` (no weights) | `cot: full` / `melody`, unless every track has a manual `.abc` sheet (with either sheet writer: Refined's sheets are written by SheetSage2's exporter) |
 | `mert_path` | `<MODELS_PATH>/ai_toolkit/MERT-v2-FullSong` | `config.json` + `model.safetensors` of `m-a-p/MERT-v2-FullSong` | the community head only |
 
 SheetSage2's weights still come from `sheetsage_path`
 (`Comfy-Org/YuE2/audio_encoders/sheetsage2_bf16.safetensors`) and download like the checkpoint. A missing
 folder stops the run with a message that says what to put where.
+
+## Sheets: SheetSage2 or SheetSage2-Refined
+
+For `cot: full` / `melody`, a track without a manual `.abc` gets its sheet from a transcriber at cache time,
+picked by `model_kwargs.sheet_transcriber`:
+
+- `sheetsage2` (default): the released SheetSage2, the transcriber ComfyUI uses for cover mode.
+- `refined`: [SheetSage2-Refined](https://github.com/anime-song/SheetSage2-Refined) by **anime-song**, a
+  fine-tuned SheetSage2 with its own decoder plus rescoring heads for downbeats, meters, chords and keys. It finds
+  bars and odd meters much more reliably than the original. Its code (MIT, 0.5.2) is vendored in
+  [sheetsage2_refined/](sheetsage2_refined/). Its event stream goes through SheetSage2's own exporter, so the
+  sheets stay in the ABC dialect the AR was trained on. Refined writes the vocal line in the octave actually sung,
+  one below SheetSage2's and YuE2's own sheets, so the line is moved up an octave.
+
+Refined's weights (CC BY-NC 4.0) live in a model folder, `model_kwargs.refined_path`. Unset, it is
+`<MODELS_PATH>/ai_toolkit/SheetSage2-Refined`, and the files transcription needs (`config.json`, the decoder,
+the bar features and the rescoring heads, about 250 MB) download there from `anime-song/SheetSage2-Refined` at
+the pinned 0.5.2 revision. Its encoder is SheetSage2's own. It is rebuilt once from the SheetSage2 file you
+already have, instead of downloading the 2.7 GB repack. A folder you name with `refined_path` must already be
+complete. Refined sheets get their own latent cache, so switching transcribers never mixes the two.
+
+Huge thanks to anime-song for SheetSage2-Refined, and for releasing its code under MIT.
 
 ## Dataset
 
@@ -103,14 +125,17 @@ comes back shifted (21.33 ms in one measured case), and the tokenizer's 40-ms fr
 | `replay_dirs` | none | Exact-token replay: corpora in the minted layout (`<root>/tracks/<id>/semantic.npy` + `request.json` [+ `score.abc`]) whose codes the AR wrote itself. With probability `replay_ratio` (default 0.2 when dirs are given) a step adds one replay track's next-token loss, weighted `replay_weight` (default 1.0), so the AR keeps its own codes while it learns the new songs. Logged as `loss/ar_replay_ce`. |
 | `sample_cfg_negative` | `text` | What the semantic CFG negative drops: `text` (the style and lyrics; the reference package's negative) or `sheet` (amplifies what the sheet adds). |
 | `sample_sidecars` | `false` | Every AR sample is also written as a corpus track under `samples/sidecars/<sample id>/` (lossless audio, the exact codec tokens and NAR latents, the sheet and the request). Copied into `<root>/tracks/`, they are `replay_dirs` material. |
+| `sheet_transcriber` | `sheetsage2` | Who writes a track's sheet when it has no `.abc`: `sheetsage2` or `refined` (see Sheets). |
+| `refined_path` | `<MODELS_PATH>/ai_toolkit/SheetSage2-Refined` | SheetSage2-Refined's model folder. |
 | `sheetsage_code`, `mert_path` | see above | The local folders. |
 
 ## Training in stages
 
 One joint LoRA (`train_experts: both`) works, but the best results so far come from training the experts
 separately: the NAR (the decoder) first, then the AR (the planner) in two steps, the sheet before the
-music. Each stage is its own job with its own job name. Keep `semantic_head_path`, `level_fit`, `cot` and the
-dataset the same in every stage, so all three share one latent cache and the sheet layout never changes.
+music. Each stage is its own job with its own job name. Keep `semantic_head_path`, `level_fit`, `cot`,
+`sheet_transcriber` and the dataset the same in every stage, so all three share one latent cache and the sheet
+layout never changes.
 
 ### How the NAR LoRA carries into the AR stages
 
@@ -126,6 +151,7 @@ checkpoint of that run carries it, so each checkpoint is a complete joint LoRA.
 model_kwargs:
   semantic_head_path: "WannabeTokenizerV3.safetensors"
   cot: "full"
+  sheet_transcriber: "refined" # or "sheetsage2"; the same in every stage
   train_experts: "nar"         # the AR loss is switched off
   merge_nar_lora: false
   abc_dropout: 0               # every item keeps its sheet; 0.5 (the default) also trains the off-mode prompt
@@ -140,6 +166,7 @@ stage: they render a real track's codec ids, so only the decoder is judged.
 model_kwargs:
   semantic_head_path: "WannabeTokenizerV3.safetensors"
   cot: "full"
+  sheet_transcriber: "refined"
   train_experts: "ar"
   ar_loss_on: "sheet"          # only the ABC sheet counts; abc_dropout is ignored, every item keeps its sheet
   ar_kl_weight: 1              # holds the music-token writing where it is while the sheet trains
@@ -158,6 +185,7 @@ holds the token writing in place.
 model_kwargs:
   semantic_head_path: "WannabeTokenizerV3.safetensors"
   cot: "full"
+  sheet_transcriber: "refined"
   train_experts: "ar"
   ar_loss_on: "tokens"         # only the codec tokens after the sheet count
   ar_kl_weight: 1              # anchored at base + the stage-2 LoRA, so the sheet writing is held

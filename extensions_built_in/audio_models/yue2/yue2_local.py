@@ -47,6 +47,11 @@ yue2/__init__.py, same "yue2" arch) so yue2_model.py stays the base port; every 
 - ``model_kwargs.semantic_head_path`` may point at a Yue2SemanticTokenizer end-to-end pair
   (``runs/<run>/best/head.safetensors``, its encoder beside it): ``src/tokenizer.py`` dispatches on the file's
   ``head.kind`` metadata, and the latent cache is keyed by ``<run>-<best|last>`` (every pair's file is head.safetensors).
+- ``model_kwargs.sheet_transcriber``: who writes a track's training sheet when it has no ``.abc``: "sheetsage2" (default,
+  the release's) or "refined", SheetSage2-Refined (anime-song, vendored in sheetsage2_refined/), whose decoder and
+  rescoring heads find bars, meters and chords better; its event stream is written by SheetSage2's own exporter and its
+  vocal line moved up to YuE2's sheet octave (src/tokenizer.py RefinedTranscriber). ``model_kwargs.refined_path`` = its
+  model folder (resolve_refined_folder). Refined sheets get their own latent cache (``_ss2r``).
 """
 import glob
 import hashlib
@@ -66,19 +71,23 @@ from safetensors.torch import load_file, save_file
 
 from toolkit.basic import UnusableFileError
 from toolkit.metadata import add_model_hash_to_meta
+from toolkit.models.v2.resolver import resolve_named_file
+from toolkit.paths import MODELS_PATH
 from toolkit.print import print_acc
 from toolkit.prompt_utils import PromptEmbeds
 
 from .src.model import ABC_END, CODEC_SIZE, FRAMES_PER_SECOND
 from .src.pipeline import YuE2Pipeline
+from .src.tokenizer import REFINED_REPO, REFINED_REVISION, RefinedTranscriber, refined_weight_files
 from .src.vae import SAMPLE_RATE
-from .yue2_model import AI_TOOLKIT_DIR, YuE2AudioModel as UpstreamYuE2AudioModel, apply_level_fit, parse_caption, resolve_ai_toolkit_file
+from .yue2_model import (AI_TOOLKIT_DIR, YuE2AudioModel as UpstreamYuE2AudioModel, apply_level_fit, parse_caption, resolve_ai_toolkit_file,
+                         resolve_local_folder)
 
 # upstream methods the overrides below extend: a rename upstream has to stop here, not silently skip a feature
 _EXTENDED = (
     "load_model", "encode_audio", "_transcribe_sheets", "pop_encode_warnings", "get_loss_target", "get_noise_prediction",
     "get_prompt_embeds", "generate_single_audio", "_ar_losses", "get_additional_loss", "_ar_inputs", "get_latent_space_version",
-    "_get_semantic_tokenizer",
+    "_get_semantic_tokenizer", "_get_transcriber",
 )
 _missing = [name for name in _EXTENDED if name not in UpstreamYuE2AudioModel.__dict__]
 if _missing:
@@ -94,6 +103,8 @@ SAVED_LORA_PREFIX = {"nar": "diffusion_model.", "ar": "text_encoders."}
 AR_LOSS_ON = ("all", "sheet", "tokens")
 # model_kwargs.sample_cfg_negative: what the CFG negative prompt drops
 CFG_NEGATIVES = ("text", "sheet")
+# model_kwargs.sheet_transcriber: who writes a track's sheet when it has no .abc sidecar
+SHEET_TRANSCRIBERS = ("sheetsage2", "refined")
 # sample prompt sections whose next non-empty line is a file path (see split_paths)
 PATH_SECTIONS = ("abc", "reconstruct")
 # checkpoint metadata of a run over a base_lora_path: the sha256 of the base file its delta needs, and its name
@@ -168,6 +179,34 @@ def load_codes(path: str) -> np.ndarray:
     return codes.astype(np.int64)
 
 
+def resolve_refined_folder(path: Optional[str] = None) -> str:
+    """model_kwargs.refined_path as SheetSage2-Refined's model folder. A folder you name must already hold config.json and every
+    file transcription loads (refined_weight_files); unset = <MODELS_PATH>/ai_toolkit/SheetSage2-Refined, where whatever is
+    missing is downloaded from REFINED_REPO at REFINED_REVISION (config.json and weights only: the code is vendored). Its
+    base_weights is never downloaded (a 2.7 GB repack): RefinedTranscriber builds it from the SheetSage2 file."""
+    folder = path or os.path.join(MODELS_PATH, AI_TOOLKIT_DIR, "SheetSage2-Refined")
+    config_path = os.path.join(folder, "config.json")
+
+    def fetch(names):
+        import huggingface_hub
+
+        print_acc(f"YuE2: downloading SheetSage2-Refined {', '.join(names)} ({REFINED_REPO} @ {REFINED_REVISION[:7]}) into {folder}")
+        for name in names:
+            huggingface_hub.hf_hub_download(REFINED_REPO, name, revision=REFINED_REVISION, local_dir=folder)
+
+    if not os.path.isfile(config_path):
+        if path:
+            raise FileNotFoundError(f"model_kwargs.refined_path {path!r} has no config.json (a SheetSage2-Refined model folder expected)")
+        fetch(["config.json"])
+    with open(config_path, encoding="utf-8") as f:
+        need = [n for n in refined_weight_files(json.load(f)) if not os.path.isfile(os.path.join(folder, n))]
+    if need and path:
+        raise FileNotFoundError(f"model_kwargs.refined_path {path!r} lacks {need}: copy them from {REFINED_REPO}, or unset refined_path")
+    if need:
+        fetch(need)
+    return folder
+
+
 def _recording(fn, captured: dict, name: str):
     """Wrap a pipeline method so its arguments and result are kept (for a sample's sidecars)."""
 
@@ -222,6 +261,10 @@ class YuE2AudioModel(UpstreamYuE2AudioModel):
         if self.sample_cfg_negative == "sheet" and self.cot == "off":
             raise ValueError("model_kwargs.sample_cfg_negative 'sheet' drops the sheet, which cot 'off' never writes")
         self._cfg_noted = set()  # (scale, negative, cot) already announced
+        self.sheet_transcriber = str(kw.get("sheet_transcriber", "sheetsage2"))
+        if self.sheet_transcriber not in SHEET_TRANSCRIBERS:
+            raise ValueError(f"model_kwargs.sheet_transcriber must be one of {list(SHEET_TRANSCRIBERS)}")
+        self.refined_path = kw.get("refined_path", None)
         self.ar_loss_on = str(kw.get("ar_loss_on", "all"))
         if self.ar_loss_on not in AR_LOSS_ON:
             raise ValueError(f"model_kwargs.ar_loss_on must be one of {list(AR_LOSS_ON)}")
@@ -381,6 +424,18 @@ class YuE2AudioModel(UpstreamYuE2AudioModel):
         return load_file(file) if file.endswith(".safetensors") else torch.load(file, map_location="cpu")
 
     # ------------------------------------------------------------------ manual ABC sheets
+    def _get_transcriber(self):
+        """sheet_transcriber "refined": SheetSage2-Refined in the SheetSage2 transcriber's place (same interface), so every path that
+        transcribes (the latent cache, its stems, [Reconstruct] samples) reads the same sheets."""
+        if self.sheet_transcriber != "refined":
+            return super()._get_transcriber()
+        if self.transcriber is None:
+            print_acc("Loading SheetSage2-Refined (audio -> ABC)")
+            self.transcriber = RefinedTranscriber(resolve_refined_folder(self.refined_path),
+                                                  resolve_named_file(self.sheetsage_path, component="sheetsage2"),
+                                                  resolve_local_folder("sheetsage_code", self.sheetsage_code))
+        return self.transcriber
+
     def set_encode_source_paths(self, paths: List[str]):
         """The latent cacher's paths for the next encode_audio batch, so its sheets can come from manual sidecars."""
         self._sheet_paths = list(paths)
@@ -754,6 +809,8 @@ class YuE2AudioModel(UpstreamYuE2AudioModel):
             d = os.path.dirname(os.path.abspath(self.semantic_head_path))
             tag = re.sub(r"[^A-Za-z0-9]+", "-", f"{os.path.basename(os.path.dirname(d))}-{os.path.basename(d)}")
             version = (version[: -len("_head")] if version.endswith("_head") else version) + f"_{tag}"
+        if self.sheet_transcriber == "refined" and self.cot != "off":
+            version += "_ss2r"                  # the cached sheets are Refined's
         return version
 
     # ------------------------------------------------------------------ single-expert training
