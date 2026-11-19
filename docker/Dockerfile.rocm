@@ -1,0 +1,103 @@
+# AMD ROCm image. AMD's torch wheels bundle the ROCm runtime and their own
+# triton, so a plain Ubuntu base is enough; the host only needs the amdgpu
+# kernel driver (see docker-compose.rocm.yml for the device passthrough).
+FROM ubuntu:24.04
+
+LABEL authors="jaret"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# SDPA's AOTriton flash / mem-efficient kernels are gated behind this on
+# several consumer targets; without it attention falls back to the math path
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    git \
+    curl \
+    build-essential \
+    cmake \
+    wget \
+    python3.12 \
+    python3-pip \
+    python3-dev \
+    python3-setuptools \
+    python3-wheel \
+    python3-venv \
+    ffmpeg \
+    tmux \
+    htop \
+    nvtop \
+    python3-opencv \
+    openssh-client \
+    openssh-server \
+    openssl \
+    rsync \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+RUN curl -sL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh && \
+    bash nodesource_setup.sh && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# GPU kernels come from per-target device-<gfx> extras. device-all covers every
+# supported GPU; pass e.g. --build-arg ROCM_DEVICES=device-gfx1100,device-gfx1201
+# for a much smaller image.
+# (versions must match manager/spec.py, the AI Toolkit Manager's ROCm spec)
+ARG ROCM_DEVICES=device-all
+RUN pip install --no-cache-dir --break-system-packages \
+    "torch[${ROCM_DEVICES}]==2.13.0+rocm10.1.0" \
+    "torchvision[${ROCM_DEVICES}]==0.28.0+rocm10.1.0" \
+    "torchaudio==2.11.0+rocm10.1.0" \
+    --index-url https://stable.repo.amd.com/rocm/whl-next/
+
+WORKDIR /app/ai-toolkit
+
+COPY requirements.txt requirements_base.txt /app/ai-toolkit/
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt && \
+    pip install setuptools==69.5.1 --no-cache-dir --break-system-packages
+
+# flash-attn / NATTEN have no prebuilt ROCm wheels; torchcodec, FLA and the
+# optimum-quanto override match the manager's ROCm spec. FLA is installed WITHOUT -U so its unpinned
+# transformers requirement does not upgrade the pinned one.
+RUN pip install --no-cache-dir --break-system-packages -U torchcodec==0.15.0 &&     pip install --no-cache-dir --break-system-packages --no-deps optimum-quanto==0.2.7 && \
+    pip install --no-cache-dir --break-system-packages flash-linear-attention==0.5.2 && \
+    python -c "import torch, torchcodec, fla; print('torch', torch.__version__, 'hip', torch.version.hip)"
+
+COPY ui/package.json ui/package-lock.json /app/ai-toolkit/ui/
+RUN cd /app/ai-toolkit/ui && npm ci
+
+ARG CACHEBUST=1234
+ARG GIT_COMMIT=main
+RUN echo "Cache bust: ${CACHEBUST}" && \
+    git clone https://github.com/ostris/ai-toolkit.git /tmp/ai-toolkit-src && \
+    cd /tmp/ai-toolkit-src && \
+    git checkout ${GIT_COMMIT} && \
+    rsync -a --delete \
+        --exclude 'ui/node_modules' \
+        --exclude 'requirements.txt' \
+        --exclude 'ui/package.json' \
+        --exclude 'ui/package-lock.json' \
+        /tmp/ai-toolkit-src/ /app/ai-toolkit/ && \
+    rm -rf /tmp/ai-toolkit-src
+
+RUN cd /app/ai-toolkit/ui && \
+    npm run update_db && \
+    npm run build
+
+EXPOSE 8675
+
+WORKDIR /
+
+COPY docker/start.sh /start.sh
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]
