@@ -105,6 +105,79 @@ comes back shifted (21.33 ms in one measured case), and the tokenizer's 40-ms fr
 | `sample_sidecars` | `false` | Every AR sample is also written as a corpus track under `samples/sidecars/<sample id>/` (lossless audio, the exact codec tokens and NAR latents, the sheet and the request). Copied into `<root>/tracks/`, they are `replay_dirs` material. |
 | `sheetsage_code`, `mert_path` | see above | The local folders. |
 
+## Training in stages
+
+One joint LoRA (`train_experts: both`) works, but the best results so far come from training the experts
+separately: the NAR (the decoder) first, then the AR (the planner) in two steps, the sheet before the
+music. Each stage is its own job with its own job name. Keep `semantic_head_path`, `level_fit`, `cot` and the
+dataset the same in every stage, so all three share one latent cache and the sheet layout never changes.
+
+### How the NAR LoRA carries into the AR stages
+
+You want the AR stages' samples to render through your trained NAR, so you hear what the finished LoRA
+will sound like. That is `other_expert_lora_path`, not `merge_nar_lora`: `merge_nar_lora` only folds the
+Mothersuperior adapter's own file format into the base NAR and cannot read an ai-toolkit LoRA. Leave it
+`false` in every stage. `other_expert_lora_path` holds the NAR LoRA frozen for the whole AR run, and every
+checkpoint of that run carries it, so each checkpoint is a complete joint LoRA.
+
+### Stage 1: NAR
+
+```yaml
+model_kwargs:
+  semantic_head_path: "WannabeTokenizerV3.safetensors"
+  cot: "full"
+  train_experts: "nar"         # the AR loss is switched off
+  merge_nar_lora: false
+  abc_dropout: 0               # every item keeps its sheet; 0.5 (the default) also trains the off-mode prompt
+```
+
+Samples are the base AR's songs rendered by your NAR. `[Reconstruct]` samples are the cleanest check of this
+stage: they render a real track's codec ids, so only the decoder is judged.
+
+### Stage 2: AR, the sheet
+
+```yaml
+model_kwargs:
+  semantic_head_path: "WannabeTokenizerV3.safetensors"
+  cot: "full"
+  train_experts: "ar"
+  ar_loss_on: "sheet"          # only the ABC sheet counts; abc_dropout is ignored, every item keeps its sheet
+  ar_kl_weight: 1              # holds the music-token writing where it is while the sheet trains
+  other_expert_lora_path: "/path/to/output/my_nar/my_nar_000002000.safetensors"   # stage 1's pick
+  merge_nar_lora: false
+  sample_ar_repetition_penalty: 1.2
+```
+
+Every track needs a sheet: SheetSage2's transcription or a manual `.abc`. With `ar_kl_weight: 0` the
+music after the sheet is skipped entirely (the same loss for a fraction of the compute), but nothing then
+holds the token writing in place.
+
+### Stage 3: AR, the music
+
+```yaml
+model_kwargs:
+  semantic_head_path: "WannabeTokenizerV3.safetensors"
+  cot: "full"
+  train_experts: "ar"
+  ar_loss_on: "tokens"         # only the codec tokens after the sheet count
+  ar_kl_weight: 1              # anchored at base + the stage-2 LoRA, so the sheet writing is held
+  base_lora_path: "/path/to/output/my_sheet/my_sheet_000001000.safetensors"       # stage 2's pick
+  abc_dropout: 0
+  merge_nar_lora: false
+  sample_ar_repetition_penalty: 1.2
+```
+
+The stage-2 checkpoint is a joint file, so `base_lora_path` freezes its AR half under the new LoRA and holds
+its NAR half too: no `other_expert_lora_path` is needed here. Don't also set it as
+`network.pretrained_lora_path`. This run's checkpoints hold only the new music delta (plus the held NAR).
+**The finished LoRA is the copy in `merged_exports/`** beside them: the sheet LoRA, the music LoRA and the NAR
+in one file.
+
+The NAR attends to the AR's keys and values over the prompt, and stage 1 trained it against the base AR. The
+AR stages move those, and the KL leash limits how far. If renders get worse after stage 3, a short NAR pass
+on top is possible (not yet tried): `train_experts: nar`, `base_lora_path` set to the stage-3 merged export,
+whose AR half is then held automatically.
+
 ## Sample prompts
 
 - **Semantic CFG**: a sample's `guidance_scale` is the CFG scale on the codec tokens, and **1 means off**.
