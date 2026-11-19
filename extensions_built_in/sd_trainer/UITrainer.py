@@ -8,6 +8,7 @@ from typing import Literal, Optional
 import threading
 import time
 import signal
+from toolkit.ui_job_status import connect_ui_db
 
 AITK_Status = Literal["running", "stopped", "error", "completed"]
 
@@ -100,10 +101,8 @@ class UITrainer(SDTrainer):
         return await loop.run_in_executor(self.thread_pool, operation_func)
 
     def _db_connect(self):
-        """Create a new connection for each operation to avoid locking."""
-        conn = sqlite3.connect(self.sqlite_db_path, timeout=10.0)
-        conn.isolation_level = None  # Enable autocommit mode
-        return conn
+        """Create a new connection for each operation to avoid locking (closed when its ``with`` block ends)."""
+        return connect_ui_db(self.sqlite_db_path, timeout=10.0)
 
     def should_stop(self):
         def _check_stop():

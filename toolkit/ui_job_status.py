@@ -7,6 +7,7 @@ standalone helper so other UI-driven processes (the inference engine) can
 share it. Outside the UI (no job id or no db file) every call is a no-op.
 """
 
+import contextlib
 import os
 import sqlite3
 import threading
@@ -14,6 +15,19 @@ import time
 from typing import Callable, Literal, Optional
 
 AITK_Status = Literal["running", "stopped", "error", "completed", "queued"]
+
+
+def connect_ui_db(sqlite_db_path: str, timeout: float = 30.0):
+    """A connection to the UI's job db in autocommit mode, for ``with connect_ui_db(path) as conn``.
+
+    The connection is closed when the block ends, on the thread that opened it. sqlite3's own
+    ``with conn`` only commits: an unclosed connection waits in a reference cycle until the garbage
+    collector closes it on whatever thread it happens to run, and that close can deadlock inside
+    SQLite against another thread opening the same db (a trainer hung for good before its dataset
+    load that way, the main thread's GC close and the db worker's open each waiting on the other)."""
+    conn = sqlite3.connect(sqlite_db_path, timeout=timeout)
+    conn.isolation_level = None  # autocommit
+    return contextlib.closing(conn)
 
 
 class UIJobStatus:
@@ -32,9 +46,7 @@ class UIJobStatus:
 
     # ---- db plumbing ----
     def _connect(self):
-        conn = sqlite3.connect(self.sqlite_db_path, timeout=30.0)
-        conn.isolation_level = None
-        return conn
+        return connect_ui_db(self.sqlite_db_path)
 
     def _retry(self, fn, max_retries=3, base_delay=2.0):
         last = None
