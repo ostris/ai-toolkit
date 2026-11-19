@@ -18,6 +18,7 @@ from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, SiglipImageProcessor
 
+from toolkit.audio.decode import load_audio
 from toolkit.audio.preserve_pitch import time_stretch_preserve_pitch
 from toolkit.basic import UnusableFileError, flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
@@ -552,7 +553,7 @@ class AudioProcessingDTOMixin:
         try:
             import torchaudio
 
-            waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+            waveform, sample_rate = load_audio(self.path)  # [channels, samples]
             waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
             if sample_rate != self.sample_rate:
                 waveform = torchaudio.functional.resample(waveform, sample_rate, self.sample_rate)
@@ -837,7 +838,7 @@ class ImageProcessingDTOMixin:
 
                     waveform = None
                     if has_audio_stream:
-                        waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+                        waveform, sample_rate = load_audio(self.path)  # [channels, samples]
 
                         waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
 
@@ -1941,6 +1942,8 @@ class LatentCachingFileItemDTOMixin:
             # the encoded alpha changes the latent; only added when on so caches
             # made before this existed stay valid for models that do not use it
             item["load_rgba"] = True
+        if getattr(self, 'model_file_cache_key', None):  # YuE2 .abc sheets; absent keeps old caches valid
+            item["model_file_cache_key"] = self.model_file_cache_key
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
@@ -2192,6 +2195,7 @@ class LatentCachingMixin:
             try:
                 # waveforms stay fp32 into the audio encoder (bf16 mantissa is ~48 dB of noise)
                 imgs = file_item.tensor.unsqueeze(0).to(device, dtype=torch.float32 if file_item.is_audio_model else dtype)
+                getattr(self.sd, 'set_encode_source_paths', lambda paths: None)([file_item.path])  # YuE2: a track's manual .abc sheet
                 latent = self.sd.encode_images(imgs)
                 # a model can return a DTO carrying extra streams alongside the latent
                 latent = latent.map(lambda t: t.squeeze(0)) if isinstance(latent, DTO) else latent.squeeze(0)

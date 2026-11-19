@@ -954,6 +954,7 @@ class DatasetConfig:
         # if caption_ext doesnt start with a dot, add it
         if self.caption_ext and not self.caption_ext.startswith('.'):
             self.caption_ext = '.' + self.caption_ext
+        self.strict_pairing: Optional[bool] = kwargs.get('strict_pairing', None)  # toolkit/dataset_pairing.py; None = the model's default
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
@@ -1341,7 +1342,7 @@ class GenerateImageConfig:
             cap.release()
             if ok:
                 img = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        elif ext in ['.mp3', '.wav', '.flac', '.ogg']:
+        elif ext in ['.mp3', '.wav', '.flac', '.ogg', '.aac', '.opus']:
             # waveform cover rendered at thumb size so the UI never has to read the tags
             from toolkit.audio.album_artwork import create_artwork, load_waveform
             img = create_artwork(load_waveform(media_path), size=300)

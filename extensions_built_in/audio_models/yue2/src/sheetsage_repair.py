@@ -20,9 +20,22 @@ class AbcRepairError(ValueError):
     pass
 
 
-def _modules(model):
+def _modules(model, *names):
     pkg = type(model).__module__.rsplit(".", 1)[0]
-    return importlib.import_module(pkg + ".notation_sheetsage2"), importlib.import_module(pkg + ".exports_sheetsage2"), importlib.import_module(pkg + ".midi_sheetsage2")
+    return [importlib.import_module(f"{pkg}.{n}_sheetsage2") for n in (names or ("notation", "exports", "midi"))]
+
+
+def _spell(model, intervals) -> str:
+    """Upstream's export_result normalises key names and spells every chord by the local key at its midpoint
+    (SheetSage2 fixes of 2026-09-21 and -24); the raw decoded events this rebuild starts from are unspelled, so apply
+    the same step with upstream's own functions. Returns a note for the summary when it could not be applied."""
+    try:
+        (sp,) = _modules(model, "chord_spelling")
+        intervals["key"] = [[a, b, sp.normalize_key_name(k)] for a, b, k in intervals["key"]]
+        intervals["chord"] = sp.correct_chord_rows(intervals["chord"], intervals["key"])
+        return ""
+    except Exception as exc:                  # older pinned revision without the module, or an unparsable label
+        return f", chords left unspelled ({type(exc).__name__})"
 
 
 def _beat_rows(events) -> Tuple[List[list], int]:
@@ -157,6 +170,7 @@ def repair_abc(model, result: dict, melody_only: bool = False) -> Tuple[str, str
         intervals[field] = rows
     if not intervals["key"]:
         raise AbcRepairError("no key was decoded")
+    spelled = _spell(model, intervals)
     bad_chords = 0
     for row in intervals["chord"]:
         try:
@@ -186,5 +200,5 @@ def repair_abc(model, result: dict, melody_only: bool = False) -> Tuple[str, str
         )
     except ValueError as exc:
         raise AbcRepairError(f"rebuild still failed: {exc}") from exc
-    summary = f"beats repaired {changed + skipped}/{n_beats}, notes dropped {dropped}/{len(clean)}, intervals merged {merged}, chords blanked {bad_chords}"
+    summary = f"beats repaired {changed + skipped}/{n_beats}, notes dropped {dropped}/{len(clean)}, intervals merged {merged}, chords blanked {bad_chords}{spelled}"
     return text, summary

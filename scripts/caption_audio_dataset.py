@@ -25,6 +25,7 @@ import warnings
 
 import librosa
 import numpy as np
+import soundfile as sf
 import torch
 import torchaudio
 from tqdm import tqdm
@@ -52,9 +53,10 @@ def get_audio_files(input_dir):
 
 
 def load_audio_mono_16k(audio_path):
-    waveform, sr = torchaudio.load(audio_path)
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
+    # soundfile, not torchaudio.load: the torchcodec backend drops every other
+    # block of Microsoft ADPCM WAVs (half the samples -> 2x speed, no error)
+    data, sr = sf.read(audio_path, dtype="float32", always_2d=True)
+    waveform = torch.from_numpy(data.T.copy()).mean(dim=0, keepdim=True)
     if sr != TARGET_SAMPLE_RATE:
         waveform = torchaudio.functional.resample(waveform, sr, TARGET_SAMPLE_RATE)
     return waveform.squeeze(0).numpy(), TARGET_SAMPLE_RATE

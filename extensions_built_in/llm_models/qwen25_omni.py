@@ -50,7 +50,7 @@ DEFAULT_INSTRUCTION = "Describe this in detail."
 SAMPLE_RATE = 16000
 
 KIND_AUDIO, KIND_IMAGE, KIND_VIDEO = 0, 1, 2
-AUDIO_EXTS = (".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a")
+AUDIO_EXTS = (".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus")
 VIDEO_EXTS = (".mp4", ".avi", ".mov", ".webm", ".mkv", ".wmv", ".m4v", ".flv")
 
 
@@ -418,8 +418,9 @@ class Qwen25OmniLLM(BaseModel):
         kind = _media_kind(path)
         if kind == KIND_AUDIO:
             import torchaudio
+            from toolkit.audio.decode import load_audio
 
-            wav, sr = torchaudio.load(path)
+            wav, sr = load_audio(path)
             wav = wav.mean(0, keepdim=True)
             if sr != SAMPLE_RATE:
                 wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE)

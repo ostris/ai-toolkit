@@ -31,9 +31,16 @@ cache versions get a ``_sep`` suffix so existing caches are rebuilt.
 Prompt modes follow ComfyUI (``model_kwargs.cot``): "full" (default, Generate ABC path: the AR
 writes a chord-annotated ABC sheet, then the codec tokens), "melody" (sheet without chords) or
 "off" (no sheet; what Comfy runs when the ABC input is empty). For full/melody the training sheet
-comes from SheetSage2 at cache time and rides the latent cache as ``abc_ids``.
+comes from SheetSage2 at cache time and rides the latent cache as ``abc_ids``. SheetSage2's weights are
+``model_kwargs.sheetsage_path`` (downloaded like the checkpoint); its config.json + inference code are a
+local folder, ``model_kwargs.sheetsage_code`` (default ``<MODELS_PATH>/ai_toolkit/SheetSage2``), never fetched
+at run time. The same holds for the community heads' encoder, MERT-v2-FullSong: ``model_kwargs.mert_path``
+(default ``<MODELS_PATH>/ai_toolkit/MERT-v2-FullSong``, its config.json + model.safetensors), loaded only when
+the semantic head is a community one.
 """
 
+import json
+import math
 import os
 import random
 import re
@@ -57,7 +64,8 @@ from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscre
 
 from .src.model import ABC_END, CODEC_OFFSET, CONTEXT, FRAMES_PER_SECOND, INSTRUCTIONS, MUSIC_END, MUSIC_START, YuE2Model, merge_nar_lora
 from .src.pipeline import YuE2Pipeline
-from .src.tokenizer import HEAD_FILE, HEAD_REPO, NAR_LORA_FILE, SHEETSAGE_FILE, SemanticTokenizer, SheetSage2Transcriber, YuE2TextTokenizer
+from .src.tokenizer import (HEAD_FILE, HEAD_REPO, MERT_REPO, NAR_LORA_FILE, SHEETSAGE_FILE, SHEETSAGE_REPO, SHEETSAGE_REVISION,
+                            SemanticTokenizer, SheetSage2Transcriber, YuE2TextTokenizer, head_kind, head_metadata)
 from .src.vae import SAMPLE_RATE, YuE2VAE
 
 COT_CODES = {"off": 0, "melody": 1, "full": 2}
@@ -65,6 +73,118 @@ COT_NAMES = {v: k for k, v in COT_CODES.items()}
 
 # do_separation trains the AR on three (prompt, stem) pairs; prompt-mask segment ids follow this order (1, 2, 3)
 SEP_VARIANTS = ("full", "vocals", "music")
+
+# model_kwargs.level_fit: YuE2's loudness, as a tokenizer's input sees it (mono 24 kHz, gated RMS, dBFS; Yue2SemanticTokenizer's
+# engine.fit_level, kept identical). Tokenizers fine-tuned on YuE2's songs learned their level as content (2026-11-02: 4 dB of gain
+# changed about half their ids; fripSide's LEVEL5 -judgelight-, 7 dB louder than any YuE2 song, lost its words until it was brought
+# down), and YuE2 makes its own covers of real songs at LEVEL_TARGET +-1.2 dB whatever the original master's level (35 songs mastered
+# at -28.7 .. -9.5): "band" (true; the default since 2026-11-11) moves only a song outside LEVEL_BAND (YuE2's own songs' 5-95 %), to
+# its nearest edge (since 2026-11-10: a -25 song to -21, a -9.5 master to -13; before, to LEVEL_TARGET); "all" (the default and true
+# from 11-02 to 11-11) moves every song to LEVEL_TARGET; false leaves every song as recorded. Band since 11-11 (moving every song lost
+# the singer's voice identity): a song already in YuE2's range keeps its own level.
+# The band comes from the tokenizer file (2026-11-12): Yue2SemanticTokenizer writes the band its tools read real songs at into every
+# head it saves and every file it deploys (metadata head.level_band, e.g. "[-19.0, -13.0]"), so this file keeps no copy that can drift.
+# LEVEL_BAND is the band of a file that names none: every file written before 2026-11-12 (and the community heads) was made and judged
+# at it.
+LEVEL_BAND, LEVEL_TARGET = (-21.0, -13.0), -16.5
+LEVEL_FIT_DEFAULT = "band"
+LEVEL_FIT_MODES = {False: None, None: None, "off": None, True: LEVEL_FIT_DEFAULT, "all": "all", "band": "band"}
+
+
+def level_fit_tag(mode: str, band=LEVEL_BAND) -> str:
+    """the cache-key tag of a level_fit mode: 'all', 'bandedge' for the band of a file that names none (the key of every band cache made
+    before 2026-11-12; "band" caches made before 11-10 moved outliers to the target), 'band<-lo>_<-hi>' for any other ('band19_13')"""
+    if mode == "all":
+        return "all"
+    return "bandedge" if tuple(band) == LEVEL_BAND else f"band{-band[0]:g}_{-band[1]:g}"
+
+
+def level_band_of(head_path: str) -> tuple:
+    """The band "band" mode fits a real song into before this tokenizer reads it: the file's head.level_band, or LEVEL_BAND when it names
+    none (a file written before 2026-11-12, a community head, a file not on disk yet: never downloaded for this). A malformed band raises."""
+    meta = head_metadata(head_path) if head_path.endswith(".safetensors") and os.path.isfile(head_path) else {}
+    raw = meta.get("head.level_band")
+    if raw is None:
+        return LEVEL_BAND
+    try:
+        band = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{head_path}: head.level_band {raw!r} is not JSON") from e
+    if not (isinstance(band, list) and len(band) == 2 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in band)
+            and all(math.isfinite(x) for x in band) and band[0] < band[1] <= 0):
+        raise ValueError(f"{head_path}: head.level_band {raw!r} must be [low, high] dBFS, finite, low < high <= 0")
+    return float(band[0]), float(band[1])
+
+
+def level_fit_mode(value) -> Optional[str]:
+    """model_kwargs.level_fit -> None | "all" | "band"; any other value raises (a typo must not silently turn the fit off)."""
+    if value not in LEVEL_FIT_MODES:
+        raise ValueError(f"model_kwargs.level_fit must be one of 'band' / true (the default), 'all', false; got {value!r}")
+    return LEVEL_FIT_MODES[value]
+
+
+# model_kwargs.phase_tta (2026-11-03): the semantic tokenizer's ids hang on where its 40-ms frame grid falls in a file (2 ms of shift
+# changed ~20 % of them; two downloads of one song, 6 ms apart on the grid, read different words), and a real song has no right phase.
+# true reads every song at PHASE_TTA's sub-frame shifts (ms) and averages the head's softmax before the argmax
+# (SemanticTokenizer.tokens_averaged; Yue2SemanticTokenizer's engine.tokenize, kept identical; one encoder pass per shift); false (the
+# default) = one reading; a list = those shifts (ms, each within half a frame). The cache key carries it (_tta5), so the two never mix.
+# Measured 2026-11-04 (WitchsNight, renders scored by Whisper): an m4a without an edit list delays a song 21.33 ms, and that reading of an
+# otherwise fine file garbled at one seed; averaging rescued it, and over 20 paired renders it removed most of the badly garbled ones.
+# Default false since 2026-11-10 (by ear): averaged readings lose the singer's timbre, the renders stop sounding like the speaker.
+PHASE_TTA = (-10, -5, 0, 5, 10)
+
+
+def phase_tta_shifts(value) -> tuple:
+    """model_kwargs.phase_tta -> the sub-frame shifts (ms) the tokenizer averages over: true = PHASE_TTA, false / 'off' = (0,) (one
+    reading, the default), a non-empty list of ms within +-20 as given; anything else raises (a typo must not silently change the readings)."""
+    if value is True or value == "on":
+        return PHASE_TTA
+    if value is False or value is None or value == "off":
+        return (0,)
+    if isinstance(value, (list, tuple)) and value and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) and abs(float(v)) <= 20 for v in value):
+        return tuple(value)
+    raise ValueError(f"model_kwargs.phase_tta must be true ({list(PHASE_TTA)} ms), false (the default), or a list of ms within +-20; got {value!r}")
+
+
+def phase_tta_tag(shifts) -> str:
+    """the cache-key suffix of a phase-averaged reading ('' for one reading)"""
+    shifts = tuple(shifts)
+    if shifts == (0,):
+        return ""
+    return f"_tta{len(shifts)}" if shifts == PHASE_TTA else "_tta" + "_".join(f"{s:g}" for s in shifts)
+
+
+def apply_level_fit(wav: torch.Tensor, mode: Optional[str], band=LEVEL_BAND) -> torch.Tensor:
+    """fit_level for a level_fit mode (level_fit_mode): "all" = the whole song to LEVEL_TARGET, "band" = only a song outside ``band``
+    (the tokenizer file's: level_band_of), to its nearest edge, None = as it is. Every place a real song is read for its tokens goes
+    through here: the latent cache, [Reconstruct] samples, diagnostics."""
+    return fit_level(wav, band if mode == "band" else None) if mode else wav
+
+
+def fit_level(wav: torch.Tensor, band=None) -> torch.Tensor:
+    """[2, samples] at 48 kHz -> the same moved by its tokenizer-input level: ``band`` None = to LEVEL_TARGET, every song more than 0.5 dB
+    from it; ``band`` = a song outside it to the nearest edge (more than 0.5 dB away), one inside left alone. A song brought up whose peaks
+    then pass 0.98 is peak-limited (the gain each sample needs, held over +-10 ms and smoothed, never above any sample's need), so a quiet
+    master raised 10 dB does not reach the VAE at +6.6 dBFS. Silence and songs left alone are returned as they are."""
+    import torch.nn.functional as F
+    import torchaudio
+
+    mono = torchaudio.functional.resample(wav.float().mean(0), SAMPLE_RATE, 24000)
+    frames = mono[: len(mono) // 960 * 960].view(-1, 960).pow(2).mean(1).sqrt()      # 40-ms frames
+    if not len(frames) or float(frames.max()) <= 0:
+        return wav
+    level = 20 * float(torch.log10(frames[frames > frames.max() * 0.01].pow(2).mean().sqrt()))   # frames within 40 dB of the loudest
+    goal = LEVEL_TARGET if band is None else min(max(level, band[0]), band[1])
+    if abs(goal - level) < 0.5:
+        return wav
+    x = wav * 10 ** ((goal - level) / 20)
+    if float(x.abs().max()) > 0.98:
+        w = SAMPLE_RATE // 100                                                         # 10 ms
+        need = (0.98 / x.abs().amax(0).float().clamp_min(1e-9)).clamp(max=1.0)[None, None]
+        need = -F.max_pool1d(-need, 2 * w + 1, 1, w)
+        x = x * F.avg_pool1d(need, 2 * w + 1, 1, w, count_include_pad=False)[0, 0].to(x.dtype)
+    return x
 
 
 def _variant_prompt(parsed: dict, variant: str):
@@ -94,6 +214,39 @@ def resolve_ai_toolkit_file(path: str, component: str) -> str:
     import huggingface_hub
 
     return huggingface_hub.hf_hub_download(repo_id="/".join(splits[:2]), filename="/".join(splits[2:]), local_dir=local_dir)
+
+
+# The folders that are LOCAL by rule, per model_kwargs key: (default = the repo they hold, the files they must have, what goes in them).
+# Unlike the weight files they are never downloaded and never read from the HF cache: a copy someone put there, so a cleaned ~/.cache
+# cannot take a job offline (2026-11-11: SheetSage2's code was remote code pulled through that cache, and transcription died with it;
+# MERT for the community heads came the same way until 11-12).
+LOCAL_FOLDERS = {
+    "sheetsage_code": (SHEETSAGE_REPO, ("config.json",),
+                       f"the config.json and *.py files of {SHEETSAGE_REPO} at revision {SHEETSAGE_REVISION} (no weights)"),
+    "mert_path": (MERT_REPO, ("config.json", "model.safetensors"), f"the config.json and model.safetensors of {MERT_REPO}"),
+}
+
+
+def resolve_local_folder(key: str, path: Optional[str] = None) -> str:
+    """model_kwargs.<key> (LOCAL_FOLDERS) as a local folder: ``path`` (None = the key's default) when it is one, else
+    <MODELS_PATH>/ai_toolkit/<its last part> ('m-a-p/SheetSage2' -> .../ai_toolkit/SheetSage2). Missing: the error says what goes where."""
+    default, needs, contents = LOCAL_FOLDERS[key]
+    path = path or default
+    folders = (path, os.path.join(MODELS_PATH, AI_TOOLKIT_DIR, os.path.basename(path.rstrip("/"))))
+    for folder in folders:
+        if all(os.path.isfile(os.path.join(folder, f)) for f in needs):
+            return folder
+    raise FileNotFoundError(f"model_kwargs.{key}: no local folder with {' + '.join(needs)} (tried {' and '.join(map(repr, folders))}): put "
+                            f"{contents} in the second, or point model_kwargs.{key} at a folder that holds them")
+
+
+def load_semantic_tokenizer(head_path: str, mert_path: Optional[str] = None, **kw) -> SemanticTokenizer:
+    """The tokenizer of a semantic head (a local file, a file in <MODELS_PATH>/ai_toolkit/ or 'org/repo/file'). A community
+    (transformer) head reads stock MERT-v2-FullSong from its local folder (resolve_local_folder 'mert_path'); a cvq file brings
+    its own encoder, so it loads on a machine with no MERT folder at all."""
+    head_path = resolve_ai_toolkit_file(head_path, component="yue2 semantic head")
+    mert_dir = resolve_local_folder("mert_path", mert_path) if head_kind(head_path) == "transformer" else None
+    return SemanticTokenizer(head_path, mert_dir=mert_dir, **kw)
 
 scheduler_config = {
     "num_train_timesteps": 1000,
@@ -219,9 +372,23 @@ class YuE2AudioModel(BaseAudioModel):
         # fraction of training items fed without the sheet (off-mode prefix), so one LoRA serves both Comfy paths
         self.abc_dropout = float(kw.get("abc_dropout", 0.5))
         self.sheetsage_path = kw.get("sheetsage_path", SHEETSAGE_FILE)
+        # the two local-only folders (resolve_local_folder; unset = <MODELS_PATH>/ai_toolkit/SheetSage2 and .../MERT-v2-FullSong):
+        # sheetsage_code = SheetSage2's config.json + inference code; mert_path = the community semantic heads' encoder (config.json +
+        # model.safetensors), which a cvq semantic_head_path never loads
+        self.sheetsage_code = kw.get("sheetsage_code")
+        self.mert_path = kw.get("mert_path")
         self.transcriber: Optional[SheetSage2Transcriber] = None
         # do_separation: MelBandRoformer stems at cache time; the AR loss covers mix + vocals + instrumental every step
         self.do_separation = bool(kw.get("do_separation", False))
+        # level_fit: only songs outside YuE2's band moved to its edge ("band" / true, the default since 2026-11-11) or every song moved to
+        # YuE2's level ("all", the default from 11-02 to 11-11) before its latents AND its codec tokens are cached, and before a
+        # [Reconstruct] sample's song is tokenized (apply_level_fit); false = as recorded. The band is the tokenizer file's (level_band).
+        # The cache key carries the mode and band (_lvlall / _lvlbandedge / _lvlband19_13), so a cache made under another rebuilds once
+        self.level_fit = level_fit_mode(kw.get("level_fit", LEVEL_FIT_DEFAULT))
+        self._level_band = None
+        # phase_tta: the tokenizer averages its readings of each song over sub-frame shifts (true: PHASE_TTA) or reads it once (false, the
+        # default); every tokenizing path shares the one SemanticTokenizer, so the cache, stems, and [Reconstruct] samples read alike
+        self.phase_tta = phase_tta_shifts(kw.get("phase_tta", False))
         # stem term weights in the AR loss (the mix term is 1); the vocal stem alone pulls samples toward lyrics-only output
         self.separation_weights = {
             "vocals": float(kw.get("separation_vocals_weight", 0.5)),
@@ -287,16 +454,28 @@ class YuE2AudioModel(BaseAudioModel):
 
     def _get_semantic_tokenizer(self) -> SemanticTokenizer:
         if self.semantic_tokenizer is None:
-            head_path = resolve_ai_toolkit_file(self.semantic_head_path, component="yue2 semantic head")
             # log only: this can run mid-training and a status update would replace "Training" in the UI
-            print_acc("Loading YuE2 semantic tokenizer (MERT-v2-FullSong + head)")
-            self.semantic_tokenizer = SemanticTokenizer(head_path, debug=self.debug)
+            print_acc("Loading YuE2 semantic tokenizer (encoder + head)")
+            self.semantic_tokenizer = load_semantic_tokenizer(self.semantic_head_path, self.mert_path, debug=self.debug, phase_tta=self.phase_tta)
         return self.semantic_tokenizer
+
+    def level_band(self) -> tuple:
+        """the band "band" mode fits real songs into: the semantic head file's (level_band_of; a bare file name = the one in
+        <MODELS_PATH>/ai_toolkit/, as the head loads), read once and said once"""
+        if self._level_band is None:
+            p = str(self.semantic_head_path)
+            self._level_band = level_band_of(p if os.path.isfile(p) else os.path.join(MODELS_PATH, AI_TOOLKIT_DIR, os.path.basename(p)))
+            if self.level_fit == "band":
+                print_acc(f"YuE2: real songs outside {self._level_band} dBFS move to its nearest edge before they are cached / tokenized "
+                          + ("(the band the tokenizer file names)" if self._level_band != LEVEL_BAND else
+                             "(the tokenizer file names no band: the one every file before 2026-11-12 was made at)"))
+        return self._level_band
 
     def _get_transcriber(self) -> SheetSage2Transcriber:
         if self.transcriber is None:
             print_acc("Loading SheetSage2 (audio -> ABC)")
-            self.transcriber = SheetSage2Transcriber(resolve_named_file(self.sheetsage_path, component="sheetsage2"))
+            self.transcriber = SheetSage2Transcriber(resolve_named_file(self.sheetsage_path, component="sheetsage2"),
+                                                     resolve_local_folder("sheetsage_code", self.sheetsage_code))
         return self.transcriber
 
     def _get_separator(self):
@@ -312,6 +491,9 @@ class YuE2AudioModel(BaseAudioModel):
         if self.semantic_head_path != f"{HEAD_REPO}/{HEAD_FILE}":
             head_name = os.path.splitext(os.path.basename(self.semantic_head_path))[0]
             version = f"{version}_{re.sub(r'[^A-Za-z0-9]+', '-', head_name)}"
+        if self.level_fit:                     # latents and tokens of level-fitted songs differ from the plain cache's
+            version = f"{version}_lvl{level_fit_tag(self.level_fit, self.level_band())}"
+        version += phase_tta_tag(self.phase_tta)    # averaged readings differ from one reading's tokens
         # stem tokens/sheets only ride the latent cache in separation mode
         return f"{version}_sep" if self.do_separation else version
 
@@ -374,10 +556,13 @@ class YuE2AudioModel(BaseAudioModel):
     def encode_audio(self, audio_tensor: torch.Tensor, device=None, dtype=None):
         """[B, 2, samples] at 48 kHz -> DTO [B, T, 64] with codec ``tokens`` [B, T] and, unless cot is
         "off", the SheetSage2 sheet as ``abc_ids`` [B, N] (text ids, -1 padded). With do_separation the
-        MelBandRoformer stems add ``tokens_vocals`` / ``tokens_music`` and their ``abc_ids_*`` sheets."""
+        MelBandRoformer stems add ``tokens_vocals`` / ``tokens_music`` and their ``abc_ids_*`` sheets.
+        With level_fit every song is first moved to YuE2's loudness (fit_level), for all of these alike."""
         if device is None:
             device = self.vae_device_torch
         self._last_encode_call = self._train_calls
+        if self.level_fit:
+            audio_tensor = torch.stack([apply_level_fit(wav, self.level_fit, self.level_band()) for wav in audio_tensor])
         if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
         latents = self.vae.encode(audio_tensor.to(device=device, dtype=self.vae.dtype))  # [B, 64, T]
