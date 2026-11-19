@@ -592,6 +592,11 @@ class ToolkitNetworkMixin:
 
         for key in list(state_dict.keys()):
             v = state_dict[key]
+            from torch.distributed._tensor import DTensor
+            if isinstance(v, DTensor):
+                # FSDP2 sharded param: all-gather to the full tensor.
+                # Collective - every rank must run get_state_dict (see save()).
+                v = v.full_tensor()
             v = v.detach().clone().to("cpu").to(dtype)
             save_key = save_keymap[key] if key in save_keymap else key
             save_dict[save_key] = v
