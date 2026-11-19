@@ -30,7 +30,7 @@ VIDEO_FPS = 2
 # still-image files caption through the image pipeline (no audio, no frames)
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "webp"}
 # audio-only files caption through the audio pipeline (no frames)
-AUDIO_EXTENSIONS = {"mp3", "wav", "flac", "ogg", "m4a", "aac"}
+AUDIO_EXTENSIONS = {"mp3", "wav", "flac", "ogg", "m4a", "aac", "opus"}
 
 # fixed generation ceiling under compiled decode: a constant max_length keeps
 # the static kv cache (and so the compiled decode graph) at one shape for

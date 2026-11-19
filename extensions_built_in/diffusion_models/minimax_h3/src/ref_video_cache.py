@@ -255,9 +255,9 @@ def load_ref_video_latent(
 
         if not video_has_audio(path):
             raise RuntimeError("no audio stream")
-        import torchaudio
+        from toolkit.audio.decode import load_audio
 
-        waveform, sample_rate = torchaudio.load(path)
+        waveform, sample_rate = load_audio(path)
         if trim_tail:
             # frames cover [0, num_frames / fps) seconds; trim the soundtrack
             # to the same window so it stays in sync with the sampled frames

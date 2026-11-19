@@ -3,7 +3,9 @@
 Follows the released protocol: semantic sampling with temperature 1.0,
 top-p 0.95, top-k 100, repetition penalty 1.2 over the last 50 tokens, at
 least 200 tokens before MUSIC_END; acoustic synthesis with a midpoint ODE
-solver from t=1 (noise) to t=0, one AR prefill per context chunk.
+solver from t=1 (noise) to t=0, one AR prefill per context chunk. Semantic
+CFG (a scale != 1 with a negative prefix) decodes a second AR stream in
+lockstep; the ABC phase and the NAR never use it.
 """
 
 from typing import Callable, List, Optional, Tuple
@@ -164,6 +166,32 @@ class YuE2Pipeline:
         self.do_tiled_decoding = True
         self.use_cuda_graphs = True
 
+    def _open_decoder(self, prefix_embeds: torch.Tensor, capacity: int):
+        """Prefill one AR stream: (logits after the prefix, advance(token) -> the next logits), on the captured
+        CUDA graph when it captures, else on the eager KVCache path."""
+        ar = self.model.ar
+        device = prefix_embeds.device
+        if self.use_cuda_graphs and device.type == "cuda":
+            try:
+                graph = ARDecodeGraph(ar, capacity, device, ar.dtype)
+                prefill_cache, hidden = ar.prefill(prefix_embeds.to(ar.dtype), return_hidden=True)
+                logits = ar.model.lm_head(hidden[:, -1])[0]
+                graph.load_prefill(prefill_cache, prefix_embeds.shape[1])
+                del prefill_cache, hidden
+                graph.capture()
+                return logits, graph.step
+            except Exception as e:  # capture unsupported for these ops/kernels: eager path
+                print(f"YuE2: CUDA graph decode unavailable ({type(e).__name__}: {e}); using eager decode")
+                graph = None
+                torch.cuda.empty_cache()
+        cache = KVCache(self.model.cfg, 1, capacity, device, ar.dtype)
+        logits = ar.prefill_into_cache(prefix_embeds.to(ar.dtype), cache)[0]
+
+        def advance(token: int):
+            return ar.decode_step(ar.embed(torch.tensor([[token]], device=device)), cache)[0]
+
+        return logits, advance
+
     @torch.no_grad()
     def generate_tokens(
         self,
@@ -179,38 +207,30 @@ class YuE2Pipeline:
         min_tokens: int,
         progress: Optional[Callable[[int, int], None]] = None,
         legacy_off: bool = False,
+        negative_embeds: Optional[torch.Tensor] = None,  # [1, L', H]
+        cfg_scale: float = 1.0,
     ) -> List[int]:
-        """Sample AR tokens after ``prefix_embeds`` until the phase's end token (raw vocab ids)."""
-        ar = self.model.ar
-        device = prefix_embeds.device
-        prefix_len = prefix_embeds.shape[1]
-        if prefix_len + max_tokens > CONTEXT:
+        """Sample AR tokens after ``prefix_embeds`` until the phase's end token (raw vocab ids). With ``cfg_scale``
+        != 1 a second stream decodes ``negative_embeds`` in lockstep and each step samples from
+        ``negative + cfg_scale * (positive - negative)``, combined in the logits' own dtype before the sampler's
+        upcast, as the reference package does."""
+        guided = cfg_scale != 1.0
+        if guided and negative_embeds is None:
+            raise ValueError("YuE2 CFG needs a negative prefix")
+        streams = [prefix_embeds, negative_embeds] if guided else [prefix_embeds]
+        if any(s.shape[1] + max_tokens > CONTEXT for s in streams):
             raise ValueError("YuE2 prompt plus token budget exceeds the model context")
         # reference sampler: seeded generator on the compute device, multinomial over the filtered softmax
-        generator = torch.Generator(device=device).manual_seed(seed)
-        capacity = prefix_len + max_tokens
-        graph = None
-        if self.use_cuda_graphs and device.type == "cuda":
-            try:
-                graph = ARDecodeGraph(ar, capacity, device, ar.dtype)
-                prefill_cache, hidden = ar.prefill(prefix_embeds.to(ar.dtype), return_hidden=True)
-                logits = ar.model.lm_head(hidden[:, -1])[0]
-                graph.load_prefill(prefill_cache, prefix_len)
-                del prefill_cache, hidden
-                graph.capture()
-            except Exception as e:  # capture unsupported for these ops/kernels: eager path
-                print(f"YuE2: CUDA graph decode unavailable ({type(e).__name__}: {e}); using eager decode")
-                graph = None
-                torch.cuda.empty_cache()
-        if graph is None:
-            cache = KVCache(self.model.cfg, 1, capacity, device, ar.dtype)
-            logits = ar.prefill_into_cache(prefix_embeds.to(ar.dtype), cache)[0]
+        generator = torch.Generator(device=prefix_embeds.device).manual_seed(seed)
+        decoders = [self._open_decoder(s, s.shape[1] + max_tokens) for s in streams]
+        logits = [first for first, _ in decoders]
         history: List[int] = []
         min_tokens = min(min_tokens, max_tokens)
         end = ABC_END if phase == "abc" else MUSIC_END
         for step in range(max_tokens):
+            scores = logits[1] + cfg_scale * (logits[0] - logits[1]) if guided else logits[0]
             token = sample_logits(
-                logits, history, step, temperature, top_p, top_k, repetition_penalty, penalty_window, min_tokens, generator,
+                scores, history, step, temperature, top_p, top_k, repetition_penalty, penalty_window, min_tokens, generator,
                 phase=phase, legacy_off=legacy_off,
             )
             if token == end:
@@ -219,14 +239,7 @@ class YuE2Pipeline:
             if progress is not None:
                 progress(step + 1, max_tokens)
             if step + 1 < max_tokens:
-                if graph is not None:
-                    logits = graph.step(token)
-                else:
-                    emb = ar.embed(torch.tensor([[token]], device=device))
-                    logits = ar.decode_step(emb, cache)[0]
-        if graph is None:
-            del cache
-        del graph
+                logits = [advance(token) for _, advance in decoders]
         return history
 
     def generate_codec_tokens(
@@ -242,11 +255,14 @@ class YuE2Pipeline:
         min_tokens: int = 200,
         progress: Optional[Callable[[int, int], None]] = None,
         legacy_off: bool = False,
+        negative_embeds: Optional[torch.Tensor] = None,
+        cfg_scale: float = 1.0,
     ) -> List[int]:
-        """Music phase (ComfyUI defaults). Returns codec ids without the vocab offset."""
+        """Music phase (ComfyUI defaults). Returns codec ids without the vocab offset. ``negative_embeds`` and
+        ``cfg_scale`` turn on semantic CFG (see ``generate_tokens``)."""
         ids = self.generate_tokens(
             prefix_embeds, "semantic", max_tokens, seed, temperature, top_p, top_k, repetition_penalty, penalty_window,
-            min_tokens, progress, legacy_off=legacy_off,
+            min_tokens, progress, legacy_off=legacy_off, negative_embeds=negative_embeds, cfg_scale=cfg_scale,
         )
         return [t - CODEC_OFFSET for t in ids]
 

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
-audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
+audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.opus']
 
 
 class RescaleTransform:
@@ -625,6 +625,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             else:
                 print_acc(f"  -  Found {len(source_items)} images after adding flips")
 
+        from toolkit.dataset_pairing import check_dataset_pairing  # fail fast on unpaired files (opt-in)
+        check_dataset_pairing(self, dataset_config, dataset_path, source_items)
         self.file_list.extend(source_items)
 
     def setup_epoch(self):

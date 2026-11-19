@@ -32,7 +32,7 @@ VIDEO_FPS = 2
 # still-image files caption through the image pipeline (no audio, no frames)
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "webp"}
 # audio-only files caption through the audio pipeline (no frames)
-AUDIO_EXTENSIONS = {"mp3", "wav", "flac", "ogg", "m4a", "aac"}
+AUDIO_EXTENSIONS = {"mp3", "wav", "flac", "ogg", "m4a", "aac", "opus"}
 
 TARGET_SAMPLE_RATE = 16000
 
@@ -184,8 +184,9 @@ class Qwen25OmniCaptioner(BaseCaptioner):
     @staticmethod
     def _load_audio(file_path: str):
         import torchaudio
+        from toolkit.audio.decode import load_audio
 
-        waveform, sr = torchaudio.load(file_path)
+        waveform, sr = load_audio(file_path)
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         if sr != TARGET_SAMPLE_RATE:

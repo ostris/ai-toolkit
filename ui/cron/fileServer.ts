@@ -112,7 +112,7 @@ const IMAGE_THUMB_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bm
 const VIDEO_THUMB_EXTS = new Set(['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv']);
 // audio thumbs: the embedded cover (the sampler's waveform art) when the file
 // has one, else a waveform rendered by ffmpeg in the same amber-on-dark look
-const AUDIO_THUMB_EXTS = new Set(['.mp3', '.wav', '.flac', '.ogg']);
+const AUDIO_THUMB_EXTS = new Set(['.mp3', '.wav', '.flac', '.ogg', '.aac', '.opus']);
 
 // sharp is not a direct dependency; Next.js vendors it (for next/image), so
 // resolve it out of next's node_modules tree. If that ever fails, image
@@ -276,6 +276,8 @@ const contentTypeMap: { [key: string]: string } = {
   '.wav': 'audio/wav',
   '.flac': 'audio/flac',
   '.ogg': 'audio/ogg',
+  '.aac': 'audio/aac',
+  '.opus': 'audio/ogg',
 };
 
 // Returns false only for /api/audio/art/ when no thumb exists and none can be
