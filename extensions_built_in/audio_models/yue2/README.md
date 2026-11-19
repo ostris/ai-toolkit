@@ -71,7 +71,9 @@ picked by `model_kwargs.sheet_transcriber`:
   bars and odd meters much more reliably than the original. Its code (MIT, 0.5.2) is vendored in
   [sheetsage2_refined/](sheetsage2_refined/). Its event stream goes through SheetSage2's own exporter, so the
   sheets stay in the ABC dialect the AR was trained on. Refined writes the vocal line in the octave actually sung,
-  one below SheetSage2's and YuE2's own sheets, so the line is moved up an octave.
+  one below SheetSage2's and YuE2's own sheets, so the line is moved up an octave. Its chords come from 62
+  qualities; each is written as the nearest chord SheetSage2 has (`maj7(9)` as `maj7`), and a bar that holds more
+  beats than its declared meter gets a meter that fits it.
 
 Refined's weights (CC BY-NC 4.0) live in a model folder, `model_kwargs.refined_path`. Unset, it is
 `<MODELS_PATH>/ai_toolkit/SheetSage2-Refined`, and the files transcription needs (`config.json`, the decoder,
