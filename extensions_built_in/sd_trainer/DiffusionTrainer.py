@@ -10,6 +10,7 @@ import time
 import signal
 from toolkit.basic import flush
 from toolkit.print import print_acc
+from toolkit.ui_job_status import connect_ui_db
 
 AITK_Status = Literal["running", "stopped", "error", "completed"]
 
@@ -110,10 +111,8 @@ class DiffusionTrainer(SDTrainer):
         )
 
     def _db_connect(self):
-        """Create a new connection for each operation to avoid locking."""
-        conn = sqlite3.connect(self.sqlite_db_path, timeout=30.0)
-        conn.isolation_level = None  # Enable autocommit mode
-        return conn
+        """Create a new connection for each operation to avoid locking (closed when its ``with`` block ends)."""
+        return connect_ui_db(self.sqlite_db_path)
 
     def _retry_db_operation(self, operation_func, max_retries=3, base_delay=2.0):
         """Retry a database operation with exponential backoff on lock errors."""
