@@ -1,4 +1,5 @@
 import os
+import math
 import time
 from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
@@ -660,6 +661,10 @@ class ModelConfig:
         self.lora_path = kwargs.get('lora_path', None)
         # mainly for decompression loras for distilled models
         self.assistant_lora_path = kwargs.get('assistant_lora_path', None)
+        # MOSS training-only adapter: samples apply the inverse strength.
+        self.assistant_lora_strength = float(kwargs.get('assistant_lora_strength', 1.0))
+        if not math.isfinite(self.assistant_lora_strength):
+            raise ValueError('assistant_lora_strength must be finite')
         self.inference_lora_path = kwargs.get('inference_lora_path', None)
         # a lora that stays inactive except during the unconditional (negative)
         # CFG pass -- used to learn the unconditional branch without a second model
@@ -776,6 +781,9 @@ class ModelConfig:
         if self.arch is not None:
             if ':' in self.arch:
                 self.arch = self.arch.split(':')[0]
+
+        if self.assistant_lora_strength != 1.0 and self.arch != 'moss_image':
+            raise ValueError('assistant_lora_strength is currently supported only for MOSS-Image')
         
         if self.arch == "flex1":
             self.arch = "flux"

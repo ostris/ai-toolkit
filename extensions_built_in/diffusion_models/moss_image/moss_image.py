@@ -14,8 +14,11 @@
 ``org/repo/file``) also load. Comfy files on disk take precedence for the
 vendor ids; see ``src/checkpoints.py`` for sourcing. The text encoder is
 stock Qwen3.5-9B from a comfy file.
+ComfyUI-saved checkpoint wrappers (``model.diffusion_model.*``), component prefixes
+(``diffusion_model.*`` / ``transformer.*``) and bare DiT keys are accepted.
 
 Flow convention matches ai-toolkit (sigma 1 = noise, target = noise - clean).
+See TRAINING_ADAPTERS.md for signed training-only LoRA adapters.
 """
 
 import math
@@ -328,7 +331,17 @@ class MossImageModel(BaseModel):
     def load_model(self):
         self.print_and_status_update("Loading MOSS-Image model")
 
+        if self.model_config.assistant_lora_path is not None and (
+            self.model_config.lora_path is not None
+            or self.model_config.inference_lora_path is not None
+        ):
+            raise ValueError("MOSS assistant_lora_path cannot be combined with lora_path or inference_lora_path")
+
         transformer = self._load_transformer()
+        if self.model_config.assistant_lora_path is not None:
+            from .src.assistant_lora import load_training_adapter
+
+            load_training_adapter(self, transformer)
         # quantize + offload + placement, all driven by model_config
         transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
         flush()
@@ -353,6 +366,22 @@ class MossImageModel(BaseModel):
     # ------------------------------------------------------------------
     # Generation (training previews)
     # ------------------------------------------------------------------
+    def generate_images(self, *args, **kwargs):
+        assistant = self.assistant_lora
+        if assistant is None or not self.invert_assistant_lora:
+            return super().generate_images(*args, **kwargs)
+
+        # The base sampler toggles the inverse adapter. Its multiplier tensor
+        # is not a registered buffer, so synchronize it after moving from CPU.
+        assistant.force_to(self.device_torch, self.torch_dtype)
+        assistant._update_torch_multiplier()
+        try:
+            return super().generate_images(*args, **kwargs)
+        finally:
+            # Also restore the training-only state when a preview fails.
+            assistant.is_active = False
+            assistant.force_to("cpu", self.torch_dtype)
+
     def get_generation_pipeline(self):
         return MossImagePipeline(self)
 

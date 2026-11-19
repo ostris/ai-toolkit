@@ -211,6 +211,17 @@ class MossImageTransformer(nn.Module, OstrisModelMixin):
 
     @classmethod
     def convert_state_dict_on_load(cls, state_dict):
+        # ComfyUI-saved checkpoints wrap the DiT under model.diffusion_model;
+        # component files may instead use diffusion_model or transformer.
+        # Select the component before config sniffing, QKV fusion and quantized
+        # import so weights and their scale/marker sidecars stay together.
+        for prefix in ("model.diffusion_model.", "diffusion_model.", "transformer."):
+            if prefix + "video_embedder.weight" in state_dict:
+                state_dict = {
+                    k[len(prefix):]: v for k, v in state_dict.items()
+                    if k.startswith(prefix)
+                }
+                break
         # derived constants; recomputed in fp32 every forward
         state_dict = {k: v for k, v in state_dict.items() if k != "rope.bands"}
         fuse_split_qkv(state_dict)
