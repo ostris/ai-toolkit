@@ -1265,7 +1265,14 @@ class ControlFileItemDTOMixin:
             except Exception as e:
                 print_acc(f"Error: {e}")
                 print_acc(f"Error loading image: {control_path}")
-            
+
+            if self.flip_x:
+                # do a flip
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            if self.flip_y:
+                # do a flip
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
             if not self.full_size_control_images:
                 # we just scale them to 512x512:
                 w, h = img.size
@@ -1273,12 +1280,6 @@ class ControlFileItemDTOMixin:
 
             elif not self.use_raw_control_images:
                 w, h = img.size
-                if self.flip_x:
-                    # do a flip
-                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if self.flip_y:
-                    # do a flip
-                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
                 if self.dataset_config.buckets:
                     # scale and crop based on file item
@@ -2300,6 +2301,10 @@ class TextEmbeddingFileItemDTOMixin:
         if dopsd_self_ref:
             # teacher embeds carry the item's own media as the vision reference
             item["dopsd_self_ref"] = True
+            if self.flip_x:
+                item["flip_x"] = True
+            if self.flip_y:
+                item["flip_y"] = True
             return item
         # dropout embeds are encoded as plain text, keep control conditioning
         # out of their cache key
@@ -2310,6 +2315,10 @@ class TextEmbeddingFileItemDTOMixin:
             item["control_path"] = self.control_path
             if getattr(self, 'text_embedding_uses_target_size', False) and getattr(self, 'crop_width', None):
                 item["control_target_size"] = [self.crop_width, self.crop_height]
+            if self.flip_x:
+                item["flip_x"] = True
+            if self.flip_y:
+                item["flip_y"] = True
         if self.encode_control_in_text_embeddings and getattr(self, 'control_video_paths', None):
             item["control_videos"] = sorted(self.control_video_paths)
             # v2: reference-video vision blocks are no longer resampled by the
@@ -2317,6 +2326,10 @@ class TextEmbeddingFileItemDTOMixin:
             # misaligned with their presentation. Only items WITH control
             # videos carry this key, so no other cache is touched.
             item["control_videos_version"] = 2
+            if self.flip_x:
+                item["flip_x"] = True
+            if self.flip_y:
+                item["flip_y"] = True
         # first-frame vision conditioning changes the embedding content -> new cache key
         elif (
             getattr(self, "encode_first_frame_in_text_embeddings", False)
@@ -2574,6 +2587,10 @@ class TextEmbeddingCachingMixin:
                             try:
                                 img = Image.open(control_path_list[i]).convert("RGB")
                                 img = exif_transpose(img)
+                                if file_item.flip_x:
+                                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                                if file_item.flip_y:
+                                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
                                 # convert to 0 to 1 tensor
                                 img = (
                                     TF.to_tensor(img)
@@ -2592,6 +2609,7 @@ class TextEmbeddingCachingMixin:
                         ctrl_img_list.extend(control_video_paths)
                         if len(control_video_paths) > 0:
                             self.sd._ref_video_dataset_config = item_config
+                            self.sd._ref_video_flip = (file_item.flip_x, file_item.flip_y)
                         
                         if len(ctrl_img_list) == 0:
                             ctrl_img = None
@@ -2682,6 +2700,7 @@ class TextEmbeddingCachingMixin:
                             # own path rides through the video-ref presentation
                             ctrl_img = [file_item.path]
                             self.sd._ref_video_dataset_config = item_config
+                            self.sd._ref_video_flip = (file_item.flip_x, file_item.flip_y)
                         else:
                             # own bucketed pixels as the reference image
                             file_item.load_and_process_image(file_item.dataloader_transforms or self.transform, only_load_latents=True)
