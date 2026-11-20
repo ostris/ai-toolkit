@@ -1265,7 +1265,14 @@ class ControlFileItemDTOMixin:
             except Exception as e:
                 print_acc(f"Error: {e}")
                 print_acc(f"Error loading image: {control_path}")
-            
+
+            if self.flip_x:
+                # do a flip
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            if self.flip_y:
+                # do a flip
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
             if not self.full_size_control_images:
                 # we just scale them to 512x512:
                 w, h = img.size
@@ -1273,12 +1280,6 @@ class ControlFileItemDTOMixin:
 
             elif not self.use_raw_control_images:
                 w, h = img.size
-                if self.flip_x:
-                    # do a flip
-                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if self.flip_y:
-                    # do a flip
-                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
                 if self.dataset_config.buckets:
                     # scale and crop based on file item
@@ -2310,6 +2311,10 @@ class TextEmbeddingFileItemDTOMixin:
             item["control_path"] = self.control_path
             if getattr(self, 'text_embedding_uses_target_size', False) and getattr(self, 'crop_width', None):
                 item["control_target_size"] = [self.crop_width, self.crop_height]
+            if self.flip_x:
+                item["flip_x"] = True
+            if self.flip_y:
+                item["flip_y"] = True
         if self.encode_control_in_text_embeddings and getattr(self, 'control_video_paths', None):
             item["control_videos"] = sorted(self.control_video_paths)
             # v2: reference-video vision blocks are no longer resampled by the
@@ -2574,6 +2579,10 @@ class TextEmbeddingCachingMixin:
                             try:
                                 img = Image.open(control_path_list[i]).convert("RGB")
                                 img = exif_transpose(img)
+                                if file_item.flip_x:
+                                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                                if file_item.flip_y:
+                                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
                                 # convert to 0 to 1 tensor
                                 img = (
                                     TF.to_tensor(img)
