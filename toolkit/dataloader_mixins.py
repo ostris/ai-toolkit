@@ -2301,6 +2301,10 @@ class TextEmbeddingFileItemDTOMixin:
         if dopsd_self_ref:
             # teacher embeds carry the item's own media as the vision reference
             item["dopsd_self_ref"] = True
+            if self.flip_x:
+                item["flip_x"] = True
+            if self.flip_y:
+                item["flip_y"] = True
             return item
         # dropout embeds are encoded as plain text, keep control conditioning
         # out of their cache key
@@ -2322,6 +2326,10 @@ class TextEmbeddingFileItemDTOMixin:
             # misaligned with their presentation. Only items WITH control
             # videos carry this key, so no other cache is touched.
             item["control_videos_version"] = 2
+            if self.flip_x:
+                item["flip_x"] = True
+            if self.flip_y:
+                item["flip_y"] = True
         # first-frame vision conditioning changes the embedding content -> new cache key
         elif (
             getattr(self, "encode_first_frame_in_text_embeddings", False)
@@ -2601,6 +2609,7 @@ class TextEmbeddingCachingMixin:
                         ctrl_img_list.extend(control_video_paths)
                         if len(control_video_paths) > 0:
                             self.sd._ref_video_dataset_config = item_config
+                            self.sd._ref_video_flip = (file_item.flip_x, file_item.flip_y)
                         
                         if len(ctrl_img_list) == 0:
                             ctrl_img = None
@@ -2691,6 +2700,7 @@ class TextEmbeddingCachingMixin:
                             # own path rides through the video-ref presentation
                             ctrl_img = [file_item.path]
                             self.sd._ref_video_dataset_config = item_config
+                            self.sd._ref_video_flip = (file_item.flip_x, file_item.flip_y)
                         else:
                             # own bucketed pixels as the reference image
                             file_item.load_and_process_image(file_item.dataloader_transforms or self.transform, only_load_latents=True)

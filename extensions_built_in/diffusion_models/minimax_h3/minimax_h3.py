@@ -218,6 +218,7 @@ class MinimaxH3Model(BaseModel):
         # video-ref presentation context: dataset config while caching training
         # embeds; the sample's frame cap while encoding sample prompts
         self._ref_video_dataset_config = None
+        self._ref_video_flip = (False, False)
         self._sample_ref_max_frames = None
         self.latent_space_version = "minimax_h3_v1"
         # caption token cap (vision blocks are never truncated); the released
@@ -310,6 +311,7 @@ class MinimaxH3Model(BaseModel):
         # sample prompts: video refs are treated at the sample's length, not
         # the dataset's (which only applies while caching training embeds)
         self._ref_video_dataset_config = None
+        self._ref_video_flip = (False, False)
         self._sample_ref_max_frames = max(int(gen_config.num_frames), 5)
 
     @property
@@ -646,9 +648,15 @@ class MinimaxH3Model(BaseModel):
                     # the SAME frames the latent rows use (dataset treatment
                     # when caching training embeds, sample-length at sampling)
                     ds_cfg = getattr(self, "_ref_video_dataset_config", None)
+                    flip_x, flip_y = getattr(self, "_ref_video_flip", (False, False))
                     pil_images.append(
                         load_video_ref_for_te(
-                            self, img, ds_cfg, max_frames=self._sample_ref_max_frames
+                            self,
+                            img,
+                            ds_cfg,
+                            max_frames=self._sample_ref_max_frames,
+                            flip_x=flip_x,
+                            flip_y=flip_y,
                         )
                     )
                 else:
@@ -1509,9 +1517,16 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
         for ref_idx in range(vid_count):
             lats = []
             auds = []
-            for per_item in paths_per_item:
+            for item_idx, per_item in enumerate(paths_per_item):
+                file_item = batch.file_items[item_idx]
                 entry = load_ref_video_latent(
-                    self, per_item[ref_idx], batch.dataset_config, target_h, target_w
+                    self,
+                    per_item[ref_idx],
+                    batch.dataset_config,
+                    target_h,
+                    target_w,
+                    flip_x=file_item.flip_x,
+                    flip_y=file_item.flip_y,
                 )
                 lats.append(entry["latent"].to(device, torch.float32))
                 auds.append(entry.get("audio_rows"))
