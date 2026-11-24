@@ -79,6 +79,8 @@ class SampleItem:
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
 
+from toolkit.remote_comfyui_sampler import RemoteComfyUIConfig
+
 class SampleConfig:
     def __init__(self, **kwargs):
         self.sampler: str = kwargs.get('sampler', 'ddpm')
@@ -118,6 +120,13 @@ class SampleConfig:
         self.samples = [SampleItem(self, **item) for item in raw_samples]
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
+        remote_comfyui_raw = kwargs.get('remote_comfyui', None)
+        if isinstance(remote_comfyui_raw, RemoteComfyUIConfig):
+            self.remote_comfyui: Optional[RemoteComfyUIConfig] = remote_comfyui_raw
+        elif isinstance(remote_comfyui_raw, dict):
+            self.remote_comfyui = RemoteComfyUIConfig(**remote_comfyui_raw)
+        else:
+            self.remote_comfyui = None
         
     @property
     def prompts(self):

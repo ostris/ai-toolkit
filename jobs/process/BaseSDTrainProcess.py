@@ -119,6 +119,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         self.save_config = SaveConfig(**self.get_conf('save', {}))
         self.sample_config = SampleConfig(**self.get_conf('sample', {}))
+        self.remote_comfy_sampler = None
+        if (
+            self.accelerator.is_main_process
+            and self.sample_config.remote_comfyui is not None
+            and self.sample_config.remote_comfyui.enabled
+        ):
+            from toolkit.remote_comfyui_sampler import RemoteComfyUISampler
+            self.remote_comfy_sampler = RemoteComfyUISampler(
+                config=self.sample_config.remote_comfyui,
+                training_folder=self.training_folder,
+                job_name=self.job.name,
+                log_fn=print_acc,
+                save_root=self.save_root,
+                sample_prompts_count=len(self.sample_config.prompts),
+            )
         first_sample_config = self.get_conf('first_sample', None)
         if first_sample_config is not None:
             self.has_first_sample_requested = True
@@ -279,10 +294,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return generate_image_config_list
 
-    def sample(self, step=None, is_first=False):
-        if not self.accelerator.is_main_process:
-            return
-        flush()
+    def _build_sample_configs(self, step=None, is_first=False):
         sample_folder = os.path.join(self.save_root, 'samples')
         gen_img_config_list = []
 
@@ -367,6 +379,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
+        return gen_img_config_list
+
+    def sample(self, step=None, is_first=False):
+        if not self.accelerator.is_main_process:
+            return
+        flush()
+        sample_config = self.first_sample_config if is_first else self.sample_config
+        gen_img_config_list = self._build_sample_configs(step=step, is_first=is_first)
 
         # if we have an ema, set it to validation mode
         if self.ema is not None:
@@ -480,7 +500,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # remove duplicates
             items_to_remove = list(dict.fromkeys(items_to_remove))
 
+            pending_remote = (
+                self.remote_comfy_sampler.get_pending_lora_paths()
+                if self.remote_comfy_sampler is not None
+                else set()
+            )
             for item in items_to_remove:
+                if os.path.abspath(item) in pending_remote:
+                    print_acc(f"Deferring cleanup of {item} (pending remote ComfyUI preview)")
+                    continue
                 print_acc(f"Removing old save: {item}")
                 if os.path.isdir(item):
                     shutil.rmtree(item)
@@ -535,6 +563,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # prepare meta
         save_meta = get_meta_for_safetensors(save_meta, self.job.name)
+        saved_lora_path = None
         if not self.is_fine_tuning and not self.train_config.merge_network_on_save:
             if self.network is not None:
                 lora_name = self.job.name
@@ -555,6 +584,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     metadata=save_meta,
                     extra_state_dict=embedding_dict
                 )
+                saved_lora_path = file_path
                 self.network.multiplier = prev_multiplier
                 # if we have an embedding as well, pair it with the network
 
@@ -714,6 +744,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
             except Exception as e:
                 print_acc(e)
                 print_acc("Could not save optimizer")
+
+        if (
+            self.remote_comfy_sampler is not None
+            and saved_lora_path is not None
+            and not self.train_config.disable_sampling
+        ):
+            rcfg = self.sample_config.remote_comfyui
+            effective_step = self.step_num if step is None else step
+            should_remote_sample = (
+                rcfg.sample_on_save
+                or step is None
+                or (
+                    self.sample_config.sample_every
+                    and effective_step >= self.sample_config.sample_start_step
+                    and effective_step % self.sample_config.sample_every == 0
+                )
+            )
+            if should_remote_sample:
+                remote_configs = self._build_sample_configs(step=effective_step, is_first=False)
+                self.remote_comfy_sampler.enqueue(effective_step, saved_lora_path, remote_configs)
 
         self.clean_up_saves()
         self.post_save_hook(file_path)
@@ -2485,12 +2535,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(f"Failed to compile model: {e}")
                     print_acc("Continuing without compilation")
 
-        if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
+        skip_local_sample = (
+            self.remote_comfy_sampler is not None
+            and self.sample_config.remote_comfyui.skip_local_sample
+        )
+
+        if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling and not skip_local_sample:
             print_acc("Generating first sample from first sample config")
             self.sample(0, is_first=True)
 
         # sample first
-        if self.train_config.skip_first_sample or self.train_config.disable_sampling:
+        if self.train_config.skip_first_sample or self.train_config.disable_sampling or skip_local_sample:
             print_acc("Skipping first sample due to config setting")
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
@@ -2738,7 +2793,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
                             
-                    if is_sample_step:
+                    if is_sample_step and not skip_local_sample:
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
                         flush()
@@ -2833,9 +2888,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.pipeline.disable_freeu()
         if self.accelerator.is_main_process:
             self.save()
-        if not self.train_config.disable_sampling:
+        if not self.train_config.disable_sampling and not skip_local_sample:
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
+        if self.remote_comfy_sampler is not None:
+            if self.sample_config.remote_comfyui.wait_on_finish:
+                try:
+                    self.remote_comfy_sampler.wait_for_completion()
+                except KeyboardInterrupt:
+                    print_acc("[RemoteComfyUI] Interrupted while waiting for remaining remote previews.")
+            self.remote_comfy_sampler.stop()
         print_acc("")
         if self.accelerator.is_main_process:
             self.logger.finish()
