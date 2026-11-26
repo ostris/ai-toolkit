@@ -203,6 +203,53 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.timesteps = timesteps.to(device=device)
             return timesteps
 
+        elif timestep_type == 'logit_normal_shift':
+            # Continuous logit-normal sampling (SD3 / Flux / Qwen-Image) combined
+            # with resolution-dependent dynamic shift (or static shift).
+            u = torch.sigmoid(
+                torch.randn((num_timesteps,), device=device, dtype=torch.float32)
+            ).clamp(1e-6, 1.0 - 1e-6)
+
+            if self.config.use_dynamic_shifting:
+                if latents is None:
+                    raise ValueError('latents is None')
+
+                h = latents.shape[2]
+                w = latents.shape[3]
+                image_seq_len = h * w // (patch_size**2)
+
+                mu = calculate_shift(
+                    image_seq_len,
+                    self.config.get("base_image_seq_len", 256),
+                    self.config.get("max_image_seq_len", 4096),
+                    self.config.get("base_shift", 0.5),
+                    self.config.get("max_shift", 1.16),
+                )
+                sigmas = self.time_shift(mu, 1.0, u)
+            else:
+                sigmas = self.shift * u / (1.0 + (self.shift - 1.0) * u)
+
+            if isinstance(sigmas, np.ndarray):
+                sigmas = torch.from_numpy(sigmas)
+            sigmas = sigmas.to(dtype=torch.float32, device=device)
+            sigmas, _ = torch.sort(sigmas, descending=True)
+
+            if self.config.invert_sigmas:
+                sigmas = 1.0 - sigmas
+                timesteps = sigmas * self.config.num_train_timesteps
+                sigmas = torch.cat(
+                    [sigmas, torch.ones(1, device=sigmas.device, dtype=sigmas.dtype)]
+                )
+            else:
+                timesteps = sigmas * self.config.num_train_timesteps
+                sigmas = torch.cat(
+                    [sigmas, torch.zeros(1, device=sigmas.device, dtype=sigmas.dtype)]
+                )
+
+            self.sigmas = sigmas
+            self.timesteps = timesteps.to(device=device)
+            return self.timesteps
+
         elif timestep_type == 'lognorm_blend':
             # disgtribute timestepd to the center/early and blend in linear
             alpha = 0.75

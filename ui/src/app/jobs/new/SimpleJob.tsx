@@ -781,6 +781,7 @@ export default function SimpleJob({
                         { value: 'sigmoid', label: 'Sigmoid' },
                         { value: 'linear', label: 'Linear' },
                         { value: 'shift', label: 'Shift' },
+                        { value: 'logit_normal_shift', label: 'Logit-Normal Shift' },
                         { value: 'weighted', label: 'Weighted' },
                       ]}
                     />
