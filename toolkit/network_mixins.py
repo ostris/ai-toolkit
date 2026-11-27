@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from collections import OrderedDict
 from typing import Optional, Union, List, Type, TYPE_CHECKING, Dict, Any, Literal
@@ -461,6 +462,12 @@ class ToolkitModuleMixin:
             org_sd[weight_key] = weight.to(weight_device, orig_dtype)
             self.org_module[0].load_state_dict(org_sd)
 
+    def restart_params(self: Module):
+        # the params reset_weights starts over: their optimizer state does not carry
+        if getattr(self, 'full_rank', False) or not hasattr(self, 'lora_down') or not hasattr(self, 'lora_up'):
+            return []
+        return [p for part in (self.lora_down, self.lora_up) for p in part.parameters()]
+
     def reset_weights(self: Module):
         # reset the weights to zero
         org_sd = self.state_dict()
@@ -469,6 +476,11 @@ class ToolkitModuleMixin:
             if 'lora_up' in key:
                 org_sd[key] = torch.zeros_like(org_sd[key])
         self.load_state_dict(org_sd)
+        # lora down is re-drawn as at creation: the next lora is not in the merged one's directions
+        restarted = self.restart_params()
+        if len(restarted) > 0:
+            torch.nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
+        return restarted
 
     def setup_lorm(self: Module, state_dict: Optional[Dict[str, Any]] = None):
         # LoRM (Low Rank Middle) is a method reduce the number of parameters in a module while keeping the inputs and
@@ -887,9 +899,15 @@ class ToolkitNetworkMixin:
         self.is_checkpointing = False
         self._update_checkpointing()
     
+    def restart_params(self: Network):
+        return [p for module in self.get_all_modules() for p in module.restart_params()]
+
     def reset_weights(self: Network):
+        # returns the params that started over (see restart_params)
+        restarted = []
         for module in self.get_all_modules():
-            module.reset_weights()
+            restarted.extend(module.reset_weights() or [])
+        return restarted
 
     def merge_in(self, merge_weight=1.0):
         if self.network_type.lower() == 'dora':

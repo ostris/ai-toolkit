@@ -504,6 +504,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def end_step_hook(self):
         pass
 
+    def drop_optimizer_state(self, params):
+        # params that start over: the optimizer rebuilds their state on the next step
+        if self.optimizer is None:
+            return
+        for param in params:
+            self.optimizer.state.pop(param, None)
+
     def save(self, step=None):
         if not self.accelerator.is_main_process:
             return
@@ -658,7 +665,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_strength)
                 # reset weights to zero
-                self.network.reset_weights()
+                restarted = self.network.reset_weights()
+                self.drop_optimizer_state(restarted)
                 self.network.is_merged_in = False
                 
                 print_acc("Done merging network weights. Saving model...")
@@ -2199,6 +2207,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 except Exception as e:
                     print_acc(f"Failed to load optimizer state from {optimizer_state_file_path}")
                     print_acc(e)
+                if self.network is not None and self.train_config.merge_network_on_save \
+                        and self.get_latest_save_path(include_pretrained_lora=False) is not None:
+                    # the lora is a new one on the merged save: a saved state for it is another lora's
+                    self.drop_optimizer_state(self.network.restart_params())
 
             # update the optimizer LR from the params
             print_acc(f"Updating optimizer LR from params")
