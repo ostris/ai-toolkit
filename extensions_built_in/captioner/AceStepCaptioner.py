@@ -15,6 +15,7 @@ from collections import OrderedDict
 import traceback
 
 from optimum.quanto import freeze
+from toolkit.audio.decode import load_audio
 from toolkit.basic import flush
 from toolkit.util.quantize import quantize, get_qtype
 
@@ -375,7 +376,7 @@ class AceStepCaptioner(BaseCaptioner):
 
     @staticmethod
     def _load_audio(file_path: str):
-        waveform, sr = torchaudio.load(file_path)
+        waveform, sr = load_audio(file_path)
         return AceStepCaptioner._to_model_audio(waveform, sr)
 
     @staticmethod
@@ -406,7 +407,7 @@ class AceStepCaptioner(BaseCaptioner):
         """CPU side of one file (runs in a worker thread): librosa analysis,
         decode + resample, and the mel/tokenize pass for each model. Vocal
         separation is the one GPU step here, serialized by separator_lock."""
-        waveform, sr = torchaudio.load(file_path)
+        waveform, sr = load_audio(file_path)
         audio_data = self._to_model_audio(waveform, sr)
         lyrics_audio = (
             self._extract_vocals(waveform, sr) if self.separator is not None else audio_data

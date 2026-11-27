@@ -1450,9 +1450,9 @@ class MinimaxH3Ref2VAModel(MinimaxH3Model):
 
             if not video_has_audio(path):
                 raise RuntimeError("no audio stream")
-            import torchaudio
+            from toolkit.audio.decode import load_audio
 
-            waveform, sample_rate = torchaudio.load(path)
+            waveform, sample_rate = load_audio(path)
             # frames cover [0, n / 24) seconds; trim the soundtrack to the
             # same window (matches the training cache) before encoding
             keep = int(round(n / packing.FPS * sample_rate))

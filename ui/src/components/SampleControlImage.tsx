@@ -10,7 +10,7 @@ import { withReadKey } from '@/utils/readKey';
 import type { AxiosProgressEvent } from 'axios';
 
 const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.wmv', '.flv'];
-const AUDIO_EXTS = ['.mp3', '.wav', '.flac', '.ogg'];
+const AUDIO_EXTS = ['.mp3', '.wav', '.flac', '.ogg', '.aac', '.opus'];
 const isVideoPath = (p: string) => VIDEO_EXTS.some(ext => p.toLowerCase().endsWith(ext));
 const isAudioPath = (p: string) => AUDIO_EXTS.some(ext => p.toLowerCase().endsWith(ext));
 

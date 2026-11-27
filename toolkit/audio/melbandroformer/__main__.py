@@ -35,9 +35,8 @@ def output_paths(path, out_dir, fmt):
 
 
 def decode(path):
-    from torchcodec.decoders import AudioDecoder
-    samples = AudioDecoder(path).get_all_samples()
-    return samples.data, samples.sample_rate
+    from toolkit.audio.decode import load_audio
+    return load_audio(path)
 
 
 def encode(audio, sample_rate, out_path):

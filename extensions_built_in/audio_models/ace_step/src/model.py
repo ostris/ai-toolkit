@@ -20,6 +20,7 @@ import time
 
 import torch
 
+from toolkit.audio.decode import load_audio
 from toolkit.models.v2._mixin import OstrisModelMixin
 import torch.nn.functional as F
 import torchaudio
@@ -1364,7 +1365,7 @@ def load_models(checkpoint_path, device="cuda", dtype=torch.bfloat16):
 def get_latent(audio_path, models):
     """Encode audio file to VAE latent. Returns [1, 64, T] tensor."""
     vae, device, dtype = models["vae"], models["device"], models["dtype"]
-    wav, sr = torchaudio.load(audio_path)
+    wav, sr = load_audio(audio_path)
     if sr != SAMPLE_RATE:
         wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE)
     if wav.shape[0] == 1:

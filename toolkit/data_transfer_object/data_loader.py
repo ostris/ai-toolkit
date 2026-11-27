@@ -79,6 +79,7 @@ class FileItemDTO(
         )
         # models with an RGBA VAE want the alpha channel loaded and encoded
         self.load_rgba = _sd is not None and _sd.load_rgba
+        self.model_file_cache_key = getattr(_sd, "get_file_cache_key", lambda path: None)(self.path)  # per-file cache material from the model (YuE2: .abc sheets)
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(

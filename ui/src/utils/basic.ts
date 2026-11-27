@@ -8,7 +8,7 @@ export const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, m
 
 export const imgExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
 export const videoExtensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
-export const audioExtensions = ['.mp3', '.wav', '.flac', '.ogg'];
+export const audioExtensions = ['.mp3', '.wav', '.flac', '.ogg', '.aac', '.opus'];
 
 // suffix match: slice(-4) missed 5-char extensions like .flac/.jpeg/.webp
 const hasExt = (filePath: string, exts: string[]) => exts.some(ext => filePath.toLowerCase().endsWith(ext));
