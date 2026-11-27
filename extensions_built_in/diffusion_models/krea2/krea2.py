@@ -143,6 +143,7 @@ def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
 
 class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
     arch = "krea2"
+    sampling_reuses_training_components = True
 
     def __init__(
         self,
@@ -403,6 +404,27 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         self.model = transformer
         self.pipeline = Krea2Pipeline(self)
         self.print_and_status_update("Model Loaded")
+
+    def load_model_for_sampling(self):
+        # Preview sampling on a different checkpoint: load only the transformer
+        # and reuse the training model's vae / text encoder (assigned by the
+        # trainer afterwards).
+        self.print_and_status_update("Loading Krea 2 sampling model")
+
+        transformer = self._load_transformer()
+
+        if self.model_config.assistant_lora_path is not None:
+            self.load_training_adapter(transformer)
+            if self.model_config.qtype == "qfloat8":
+                self.model_config.qtype = "float8"
+
+        transformer.aitk_post_load(**self.component_load_kwargs("transformer"))
+        flush()
+
+        self.noise_scheduler = Krea2Model.get_train_scheduler()
+        self.model = transformer
+        self.pipeline = Krea2Pipeline(self)
+        self.print_and_status_update("Sampling model loaded")
 
     # ------------------------------------------------------------------
     # Generation (training previews)

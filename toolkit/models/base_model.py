@@ -106,6 +106,9 @@ class BaseModel:
     # text-generating models: the trainer runs train_llm_accumulation (model-owned
     # loss via get_llm_loss) instead of the diffusion step; no vae / text encoder
     is_llm = False
+    # when used as an alternate preview-sampling model, reuse the training
+    # model's already-loaded vae / text encoder instead of loading copies.
+    sampling_reuses_training_components = False
 
     def __init__(
             self,
@@ -354,6 +357,16 @@ class BaseModel:
         # override this in child classes
         raise NotImplementedError(
             "load_model must be implemented in child classes")
+
+    def load_model_for_sampling(self):
+        """Load only what a preview-sampling instance needs.
+
+        Default is a full load. Models that set
+        ``sampling_reuses_training_components = True`` should override this to
+        skip the vae / text encoder (the trainer assigns the training model's
+        components after this returns).
+        """
+        self.load_model()
 
     def get_generation_pipeline(self):
         # override this in child classes

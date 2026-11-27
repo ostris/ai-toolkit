@@ -128,6 +128,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
         self.logger = create_logger(self.logging_config, config, self.save_root)
+        # Optional separate model used only for preview sampling. Loaded lazily
+        # on the first sample and kept around (offloaded to cpu) afterwards.
+        self.sample_sd = None
+        self._sample_sd_key = None
+        if getattr(self.first_sample_config, 'model', None) is None:
+            self.first_sample_config.model = getattr(self.sample_config, 'model', None)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -279,6 +285,221 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return generate_image_config_list
 
+    def _get_sample_model_config(self, sample_config) -> Optional[ModelConfig]:
+        """Build the model config for a separate preview-sampling model.
+
+        The sample model inherits the training model config (quantization,
+        model_kwargs, etc.) and only overrides what is set under
+        ``sample.model``. Adapters specific to the training checkpoint are not
+        inherited unless explicitly set on the sample model.
+        """
+        raw_sample_model = getattr(sample_config, 'model', None)
+        if not raw_sample_model:
+            return None
+        raw_model_config = copy.deepcopy(self.get_conf('model', {}))
+        if isinstance(raw_sample_model, str):
+            raw_sample_model = {'name_or_path': raw_sample_model}
+        overrides = copy.deepcopy(raw_sample_model)
+        for key in (
+            'assistant_lora_path',
+            'inference_lora_path',
+            'unconditional_lora_path',
+            'lora_path',
+            'refiner_name_or_path',
+        ):
+            if key not in overrides:
+                raw_model_config.pop(key, None)
+        merged_model_kwargs = dict(raw_model_config.get('model_kwargs') or {})
+        merged_model_kwargs.update(overrides.get('model_kwargs') or {})
+        overrides['model_kwargs'] = merged_model_kwargs
+        raw_model_config.update(overrides)
+        raw_model_config['arch'] = raw_model_config.get('arch') or self.model_config.arch
+        raw_model_config['dtype'] = self.train_config.dtype
+        return ModelConfig(**raw_model_config)
+
+    def _build_sample_network(self, sd):
+        """Create a network on the sampling model and copy the current trained
+        network weights into it so samples include the in-progress LoRA."""
+        if self.network is None or self.network_config is None:
+            return None
+        NetworkClass = type(self.network)
+        network_kwargs = dict(self.network_config.network_kwargs)
+        if hasattr(sd, 'target_lora_modules'):
+            network_kwargs['target_lin_modules'] = sd.target_lora_modules
+        is_lorm = self.network_config.type.lower() == 'lorm'
+        network = NetworkClass(
+            text_encoder=sd.text_encoder,
+            unet=sd.get_model_to_train(),
+            lora_dim=self.network_config.linear,
+            multiplier=1.0,
+            alpha=self.network_config.linear_alpha,
+            train_unet=self.train_config.train_unet,
+            # text encoder loras are not re-applied here; a shared text encoder
+            # already holds the live training weights / network hooks
+            train_text_encoder=False,
+            conv_lora_dim=self.network_config.conv,
+            conv_alpha=self.network_config.conv_alpha,
+            is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
+            is_v2=self.model_config.is_v2,
+            is_v3=self.model_config.is_v3,
+            is_pixart=self.model_config.is_pixart,
+            is_auraflow=self.model_config.is_auraflow,
+            is_flux=self.model_config.is_flux,
+            is_lumina2=self.model_config.is_lumina2,
+            is_ssd=self.model_config.is_ssd,
+            is_vega=self.model_config.is_vega,
+            dropout=self.network_config.dropout,
+            use_text_encoder_1=self.model_config.use_text_encoder_1,
+            use_text_encoder_2=self.model_config.use_text_encoder_2,
+            use_bias=is_lorm,
+            is_lorm=is_lorm,
+            network_config=self.network_config,
+            network_type=self.network_config.type,
+            transformer_only=self.network_config.transformer_only,
+            is_transformer=sd.is_transformer,
+            base_model=sd,
+            **network_kwargs
+        )
+        network.force_to(self.device_torch, dtype=torch.float32)
+        sd.network = network
+        network._update_torch_multiplier()
+        network.apply_to(
+            sd.text_encoder,
+            sd.get_model_to_train(),
+            False,
+            self.train_config.train_unet,
+        )
+        network.can_merge_in = getattr(self.network, 'can_merge_in', True)
+        # copy the live trained weights. strict=False ignores text-encoder keys
+        # that this sampling network does not wrap.
+        network.load_state_dict(unwrap_model(self.network).state_dict(), strict=False)
+        network.multiplier = getattr(self.network, 'multiplier', 1.0)
+        network._update_torch_multiplier()
+        return network
+
+    def _refresh_sample_network(self, sample_sd):
+        """Copy the current (post optimizer step / EMA) network weights onto the
+        sampling model so every sample uses the newest trained LoRA."""
+        if sample_sd.network is None or self.network is None:
+            return
+        sample_sd.network.load_state_dict(unwrap_model(self.network).state_dict(), strict=False)
+        sample_sd.network.multiplier = getattr(
+            self.network, 'multiplier', sample_sd.network.multiplier
+        )
+        sample_sd.network._update_torch_multiplier()
+
+    def _offload_sample_sd(self):
+        if self.sample_sd is None:
+            return
+        if getattr(self.sample_sd, 'network', None) is not None:
+            self.sample_sd.network.force_to('cpu', self.sample_sd.torch_dtype)
+        if getattr(self.sample_sd, 'unet', None) is not None:
+            self.sample_sd.unet.to('cpu')
+        flush()
+
+    def _release_sample_sd(self):
+        if self.sample_sd is not None:
+            del self.sample_sd
+            self.sample_sd = None
+            self._sample_sd_key = None
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    def _ensure_sample_sd(self, sample_model_config: ModelConfig):
+        sample_key = json.dumps({
+            'arch': sample_model_config.arch,
+            'name_or_path': sample_model_config.name_or_path,
+            'model_kwargs': sample_model_config.model_kwargs,
+            'qtype': sample_model_config.qtype,
+            'quantize': sample_model_config.quantize,
+            'low_vram': sample_model_config.low_vram,
+            'layer_offloading': sample_model_config.layer_offloading,
+        }, sort_keys=True, default=str)
+        if self.sample_sd is not None and self._sample_sd_key == sample_key:
+            return self.sample_sd
+        if self.sample_sd is not None:
+            self._release_sample_sd()
+        if self.network is None or self.network_config is None:
+            raise ValueError(
+                "A separate sampling model requires a trainable network "
+                "(LoRA / LoKr); there are no trained weights to apply to it."
+            )
+        if sample_model_config.arch != self.model_config.arch:
+            raise ValueError(
+                f"Sampling model arch {sample_model_config.arch!r} must match "
+                f"the training arch {self.model_config.arch!r} so the trained "
+                "network can be applied to it."
+            )
+        if self.train_config.merge_network_on_save:
+            raise ValueError(
+                "A separate sampling model is not supported with "
+                "train.merge_network_on_save: the LoRA is merged into the "
+                "training base weights and reset after every save, so it "
+                "cannot be applied to a different sampling base model."
+            )
+
+        ModelClass = get_model_class(sample_model_config)
+        if hasattr(ModelClass, 'get_train_scheduler'):
+            sampler = ModelClass.get_train_scheduler()
+        else:
+            arch = 'sd'
+            if self.model_config.is_pixart:
+                arch = 'pixart'
+            if self.model_config.is_flux:
+                arch = 'flux'
+            if self.model_config.is_lumina2:
+                arch = 'lumina2'
+            sampler = get_sampler(
+                self.train_config.noise_scheduler,
+                {
+                    "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
+                },
+                arch=arch,
+            )
+
+        print_acc(f"Loading sampling model from {sample_model_config.name_or_path}")
+        sample_sd = ModelClass(
+            device=self.accelerator.device,
+            model_config=sample_model_config,
+            dtype=self.train_config.dtype,
+            custom_pipeline=self.custom_pipeline,
+            noise_scheduler=sampler,
+        )
+
+        # free the training transformer while the sampling transformer loads
+        self.sd.save_device_state()
+        self.sd.unet.to('cpu')
+        flush()
+        try:
+            sample_sd.load_model_for_sampling()
+
+            if getattr(sample_sd, 'sampling_reuses_training_components', False):
+                for attr in ('vae', 'text_encoder', 'tokenizer', 'processor', 'vl_processor'):
+                    if getattr(self.sd, attr, None) is not None:
+                        setattr(sample_sd, attr, getattr(self.sd, attr))
+
+            sample_sd.network = self._build_sample_network(sample_sd)
+            if getattr(sample_sd, 'text_encoder', None) is getattr(self.sd, 'text_encoder', None):
+                sample_sd.sample_prompts_cache = self.sd.sample_prompts_cache
+            # adapters / decorators are architecture-independent enough to reuse
+            sample_sd.adapter = self.adapter
+            sample_sd.decorator = self.decorator
+            sample_sd.embedding = self.embedding
+            # surface progress / step hooks to the sampler
+            sample_sd.sample_step_hook = getattr(self.sd, 'sample_step_hook', None)
+            sample_sd._after_sample_img_hooks = getattr(self.sd, '_after_sample_img_hooks', [])
+
+            self.sample_sd = sample_sd
+            self._sample_sd_key = sample_key
+            # move the sampling model off the gpu before the training model
+            # comes back
+            self._offload_sample_sd()
+        finally:
+            self.sd.restore_device_state()
+
+        print_acc("Sampling model ready")
+        return self.sample_sd
+
     def sample(self, step=None, is_first=False):
         if not self.accelerator.is_main_process:
             return
@@ -377,7 +598,29 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.adapter.is_sampling = True
         
         # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        sample_model_config = self._get_sample_model_config(sample_config)
+        if sample_model_config is None:
+            self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        else:
+            sample_sd = self._ensure_sample_sd(sample_model_config)
+            # ema.eval() above has already swapped EMA weights into the training
+            # network, so this copies the newest trained LoRA for this step.
+            self._refresh_sample_network(sample_sd)
+            # free the training transformer while the sampling model runs
+            self.sd.save_device_state()
+            self.sd.unet.to('cpu')
+            flush()
+            try:
+                sample_sd.unet.to(self.device_torch, dtype=sample_sd.torch_dtype)
+                if sample_sd.network is not None:
+                    sample_sd.network.force_to(self.device_torch, dtype=sample_sd.torch_dtype)
+                    # rebuild the multiplier on the device the lora modules are
+                    # now on (it is created from the module's weight device)
+                    sample_sd.network._update_torch_multiplier()
+                sample_sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+            finally:
+                self._offload_sample_sd()
+                self.sd.restore_device_state()
 
         
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
