@@ -173,6 +173,8 @@ class SDTrainer(BaseSDTrainProcess):
                     width=sample_item.width,
                     height=sample_item.height,
                     negative_prompt=sample_item.neg,
+                    width=sample_item.width,
+                    height=sample_item.height,
                     output_path=output_path,
                     num_frames=sample_item.num_frames,
                     ctrl_img=sample_item.ctrl_img,
