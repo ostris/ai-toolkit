@@ -37,6 +37,7 @@ comes from SheetSage2 at cache time and rides the latent cache as ``abc_ids``.
 import os
 import random
 import re
+import sys
 from typing import List, Optional
 
 import torch
@@ -205,6 +206,10 @@ class YuE2AudioModel(BaseAudioModel):
         # trust region: KL(base || lora) on the AR next-token distributions, base = LoRA switched off
         self.ar_kl_weight = float(kw.get("ar_kl_weight", 0.0))
         self._loss_log_every = int(kw.get("loss_log_every", 25))
+        # flush the CUDA caching allocator every train step: variable song lengths fragment it, and on Windows the
+        # driver's system-memory fallback means that never raises OOM, it silently pages over PCIe (steps go from a
+        # few seconds to 50-100+ s). Default on for Windows only.
+        self.empty_cache_every_step = bool(kw.get("empty_cache_every_step", sys.platform == "win32"))
         # extra per-readout AR diagnostics (targets, unique tokens, p(END), p(target))
         self.debug = bool(kw.get("debug", False))
         self._loss_log_step = 0
@@ -645,6 +650,8 @@ class YuE2AudioModel(BaseAudioModel):
         train_ar = self.ar_loss_weight > 0 and torch.is_grad_enabled()
         if torch.is_grad_enabled():
             self._note_train_call()
+            if self.empty_cache_every_step:
+                torch.cuda.empty_cache()
         captions = batch.get_caption_list() if hasattr(batch, "get_caption_list") else None
         preds, lm_losses, kl_losses = [], [], []
         stem_losses = {v: [] for v in SEP_VARIANTS[1:]}
