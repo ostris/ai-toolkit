@@ -401,7 +401,6 @@ class YuE2Model(nn.Module, OstrisModelMixin):
         return model
 
 
-@torch.no_grad()
 def _nar_lora_from_safetensors(path: str) -> dict:
     """The ``.safetensors`` releases of the community NAR adapter name every tensor
     (``layers.N.nar_self_attn.q_proj.lora_A`` ..., ``vae2llm.*``, ``llm2vae.*``); rebuild the
@@ -422,6 +421,7 @@ def _nar_lora_from_safetensors(path: str) -> dict:
     return {"lora": lora, "io": {m: sd for m, sd in io.items() if sd}}
 
 
+@torch.no_grad()
 def merge_nar_lora(model: YuE2Model, ckpt_path: str, scale: float = 1.0):
     """Fold the community NAR adapter (unmerged q/k/v + gate/up LoRA pairs,
     plus full vae2llm/llm2vae weights) into the merged-projection base."""
