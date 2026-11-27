@@ -779,6 +779,9 @@ class ModelConfig:
         
         if self.arch == "flex1":
             self.arch = "flux"
+        # older UI versions saved SD 1.5 jobs as "sd15"
+        if self.arch == "sd15":
+            self.arch = "sd1"
             
         
         # handle migrating to new model arch

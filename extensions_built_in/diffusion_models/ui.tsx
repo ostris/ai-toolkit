@@ -866,7 +866,7 @@ export const AI_TOOLKIT_UI_MODELS: ModelArch[] = [
     disableSections: ["model.quantize", "train.timestep_type"],
   },
   {
-    name: "sd15",
+    name: "sd1",
     label: "SD 1.5",
     group: "image",
     defaults: {
