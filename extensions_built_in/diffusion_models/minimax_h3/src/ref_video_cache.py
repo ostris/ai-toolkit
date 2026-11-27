@@ -54,7 +54,9 @@ def ref_video_num_frames(model, path, dataset_config):
     return num_frames, total, src_fps
 
 
-def load_video_ref_for_te(model, path, dataset_config=None, max_frames=None):
+def load_video_ref_for_te(
+    model, path, dataset_config=None, max_frames=None, flip_x=False, flip_y=False
+):
     """Build the Qwen presentation from the SAME frames the latent rows use:
     2 fps over the frame-count-treated 24 fps clip (ComfyUI: frames[::12],
     timestamps i/2). Without a dataset config (sampling), the clip is
@@ -92,6 +94,10 @@ def load_video_ref_for_te(model, path, dataset_config=None, max_frames=None):
     frames = [
         _Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in raw_frames
     ]
+    if flip_x:
+        frames = [f.transpose(_Image.FLIP_LEFT_RIGHT) for f in frames]
+    if flip_y:
+        frames = [f.transpose(_Image.FLIP_TOP_BOTTOM) for f in frames]
     times = [j / ds_fps for j in picks]
     return VideoRef(frames=frames, timestamps=times, has_audio=video_has_audio(path))
 
@@ -164,7 +170,13 @@ def _cache_path(path: str, hash_dict: dict) -> str:
 
 @torch.no_grad()
 def load_ref_video_latent(
-    model, path: str, dataset_config, target_height: int, target_width: int
+    model,
+    path: str,
+    dataset_config,
+    target_height: int,
+    target_width: int,
+    flip_x: bool = False,
+    flip_y: bool = False,
 ) -> dict:
     """Returns {"latent": (C, T, h, w) cpu tensor, "num_frames": int},
     encoding + disk-caching on first use. ``model`` is the MinimaxH3 model
@@ -173,8 +185,9 @@ def load_ref_video_latent(
     if mem_cache is None:
         mem_cache = {}
         model._ref_video_cache = mem_cache
-    if path in mem_cache:
-        return mem_cache[path]
+    mem_key = (path, flip_x, flip_y)
+    if mem_key in mem_cache:
+        return mem_cache[mem_key]
 
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
@@ -208,6 +221,10 @@ def load_ref_video_latent(
         "latent_space_version": model.latent_space_version,
         "is_ref_video": True,
     }
+    if flip_x:
+        hash_dict["flip_x"] = True
+    if flip_y:
+        hash_dict["flip_y"] = True
     cache_file = _cache_path(path, hash_dict)
     if os.path.exists(cache_file):
         cap.release()
@@ -217,7 +234,7 @@ def load_ref_video_latent(
             "num_frames": int(sd["num_frames"].item()),
             "audio_rows": sd.get("audio_latent"),
         }
-        mem_cache[path] = entry
+        mem_cache[mem_key] = entry
         return entry
 
     # match the target's pixel area (the dataset bucket the target trains at)
@@ -236,6 +253,10 @@ def load_ref_video_latent(
     frames = []
     for frame in raw_frames:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if flip_x:
+            frame = cv2.flip(frame, 1)
+        if flip_y:
+            frame = cv2.flip(frame, 0)
         frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
         frames.append(frame)
 
@@ -274,5 +295,5 @@ def load_ref_video_latent(
     os.makedirs(os.path.dirname(cache_file), exist_ok=True)
     save_file(state_dict, cache_file)
     entry = {"latent": latent, "num_frames": num_frames, "audio_rows": audio_rows}
-    mem_cache[path] = entry
+    mem_cache[mem_key] = entry
     return entry
