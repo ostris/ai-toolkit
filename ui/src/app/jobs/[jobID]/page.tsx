@@ -17,8 +17,10 @@ import JobPlugin from '@/components/JobPlugin';
 import JobNotes from '@/components/JobNotes';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
+import { JobTimestepSchedule } from '@/components/TimestepSchedulePlugin';
+import { sigmoidJobProcess } from '@/utils/sigmoidSchedule';
 
-type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'notes' | 'plugin';
+type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'notes' | 'plugin' | 'timestep_schedule';
 
 interface Page {
   name: string;
@@ -70,6 +72,14 @@ const pages: Page[] = [
     mainCss: 'pt-24 pb-4',
   },
   {
+    name: 'Timestep Schedule',
+    value: 'timestep_schedule',
+    icon: MdShowChart,
+    component: JobTimestepSchedule,
+    mainCss: 'pt-[80px] px-0 pb-0',
+    jobTypes: ['train'],
+  },
+  {
     name: 'Plugin',
     value: 'plugin',
     icon: MdExtension,
@@ -100,6 +110,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const page = pages.find(p => p.value === pageKey);
 
   const jobType = job?.job_type || 'unknown';
+  const hasTimestepSchedule = !!(job && sigmoidJobProcess(job.job_config));
 
   let title = `Job: ${job?.name || 'Loading...'}`;
   if (jobType === 'caption') {
@@ -152,6 +163,9 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             return null;
           }
           if (page.value === 'plugin' && !hasPlugin) {
+            return null;
+          }
+          if (page.value === 'timestep_schedule' && !hasTimestepSchedule) {
             return null;
           }
           return (

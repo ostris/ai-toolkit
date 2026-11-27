@@ -1140,6 +1140,7 @@ class SDTrainer(BaseSDTrainProcess):
             sd=self.sd,
             unconditional_embeds=unconditional_embeds,
             train_config=self.train_config,
+            step_num=self.step_num,
             **kwargs
         )
 
