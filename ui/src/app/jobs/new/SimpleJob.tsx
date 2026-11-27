@@ -327,6 +327,14 @@ export default function SimpleJob({
                 placeholder=""
               />
             )}
+            {modelArch?.additionalSections?.includes('model.assistant_lora_strength') && (
+              <NumberInput
+                label="Training Adapter Strength"
+                value={jobConfig.config.process[0].model.assistant_lora_strength ?? 1}
+                docKey="config.process[0].model.assistant_lora_strength"
+                onChange={value => setJobConfig(value, 'config.process[0].model.assistant_lora_strength')}
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.unconditional_lora_path') && (
               <TextInput
                 label="Unconditional Adapter Path"
